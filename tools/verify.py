@@ -61,12 +61,14 @@ def check_required_files() -> None:
         "docs/acceptance.md",
         "docs/fips.md",
         "docs/nist-800-190.md",
+        "docs/footprint.md",
         "docs/stig.md",
         "docs/reference/verify.md",
         "docs/vex.md",
         "tests/fips.sh",
         "tests/hardening.sh",
         "tools/build.sh",
+        "tools/assert-footprint.py",
         "tools/install-syft.sh",
         "tools/install-trivy.sh",
         "tools/install-grype.sh",
@@ -131,6 +133,13 @@ def check_dockerfile() -> None:
         "/fips-proof/fips.so.sha256",
         "rpm --root=/rootfs -q --qf '%{NEVRA}\\n' openssl-fips-provider-so",
         "shipped_libs_nevra",
+        "ldd-protected FIPS/glibc runtime dependency paths:",
+        "rpm --root=/rootfs -e --nodeps --noscripts ${removable_packages}",
+        "ldconfig -r /rootfs",
+        "/rootfs/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+        "/rootfs/usr/lib/locale/C.utf8",
+        "/rootfs/usr/share/zoneinfo/Etc/UTC",
+        "openssl verify",
     ]
     missing = [marker for marker in required if marker not in text]
     require(not missing, "Dockerfile missing required markers: " + ", ".join(missing))
@@ -167,6 +176,7 @@ def check_workflow() -> None:
         "tests/fips.sh",
         "tools/verify.py",
         "tools/assert-sbom-rpms.py --self-test",
+        "tools/assert-footprint.py --self-test",
         "tools/assert-vex.py --self-test",
         "tools/assert-no-rootfs-secrets.py --self-test",
         "tools/generate-nist-800-190-predicate.py --self-test",
@@ -185,6 +195,9 @@ def check_workflow() -> None:
         "tools/install-openscap.sh",
         "tools/build-stig-datastream.sh",
         "tools/run-stig-arf.sh",
+        "Run runtime footprint gate",
+        "tools/assert-footprint.py",
+        "dist/footprint/base-micro.${arch}.json",
         "Run tailored STIG ARF gate",
         "tools/install-trivy.sh",
         "tools/install-grype.sh",
@@ -553,6 +566,7 @@ def check_helper_self_tests() -> None:
     for relative_path in [
         "tools/assert-no-rootfs-secrets.py",
         "tools/generate-nist-800-190-predicate.py",
+        "tools/assert-footprint.py",
         "tools/assert-cosign-rekor.py",
         "tools/assert-slsa-builder-id.py",
         "tools/assert-stig-tailoring.py",
@@ -633,6 +647,7 @@ def check_docs() -> None:
     verify = read("docs/reference/verify.md")
     vex_doc = read("docs/vex.md")
     nist_doc = read("docs/nist-800-190.md")
+    footprint_doc = read("docs/footprint.md")
     stig_doc = read("docs/stig.md")
     legacy_namespace = "ghcr.io/nwarila-" + "platform/*"
     require(legacy_namespace in acceptance, "acceptance copy should preserve source DoD text")
@@ -654,9 +669,20 @@ def check_docs() -> None:
     require("tailored RHEL9 STIG ARF gate" in readme and "docs/stig.md" in readme, "README.md must describe current STIG gate scope")
     require("reference/verify.md" in docs_index, "docs README must index verify contract")
     require("nist-800-190.md" in docs_index, "docs README must index NIST 800-190 evidence")
+    require("footprint.md" in docs_index, "docs README must index footprint evidence")
     require("stig.md" in docs_index, "docs README must index STIG evidence")
     require("vex.md" in docs_index, "docs README must index VEX flow")
     require("CODEOWNERS-gated" in vex_doc and "cosign attest --type openvex" in vex_doc, "docs/vex.md must describe VEX review and attestation flow")
+    for marker in [
+        "25 * 1024 * 1024 bytes",
+        "exported-rootfs-regular-file-bytes",
+        "tools/assert-footprint.py",
+        "FIPS library closure",
+        "rpmdb",
+        "STEP022/STEP023",
+    ]:
+        require(marker in footprint_doc, f"docs/footprint.md missing marker: {marker}")
+
     for marker in [
         "https://nwarila.dev/attestations/nist-sp-800-190-image/v1",
         "NIST SP 800-190 section 4.1",
