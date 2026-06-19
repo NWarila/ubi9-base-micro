@@ -58,9 +58,9 @@ SECRET_PATTERNS = [
     SecretPattern(
         "generic-secret-assignment",
         re.compile(
-            r"(?i)\b(?:aws_secret_access_key|secret_access_key|client_secret|"
+            r"(?i)\b(?P<key>aws_secret_access_key|secret_access_key|client_secret|"
             r"api[_-]?key|access[_-]?token|auth[_-]?token|password|passwd|"
-            r"private[_-]?key)\b\s*[:=]\s*[\"']?([A-Za-z0-9+/_=.!@#$%^&*~-]{12,})"
+            r"private[_-]?key)\b\s*[:=]\s*[\"']?(?P<value>[A-Za-z0-9+/_=.!@#$%^&*~-]{12,})"
         ),
     ),
 ]
@@ -69,6 +69,22 @@ SECRET_PATTERNS = [
 def is_probably_binary(sample: bytes) -> bool:
     return b"\x00" in sample
 
+
+def is_benign_generic_assignment(match: re.Match[str]) -> bool:
+    key = (match.groupdict().get("key") or "").lower().replace("-", "_")
+    value = (match.groupdict().get("value") or "").strip().strip('"\'')
+    lowered = value.lower()
+    placeholders = {"changeme", "change_me", "example", "example_secret", "placeholder"}
+    if lowered in placeholders:
+        return True
+    if key == "private_key" and (
+        value.startswith(("$", "/", "./", "../"))
+        or "/" in value
+        or "\\" in value
+        or lowered.endswith((".pem", ".key"))
+    ):
+        return True
+    return False
 
 def iter_files(rootfs: Path) -> Iterable[Path]:
     for path in sorted(rootfs.rglob("*")):
@@ -106,6 +122,8 @@ def scan(rootfs: Path) -> dict[str, object]:
         files_scanned += 1
         for pattern in SECRET_PATTERNS:
             for match in pattern.expression.finditer(text):
+                if pattern.name == "generic-secret-assignment" and is_benign_generic_assignment(match):
+                    continue
                 line = text.count("\n", 0, match.start()) + 1
                 findings.append(
                     {
@@ -140,6 +158,7 @@ def run_self_test() -> None:
         clean.mkdir()
         dirty.mkdir()
         (clean / "os-release").write_text('NAME="UBI"\n', encoding="utf-8")
+        (clean / "openssl.cnf").write_text("private_key = $dir/private/cakey.pem\n", encoding="utf-8")
         (dirty / "env").write_text(
             "AWS_SECRET_ACCESS_KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
             encoding="utf-8",
