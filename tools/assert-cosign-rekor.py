@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assert cosign verification JSON includes Rekor transparency-log bundles."""
+"""Assert cosign signature verification JSON includes Rekor tlog bundles."""
 
 from __future__ import annotations
 
@@ -56,35 +56,62 @@ def assert_rekor(path: Path, kind: str) -> None:
     print(f"{kind}: Rekor tlog bundle present in {len(records)} cosign record(s)")
 
 
+def expect_rekor_failure(path: Path, kind: str) -> None:
+    try:
+        assert_rekor(path, kind)
+    except SystemExit:
+        return
+    raise SystemExit(f"{kind} unexpectedly passed without a Rekor bundle")
+
+
 def run_self_test() -> None:
-    good = [
+    signature_with_bundle = [
         {
+            "critical": {
+                "identity": {"docker-reference": "ghcr.io/nwarila/ubi9-base-micro"},
+                "image": {"docker-manifest-digest": "sha256:" + "1" * 64},
+                "type": "cosign container image signature",
+            },
             "optional": {
                 "Bundle": {
-                    "SignedEntryTimestamp": "set",
                     "Payload": {
                         "logIndex": 7,
                         "integratedTime": 1700000000,
                         "logID": "abc",
                     },
+                    "SignedEntryTimestamp": "MEUCIQDbundle",
                 }
-            }
+            },
         }
     ]
-    bad = [{"optional": {}}]
+    signature_without_bundle = [
+        {
+            "critical": {
+                "identity": {"docker-reference": "ghcr.io/nwarila/ubi9-base-micro"},
+                "image": {"docker-manifest-digest": "sha256:" + "2" * 64},
+                "type": "cosign container image signature",
+            },
+            "optional": {},
+        }
+    ]
+    dsse_attestation_envelope = [
+        {
+            "payload": "eyJfdHlwZSI6Imh0dHBzOi8vaW4tdG90by5pby9TdGF0ZW1lbnQvdjEifQ",
+            "payloadType": "application/vnd.in-toto+json",
+            "signatures": [{"keyid": "", "sig": "MEUCIQDsse"}],
+        }
+    ]
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         good_path = root / "good.json"
-        bad_path = root / "bad.json"
-        good_path.write_text(json.dumps(good), encoding="utf-8")
-        bad_path.write_text(json.dumps(bad), encoding="utf-8")
-        assert_rekor(good_path, "self-test-good")
-        try:
-            assert_rekor(bad_path, "self-test-bad")
-        except SystemExit:
-            pass
-        else:
-            raise SystemExit("self-test missing Rekor bundle unexpectedly passed")
+        missing_path = root / "missing.json"
+        dsse_path = root / "dsse.jsonl"
+        good_path.write_text(json.dumps(signature_with_bundle), encoding="utf-8")
+        missing_path.write_text(json.dumps(signature_without_bundle), encoding="utf-8")
+        dsse_path.write_text("\n".join(json.dumps(record) for record in dsse_attestation_envelope), encoding="utf-8")
+        assert_rekor(good_path, "self-test-signature-with-bundle")
+        expect_rekor_failure(missing_path, "self-test-signature-missing-bundle")
+        expect_rekor_failure(dsse_path, "self-test-dsse-attestation-envelope")
     print("cosign Rekor assertion self-test passed")
 
 
