@@ -23,7 +23,8 @@ a CMVP-validated configuration on that architecture. See `docs/fips.md`.
 The authoritative SBOM evidence is Syft rpmdb-derived SPDX and CycloneDX,
 attested per published platform child digest. BuildKit SBOM output is disabled
 so the published SPDX evidence has a single source. Vulnerability scanners,
-STIG ARF, and 800-190 evidence remain out of scope for this slice.
+OpenVEX default-deny, and NIST SP 800-190 section 4.1 image evidence are
+gated in CI; STIG ARF remains out of scope until P1.5.
 
 ## Local Build
 
