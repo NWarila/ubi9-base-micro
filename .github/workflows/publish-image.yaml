@@ -746,6 +746,54 @@ jobs:
             python tools/assert-cosign-rekor.py --kind "${kind}" "${path}"
           }
 
+          assert_attestation_tlog() {
+            local kind="$1"
+            local path="$2"
+            python - "${kind}" "${path}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          kind = sys.argv[1]
+          path = Path(sys.argv[2])
+          raw = path.read_text(encoding="utf-8").strip()
+          if not raw:
+              raise SystemExit(f"{kind}: cosign verify-attestation produced no DSSE output")
+          try:
+              loaded = json.loads(raw)
+              records = loaded if isinstance(loaded, list) else [loaded]
+          except json.JSONDecodeError:
+              records = [json.loads(line) for line in raw.splitlines() if line.strip()]
+
+          if not records:
+              raise SystemExit(f"{kind}: cosign verify-attestation produced no DSSE records")
+
+          missing = []
+          for index, record in enumerate(records, start=1):
+              if not isinstance(record, dict):
+                  missing.append(index)
+                  continue
+              payload = record.get("payload")
+              signatures = record.get("signatures")
+              if not isinstance(payload, str) or not payload:
+                  missing.append(index)
+                  continue
+              if not isinstance(signatures, list) or not signatures:
+                  missing.append(index)
+                  continue
+              if not all(isinstance(signature, dict) and signature.get("sig") for signature in signatures):
+                  missing.append(index)
+
+          if missing:
+              raise SystemExit(f"{kind}: missing DSSE payload/signature field(s) in record(s): {missing}")
+
+          print(
+              f"{kind}: cosign verify-attestation succeeded with Rekor transparency log enabled; "
+              f"DSSE envelope(s): {len(records)}"
+          )
+          PY
+          }
+
           cosign verify "${published_ref}" \
             --certificate-identity "${PUBLISH_CERTIFICATE_IDENTITY}" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
@@ -756,7 +804,7 @@ jobs:
             --certificate-identity "${SLSA_CERTIFICATE_IDENTITY}" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             > dist/rekor/slsa-provenance.index.json
-          verify_rekor "SLSA provenance index" dist/rekor/slsa-provenance.index.json
+          assert_attestation_tlog "SLSA provenance index" dist/rekor/slsa-provenance.index.json
           python tools/assert-slsa-builder-id.py \
             --attestation dist/rekor/slsa-provenance.index.json \
             --builder-id "${EXPECTED_BUILDER_ID}"
@@ -784,26 +832,26 @@ jobs:
               --certificate-identity "${PUBLISH_CERTIFICATE_IDENTITY}" \
               --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
               > "dist/rekor/spdx.${arch}.jsonl"
-            verify_rekor "SPDX SBOM ${arch}" "dist/rekor/spdx.${arch}.jsonl"
+            assert_attestation_tlog "SPDX SBOM ${arch}" "dist/rekor/spdx.${arch}.jsonl"
 
             cosign verify-attestation --type cyclonedx "${image_ref}" \
               --certificate-identity "${PUBLISH_CERTIFICATE_IDENTITY}" \
               --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
               > "dist/rekor/cyclonedx.${arch}.jsonl"
-            verify_rekor "CycloneDX SBOM ${arch}" "dist/rekor/cyclonedx.${arch}.jsonl"
+            assert_attestation_tlog "CycloneDX SBOM ${arch}" "dist/rekor/cyclonedx.${arch}.jsonl"
 
             cosign verify-attestation --type "${NIST_800_190_PREDICATE_TYPE}" "${image_ref}" \
               --certificate-identity "${PUBLISH_CERTIFICATE_IDENTITY}" \
               --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
               > "dist/rekor/nist-800-190.${arch}.jsonl"
-            verify_rekor "NIST 800-190 image ${arch}" "dist/rekor/nist-800-190.${arch}.jsonl"
+            assert_attestation_tlog "NIST 800-190 image ${arch}" "dist/rekor/nist-800-190.${arch}.jsonl"
 
             if (( ${#vex_docs[@]} > 0 )); then
               cosign verify-attestation --type openvex "${image_ref}" \
                 --certificate-identity "${PUBLISH_CERTIFICATE_IDENTITY}" \
                 --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
                 > "dist/rekor/openvex.${arch}.jsonl"
-              verify_rekor "OpenVEX ${arch}" "dist/rekor/openvex.${arch}.jsonl"
+              assert_attestation_tlog "OpenVEX ${arch}" "dist/rekor/openvex.${arch}.jsonl"
             else
               echo "OpenVEX ${arch}: no vex/*.json present; no OpenVEX attestation expected."
             fi
