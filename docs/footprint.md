@@ -14,14 +14,17 @@ Current STEP024 local evidence:
 
 | Metric | Value |
 | --- | ---: |
-| Uncompressed exported-rootfs-regular-file-bytes | 24,035,076 bytes / 22.9216 MiB |
+| Uncompressed exported-rootfs-regular-file-bytes | 23,928,063 bytes / 22.8196 MiB |
 | Limit | 26,214,400 bytes / 25 MiB |
-| Local OCI compressed layer sum | 12,111,841 bytes / 11.5508 MiB |
-| Local Docker image `.Size` | 12,125,924 bytes |
+| Local OCI compressed layer sum | 12,098,996 bytes / 11.5385 MiB |
+| Local Docker image `.Size` | 12,113,249 bytes |
 
 The uncompressed number is produced by `tools/assert-footprint.py`, which
 exports the final image rootfs and sums regular files from the tar stream. The
 same script runs in CI and writes `dist/footprint/base-micro.${arch}.json`.
+`tools/assert-no-phantom-packages.py` then checks the Syft rpmdb file map
+against the exported rootfs so an rpmdb-listed package cannot keep only
+non-functional build-id, doc, man, or license residue after stripping.
 
 The compressed number above is a local OCI-layout layer-size sum for the same
 runtime target. The authoritative compressed registry-layer sum is recorded

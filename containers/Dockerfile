@@ -197,7 +197,7 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     for candidate in \
       coreutils-single coreutils findutils grep sed p11-kit p11-kit-trust \
       libsepol libselinux gmp pcre2 pcre libpcre ncurses-libs ncurses-base \
-      libsigsegv libffi libtasn1; do \
+      libsigsegv libffi libtasn1 libacl libattr libcap coreutils-common pcre2-syntax; do \
       if rpm --root=/rootfs -q "${candidate}" >/dev/null 2>&1; then \
         candidate_nevra="$(rpm --root=/rootfs -q --qf '%{NEVRA}\n' "${candidate}")"; \
         echo "strip candidate installed: ${candidate_nevra}"; \
@@ -408,6 +408,9 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
       /usr/lib64/libacl.so* \
       /usr/lib64/libcap.so* \
       /usr/lib64/libattr.so* \
+      /usr/lib64/libpsx.so* \
+      /usr/lib64/security/pam_cap.so \
+      /etc/xattr.conf \
       /usr/lib64/libncurses*.so* \
       /usr/lib64/libtinfo.so* \
       /usr/lib64/libtic.so* \
@@ -417,6 +420,8 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
       /var/lib/rhsm \
       /var/lib/alternatives \
       /usr/lib/rpm \
+      /usr/share/licenses/libcap \
+      /usr/share/licenses/pcre2-syntax \
       /var/cache/* \
       /etc/pki/ca-trust/extracted/openssl \
       /etc/pki/ca-trust/extracted/java \

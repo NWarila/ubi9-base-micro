@@ -65,6 +65,7 @@ jobs:
           python tools/verify.py
           python tools/assert-sbom-rpms.py --self-test
           python tools/assert-footprint.py --self-test
+          python tools/assert-no-phantom-packages.py --self-test
           python tools/assert-vex.py --self-test
           python tools/assert-no-rootfs-secrets.py --self-test
           python tools/generate-nist-800-190-predicate.py --self-test
@@ -156,6 +157,22 @@ jobs:
             --source "dist/sbom/base-micro.${sbom_arch}.syft.json" \
             "dist/sbom/base-micro.${sbom_arch}.spdx.json" \
             "dist/sbom/base-micro.${sbom_arch}.cdx.json"
+
+      - name: Run runtime phantom package gate
+        run: |
+          set -euo pipefail
+
+          sbom_arch="${PLATFORM#linux/}"
+          python tools/assert-no-phantom-packages.py \
+            --image "${RUNTIME_IMAGE}" \
+            --platform "${PLATFORM}" \
+            --syft-json "dist/sbom/base-micro.${sbom_arch}.syft.json" \
+            --output "dist/sbom/base-micro.${sbom_arch}.phantom-packages.json" \
+            --expect-absent libacl \
+            --expect-absent libattr \
+            --expect-absent libcap \
+            --expect-absent coreutils-common \
+            --expect-absent pcre2-syntax
 
       - name: Run Trivy fixable vulnerability gate
         run: |
