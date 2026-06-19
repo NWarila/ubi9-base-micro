@@ -13,6 +13,17 @@ fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mkdir -p "${out_dir}"
 
+ssg_python="/usr/bin/python3"
+if [[ ! -x "${ssg_python}" ]]; then
+  echo "required SSG Python interpreter is not executable: ${ssg_python}" >&2
+  exit 1
+fi
+
+if ! "${ssg_python}" -c 'import jinja2, yaml' >/dev/null 2>&1; then
+  echo "${ssg_python} cannot import jinja2 and yaml; run tools/install-openscap.sh to install python3-jinja2 and python3-yaml" >&2
+  exit 1
+fi
+
 tarball="scap-security-guide-${version}.tar.bz2"
 tarball_path="${out_dir}/${tarball}"
 base_url="https://github.com/ComplianceAsCode/content/releases/download/v${version}"
@@ -31,6 +42,7 @@ fi
 build_dir="${src_dir}/build"
 mkdir -p "${build_dir}"
 cmake -S "${src_dir}" -B "${build_dir}" -G Ninja \
+  -DPython_EXECUTABLE="${ssg_python}" \
   -DSSG_PRODUCT_DEFAULT=OFF \
   -DSSG_PRODUCT_RHEL9=ON
 ninja -C "${build_dir}" generate-ssg-rhel9-ds.xml
@@ -50,7 +62,7 @@ fi
 cp "${datastream}" "${out_dir}/ssg-rhel9-ds.xml"
 cp "${controls}" "${out_dir}/stig_rhel9.yml"
 
-python "${repo_root}/tools/assert-stig-tailoring.py" \
+"${ssg_python}" "${repo_root}/tools/assert-stig-tailoring.py" \
   --tailoring "${repo_root}/stig/rhel9-base-micro-tailoring.xml" \
   --justifications "${repo_root}/stig/tailoring-justifications.json" \
   --controls-yaml "${out_dir}/stig_rhel9.yml" \
