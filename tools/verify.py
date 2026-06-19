@@ -60,12 +60,18 @@ def check_required_files() -> None:
         "docs/acceptance.md",
         "docs/fips.md",
         "docs/reference/verify.md",
+        "docs/vex.md",
         "tests/fips.sh",
         "tests/hardening.sh",
         "tools/build.sh",
         "tools/install-syft.sh",
+        "tools/install-trivy.sh",
+        "tools/install-grype.sh",
         "tools/assert-sbom-rpms.py",
+        "tools/assert-vex.py",
         "tools/verify.py",
+        "vex/.gitkeep",
+        "vex/README.md",
     ]:
         require((ROOT / relative_path).is_file(), f"missing required file: {relative_path}")
 
@@ -145,12 +151,28 @@ def check_workflow() -> None:
         "tests/fips.sh",
         "tools/verify.py",
         "tools/assert-sbom-rpms.py --self-test",
+        "tools/assert-vex.py --self-test",
+        "TRIVY_VERSION: \"0.71.0\"",
+        "GRYPE_VERSION: \"0.87.0\"",
+        "tools/install-trivy.sh",
+        "tools/install-grype.sh",
         "Generate and verify runtime SBOMs",
         "dist/tools/syft scan",
         "json=dist/sbom/base-micro.${sbom_arch}.syft.json",
         "spdx-json=dist/sbom/base-micro.${sbom_arch}.spdx.json",
         "cyclonedx-json=dist/sbom/base-micro.${sbom_arch}.cdx.json",
         "--source \"dist/sbom/base-micro.${sbom_arch}.syft.json\"",
+        "Run Trivy fixable vulnerability gate",
+        "dist/tools/trivy image",
+        "--ignore-unfixed",
+        "--severity HIGH,CRITICAL",
+        "--exit-code 1",
+        "Run Grype fixable vulnerability gate",
+        "dist/tools/grype \"${RUNTIME_IMAGE}\" --only-fixed --fail-on high",
+        "Run OpenVEX default-deny gate",
+        "--format json",
+        "--file \"${grype_json}\"",
+        "tools/assert-vex.py",
         "ghcr.io/nwarila/ubi9-base-micro",
     ]:
         require(marker in text, f"build workflow missing marker: {marker}")
@@ -163,8 +185,6 @@ def check_workflow() -> None:
         "co" + "sign",
         "generator_container_" + "sl" + "sa3",
         "attest-build-" + "provenance",
-        "tri" + "vy",
-        "gry" + "pe",
         "os" + "cap",
         "continue-on-" + "error",
     ]
@@ -191,7 +211,11 @@ def check_publish_workflow() -> None:
         "OPENSSL_FIPS_MODULE_VERSION",
         "OPENSSL_FIPS_PROVIDER_NEVRA",
         "SYFT_VERSION: \"1.45.1\"",
+        "TRIVY_VERSION: \"0.71.0\"",
+        "GRYPE_VERSION: \"0.87.0\"",
         "tools/install-syft.sh",
+        "tools/install-trivy.sh",
+        "tools/install-grype.sh",
         "docker buildx imagetools inspect --raw",
         "steps.platform_digests.outputs.amd64_digest",
         "steps.platform_digests.outputs.arm64_digest",
@@ -201,9 +225,22 @@ def check_publish_workflow() -> None:
         "cyclonedx-json=dist/sbom/base-micro.${arch}.cdx.json",
         "tools/assert-sbom-rpms.py",
         "--source \"dist/sbom/base-micro.${arch}.syft.json\"",
+        "Run Trivy fixable vulnerability gates",
+        "dist/tools/trivy image",
+        "--ignore-unfixed",
+        "--severity HIGH,CRITICAL",
+        "--exit-code 1",
+        "Run Grype fixable vulnerability gates",
+        "--only-fixed --fail-on high",
+        "Run OpenVEX default-deny gates",
+        "--format json",
+        "--file \"${grype_json}\"",
+        "tools/assert-vex.py",
         "cosign attest --type spdxjson",
         "cosign attest --type cyclonedx",
         "cosign verify-attestation --type spdxjson",
+        "cosign attest --type openvex",
+        "cosign verify-attestation --type openvex",
         "COSIGN_YES: \"true\"",
         SLSA_GENERATOR + "@" + SLSA_GENERATOR_TAG,
         SLSA_GENERATOR_SHA,
@@ -225,8 +262,6 @@ def check_publish_workflow() -> None:
         "attest-build-" + "provenance",
         "gh attestation verify",
         "continue-on-" + "error",
-        "tri" + "vy",
-        "gry" + "pe",
         "os" + "cap",
         "examples/image-manifest.json",
         "tools/build_app.sh",
@@ -292,6 +327,29 @@ def check_sbom_assertion_script() -> None:
         require(marker in text, f"SBOM assertion script missing marker: {marker}")
 
 
+def check_scanner_install_scripts() -> None:
+    trivy = read("tools/install-trivy.sh")
+    for marker in [
+        "TRIVY_VERSION:-0.71.0",
+        "github.com/aquasecurity/trivy/releases/download/v${version}",
+        "trivy_${version}_checksums.txt",
+        "sha256sum -c -",
+        "curl -fsSLO",
+        "tar xzf",
+    ]:
+        require(marker in trivy, f"Trivy installer missing marker: {marker}")
+
+    grype = read("tools/install-grype.sh")
+    for marker in [
+        "GRYPE_VERSION:-0.87.0",
+        "github.com/anchore/grype/releases/download/v${version}",
+        "grype_${version}_checksums.txt",
+        "sha256sum -c -",
+        "curl -fsSLO",
+        "tar xzf",
+    ]:
+        require(marker in grype, f"Grype installer missing marker: {marker}")
+
 def check_fips_config() -> None:
     text = read("containers/fips/openssl.cnf")
     for marker in [
@@ -329,11 +387,45 @@ def check_fips_script() -> None:
         require(marker in text, f"FIPS script missing marker: {marker}")
 
 
+def check_vex() -> None:
+    require((ROOT / "vex").is_dir(), "missing VEX directory")
+    codeowners = read(".github/CODEOWNERS")
+    require("/vex/ @NWarila" in codeowners, "CODEOWNERS must gate vex/ with @NWarila")
+
+    read("vex/README.md")
+    require((ROOT / "vex/.gitkeep").is_file(), "vex/.gitkeep must preserve the empty VEX directory")
+
+    script = read("tools/assert-vex.py")
+    for marker in [
+        "parse_trivy",
+        "parse_grype",
+        "--self-test",
+        "synthetic-unvexed-critical",
+        "not_affected",
+        "justification",
+        "fixed",
+        "under_investigation",
+        "affected",
+        "un-vexed unfixed HIGH/CRITICAL findings",
+    ]:
+        require(marker in script, f"VEX assertion script missing marker: {marker}")
+
+    vex_readme = read("vex/README.md")
+    for marker in [
+        "default-deny",
+        "Trivy",
+        "Grype",
+        "CODEOWNERS",
+        "cosign attest --type openvex",
+    ]:
+        require(marker in vex_readme, f"vex/README.md missing marker: {marker}")
+
 def check_docs() -> None:
     acceptance = read("docs/acceptance.md")
     fips = read("docs/fips.md")
     docs_index = read("docs/README.md")
     verify = read("docs/reference/verify.md")
+    vex_doc = read("docs/vex.md")
     legacy_namespace = "ghcr.io/nwarila-" + "platform/*"
     require(legacy_namespace in acceptance, "acceptance copy should preserve source DoD text")
     require("superseded for this repository" in acceptance, "acceptance.md must flag the legacy platform namespace")
@@ -344,16 +436,26 @@ def check_docs() -> None:
     require("Per-architecture validation scope" in fips, "docs/fips.md must describe per-architecture validation scope")
     require("TD-3" in fips, "docs/fips.md must reference TD-3")
     require("oe_validated" in fips, "docs/fips.md must document fips-status.json oe_validated")
-    require("this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list — this is NOT a CMVP-validated configuration on this architecture" in fips, "docs/fips.md missing arm64 disclaimer")
+    require(
+        "this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list" in fips
+        and "this is NOT a CMVP-validated configuration on this architecture" in fips,
+        "docs/fips.md missing arm64 disclaimer",
+    )
     require("x86_64" in fips and "IBM Z" in fips and "POWER" in fips and "aarch64" in fips, "docs/fips.md must cite tested OE architecture scope")
     require("certificate/4857" in fips and "140sp4857.pdf" in fips, "docs/fips.md must cite NIST #4857 sources")
     require("reference/verify.md" in docs_index, "docs README must index verify contract")
+    require("vex.md" in docs_index, "docs README must index VEX flow")
+    require("CODEOWNERS-gated" in vex_doc and "cosign attest --type openvex" in vex_doc, "docs/vex.md must describe VEX review and attestation flow")
 
     for marker in [
         "cosign verify \"${IMAGE_REF}\"",
         "cosign verify-attestation --type spdxjson",
         "cosign verify-attestation --type cyclonedx",
+        "cosign verify-attestation --type openvex",
         "cosign download sbom \"${IMAGE_REF}\" | grep -q glibc",
+        "Trivy",
+        "Grype",
+        "OpenVEX default-deny",
         "cosign verify-attestation --type slsaprovenance",
         "slsa-verifier verify-image",
         "generator_container_slsa3.yml@refs/tags/v2.1.0",
@@ -396,8 +498,10 @@ def main() -> int:
         check_build_script,
         check_hardening_script,
         check_sbom_assertion_script,
+        check_scanner_install_scripts,
         check_fips_config,
         check_fips_script,
+        check_vex,
         check_docs,
         check_no_attribution_residue,
     ]

@@ -23,6 +23,11 @@
 !/docs/
 !/docs/**/*.md
 
+!/vex/
+!/vex/.gitkeep
+!/vex/*.json
+!/vex/README.md
+
 !/tests/
 !/tests/*.sh
 
