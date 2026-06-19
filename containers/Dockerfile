@@ -6,17 +6,90 @@ ARG BUILDKIT_SBOM_SCAN_CONTEXT=true
 ARG UBI_MINIMAL_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal@sha256:ae09ecc3d754bc1726cbda3e2599cc7839e09fe1cc547ce173cf669b645be3cc
 # renovate: datasource=docker depName=registry.access.redhat.com/ubi9/ubi-micro
 ARG UBI_MICRO_IMAGE=registry.access.redhat.com/ubi9/ubi-micro@sha256:b498b3ea26111ab4b81d65139f2ebd2ef9a2abb7a4588b7fdcc54889f95e9caa
+ARG OPENSSL_FIPS_MODULE_VERSION=3.0.7-395c1a240fbfffd8
+ARG OPENSSL_FIPS_PROVIDER_NEVRA=openssl-fips-provider-so-3.0.7-8.el9.x86_64
+
+FROM ${UBI_MINIMAL_IMAGE} AS fips-verify
+ARG BUILDKIT_SBOM_SCAN_STAGE=true
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG DNF_REPOS=""
+ARG OPENSSL_FIPS_MODULE_VERSION
+ARG OPENSSL_FIPS_PROVIDER_NEVRA
+
+COPY containers/fips/openssl.cnf /tmp/openssl-fips.cnf
+
+RUN set -eux; \
+    microdnf install -y --releasever=9 \
+      --config=/etc/dnf/dnf.conf --noplugins \
+      --setopt=reposdir=/etc/yum.repos.d \
+      --setopt=varsdir=/etc/dnf/vars \
+      --nodocs --setopt=install_weak_deps=0 \
+      ${DNF_REPOS:+--disablerepo=* --enablerepo=${DNF_REPOS}} \
+      openssl openssl-fips-provider crypto-policies; \
+    microdnf clean all; \
+    provider_nevra="$(rpm -q --qf '%{NEVRA}\n' openssl-fips-provider-so)"; \
+    libs_nevra="$(rpm -q --qf '%{NEVRA}\n' openssl-libs)"; \
+    fips_so_sha256="$(sha256sum /usr/lib64/ossl-modules/fips.so | awk '{print $1}')"; \
+    echo "openssl-fips-provider-so NEVRA=${provider_nevra}"; \
+    echo "openssl-libs NEVRA=${libs_nevra}"; \
+    echo "openssl-fips-provider-so fips.so sha256=${fips_so_sha256}"; \
+    test "${provider_nevra}" = "${OPENSSL_FIPS_PROVIDER_NEVRA}" || { \
+      echo "unexpected openssl-fips-provider-so NEVRA: ${provider_nevra}" >&2; exit 1; \
+    }; \
+    providers_verbose="$(OPENSSL_CONF=/tmp/openssl-fips.cnf OPENSSL_MODULES=/usr/lib64/ossl-modules openssl list -providers -verbose 2>&1)"; \
+    printf '%s\n' "${providers_verbose}"; \
+    printf '%s\n' "${providers_verbose}" | grep -q '^  fips$'; \
+    printf '%s\n' "${providers_verbose}" | grep -q '^  base$'; \
+    ! printf '%s\n' "${providers_verbose}" | grep -q '^  default$'; \
+    module_version="$(printf '%s\n' "${providers_verbose}" | grep -A8 '^  fips$' | sed -n 's/^[[:space:]]*version: //p' | head -n1)"; \
+    test "${module_version}" = "${OPENSSL_FIPS_MODULE_VERSION}" || { \
+      echo "unexpected OpenSSL FIPS provider module version: ${module_version}" >&2; exit 1; \
+    }; \
+    printf '%s\n' "${providers_verbose}" | grep -A8 '^  fips$' | grep -q 'status: active'; \
+    if printf x | OPENSSL_CONF=/tmp/openssl-fips.cnf OPENSSL_MODULES=/usr/lib64/ossl-modules openssl dgst -md5 > /tmp/fips-md5.out 2>&1; then \
+      cat /tmp/fips-md5.out; \
+      echo "md5 unexpectedly succeeded under OpenSSL FIPS approved mode" >&2; exit 1; \
+    fi; \
+    cat /tmp/fips-md5.out; \
+    printf x | OPENSSL_CONF=/tmp/openssl-fips.cnf OPENSSL_MODULES=/usr/lib64/ossl-modules openssl dgst -sha256 | tee /tmp/fips-sha256.out; \
+    printf x | OPENSSL_CONF=/tmp/openssl-fips.cnf OPENSSL_MODULES=/usr/lib64/ossl-modules openssl enc -aes-256-cbc -pbkdf2 -pass pass:test -out /tmp/fips-aes.out; \
+    test -s /tmp/fips-aes.out; \
+    mkdir -p /fips-proof; \
+    printf '%s\n' "${provider_nevra}" > /fips-proof/provider.nevra; \
+    printf '%s\n' "${libs_nevra}" > /fips-proof/libs.nevra; \
+    printf '%s\n' "${fips_so_sha256}" > /fips-proof/fips.so.sha256; \
+    printf '%s\n' "${module_version}" > /fips-proof/module.version; \
+    { \
+      echo "openssl-fips-provider-so NEVRA=${provider_nevra}"; \
+      echo "openssl-libs NEVRA=${libs_nevra}"; \
+      echo "openssl-fips-provider-so fips.so sha256=${fips_so_sha256}"; \
+      echo "openssl-fips-provider module-version=${module_version}"; \
+      printf '%s\n' "${providers_verbose}" | grep -A8 '^  fips$'; \
+      printf '%s\n' "${providers_verbose}" | grep -A8 '^  base$'; \
+      echo "md5 failure:"; cat /tmp/fips-md5.out; \
+      echo "sha256 success:"; cat /tmp/fips-sha256.out; \
+      echo "aes-256-cbc success bytes=$(wc -c < /tmp/fips-aes.out)"; \
+    } > /fips-proof/proof.txt; \
+    test -s /fips-proof/proof.txt; \
+    test -s /fips-proof/provider.nevra; \
+    test -s /fips-proof/libs.nevra; \
+    test -s /fips-proof/fips.so.sha256; \
+    test -s /fips-proof/module.version
 
 FROM ${UBI_MINIMAL_IMAGE} AS rpm-rootfs
 ARG BUILDKIT_SBOM_SCAN_STAGE=true
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-ARG RUNTIME_PACKAGES="ca-certificates"
+ARG RUNTIME_PACKAGES="ca-certificates openssl-fips-provider"
 ARG DNF_REPOS=""
+ARG OPENSSL_FIPS_MODULE_VERSION
+ARG OPENSSL_FIPS_PROVIDER_NEVRA
 
 # Assemble the runtime rootfs with microdnf --installroot so /var/lib/rpm
 # remains available to scanners. Only regenerable caches and logs are pruned.
-RUN set -eux; \
+RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
+    set -eux; \
     test -n "${RUNTIME_PACKAGES}" || { echo "RUNTIME_PACKAGES must be set" >&2; exit 1; }; \
     mkdir -p /rootfs; \
     microdnf install -y --installroot=/rootfs --releasever=9 \
@@ -46,7 +119,49 @@ RUN set -eux; \
     test -s /rootfs/var/lib/rpm/rpmdb.sqlite || test -s /rootfs/var/lib/rpm/Packages || \
       { echo "rpm database missing from rootfs; scanners would see zero packages" >&2; exit 1; }; \
     test -e /rootfs/etc/pki/tls/certs/ca-bundle.crt || \
-      { echo "RHEL CA bundle path missing from runtime rootfs" >&2; exit 1; }
+      { echo "RHEL CA bundle path missing from runtime rootfs" >&2; exit 1; }; \
+    test -s /rootfs/usr/lib64/ossl-modules/fips.so || \
+      { echo "OpenSSL FIPS provider missing from runtime rootfs" >&2; exit 1; }; \
+    test -s /rootfs/usr/lib64/libcrypto.so.3 || \
+      { echo "OpenSSL libcrypto missing from runtime rootfs" >&2; exit 1; }; \
+    shipped_provider_nevra="$(rpm --root=/rootfs -q --qf '%{NEVRA}\n' openssl-fips-provider-so)"; \
+    shipped_libs_nevra="$(rpm --root=/rootfs -q --qf '%{NEVRA}\n' openssl-libs)"; \
+    shipped_fips_so_sha256="$(sha256sum /rootfs/usr/lib64/ossl-modules/fips.so | awk '{print $1}')"; \
+    verified_provider_nevra="$(cat /tmp/fips-proof/provider.nevra)"; \
+    verified_libs_nevra="$(cat /tmp/fips-proof/libs.nevra)"; \
+    verified_fips_so_sha256="$(cat /tmp/fips-proof/fips.so.sha256)"; \
+    verified_module_version="$(cat /tmp/fips-proof/module.version)"; \
+    echo "runtime rootfs openssl-fips-provider-so NEVRA=${shipped_provider_nevra}"; \
+    echo "runtime rootfs openssl-libs NEVRA=${shipped_libs_nevra}"; \
+    echo "runtime rootfs fips.so sha256=${shipped_fips_so_sha256}"; \
+    test "${verified_provider_nevra}" = "${OPENSSL_FIPS_PROVIDER_NEVRA}" || { \
+      echo "verified provider NEVRA does not match pin: ${verified_provider_nevra}" >&2; exit 1; \
+    }; \
+    test "${verified_module_version}" = "${OPENSSL_FIPS_MODULE_VERSION}" || { \
+      echo "verified module version does not match pin: ${verified_module_version}" >&2; exit 1; \
+    }; \
+    test "${shipped_provider_nevra}" = "${OPENSSL_FIPS_PROVIDER_NEVRA}" || { \
+      echo "runtime rootfs provider NEVRA does not match pin: ${shipped_provider_nevra}" >&2; exit 1; \
+    }; \
+    test "${shipped_provider_nevra}" = "${verified_provider_nevra}" || { \
+      echo "runtime rootfs provider NEVRA does not match verified stage: ${shipped_provider_nevra} != ${verified_provider_nevra}" >&2; exit 1; \
+    }; \
+    test "${shipped_libs_nevra}" = "${verified_libs_nevra}" || { \
+      echo "runtime rootfs openssl-libs NEVRA does not match verified stage: ${shipped_libs_nevra} != ${verified_libs_nevra}" >&2; exit 1; \
+    }; \
+    test "${shipped_fips_so_sha256}" = "${verified_fips_so_sha256}" || { \
+      echo "runtime rootfs fips.so sha256 does not match verified stage: ${shipped_fips_so_sha256} != ${verified_fips_so_sha256}" >&2; exit 1; \
+    }; \
+    if [ -e /rootfs/usr/bin/openssl ]; then \
+      echo "runtime rootfs must not include the openssl CLI" >&2; exit 1; \
+    fi; \
+    rm -f /rootfs/usr/lib64/ossl-modules/legacy.so /rootfs/etc/pki/tls/fipsmodule.cnf; \
+    if [ -e /rootfs/usr/lib64/ossl-modules/legacy.so ]; then \
+      echo "legacy OpenSSL provider survived in runtime rootfs" >&2; exit 1; \
+    fi; \
+    if [ -e /rootfs/etc/pki/tls/fipsmodule.cnf ]; then \
+      echo "fipsmodule.cnf survived in runtime rootfs" >&2; exit 1; \
+    fi
 
 FROM ${UBI_MINIMAL_IMAGE} AS dev-rootfs
 ARG BUILDKIT_SBOM_SCAN_STAGE=true
@@ -79,6 +194,8 @@ RUN set -eux; \
       { echo "rpm database missing from dev rootfs; scanners would see zero packages" >&2; exit 1; }
 
 FROM ${UBI_MICRO_IMAGE} AS runtime
+ARG OPENSSL_FIPS_MODULE_VERSION
+ARG OPENSSL_FIPS_PROVIDER_NEVRA
 
 ARG OCI_CREATED="1970-01-01T00:00:00Z"
 ARG OCI_DESCRIPTION="Hardened UBI 9 micro runtime base for NWarila images"
@@ -92,13 +209,33 @@ LABEL org.opencontainers.image.created="${OCI_CREATED}" \
       org.opencontainers.image.revision="${OCI_REVISION}" \
       org.opencontainers.image.source="${OCI_SOURCE}" \
       org.opencontainers.image.title="${OCI_TITLE}" \
-      org.opencontainers.image.version="${OCI_VERSION}"
+      org.opencontainers.image.version="${OCI_VERSION}" \
+      org.nwarila.fips.cmvp="4857" \
+      org.nwarila.fips.module-version="${OPENSSL_FIPS_MODULE_VERSION}" \
+      org.nwarila.fips.provider-nevra="${OPENSSL_FIPS_PROVIDER_NEVRA}"
 
 COPY --from=rpm-rootfs /rootfs/ /
+COPY containers/fips/openssl.cnf /etc/pki/tls/openssl-fips.cnf
+
+ENV OPENSSL_CONF=/etc/pki/tls/openssl-fips.cnf
+ENV OPENSSL_MODULES=/usr/lib64/ossl-modules
 
 # ubi-micro carries shell entry points for build-time RUN. Delete them last and
 # fail closed if any shell or package-manager executable remains.
-RUN ["/bin/sh", "-c", "set -eu; for executable in sh bash dash ash busybox ksh zsh tcsh csh dnf microdnf rpm yum; do rm -f \"/usr/bin/${executable}\" \"/usr/sbin/${executable}\" \"/bin/${executable}\" \"/sbin/${executable}\"; done; for executable in sh bash dash ash busybox ksh zsh tcsh csh dnf microdnf rpm yum; do if [ -e \"/usr/bin/${executable}\" ] || [ -e \"/usr/sbin/${executable}\" ] || [ -e \"/bin/${executable}\" ] || [ -e \"/sbin/${executable}\" ]; then echo \"forbidden executable ${executable} survived in runtime image\" >&2; exit 1; fi; done; test -s /var/lib/rpm/rpmdb.sqlite || test -s /var/lib/rpm/Packages"]
+RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
+    set -eu; \
+    test -s /tmp/fips-proof/proof.txt; \
+    test "$(cat /tmp/fips-proof/provider.nevra)" = "${OPENSSL_FIPS_PROVIDER_NEVRA}"; \
+    test "$(cat /tmp/fips-proof/module.version)" = "${OPENSSL_FIPS_MODULE_VERSION}"; \
+    test -s /usr/lib64/ossl-modules/fips.so; \
+    test -s /usr/lib64/libcrypto.so.3; \
+    test -s /etc/pki/tls/openssl-fips.cnf; \
+    test ! -e /usr/lib64/ossl-modules/legacy.so; \
+    test ! -e /etc/pki/tls/fipsmodule.cnf; \
+    test ! -e /usr/bin/openssl; \
+    for executable in sh bash dash ash busybox ksh zsh tcsh csh dnf microdnf rpm yum; do rm -f "/usr/bin/${executable}" "/usr/sbin/${executable}" "/bin/${executable}" "/sbin/${executable}"; done; \
+    for executable in sh bash dash ash busybox ksh zsh tcsh csh dnf microdnf rpm yum; do if [ -e "/usr/bin/${executable}" ] || [ -e "/usr/sbin/${executable}" ] || [ -e "/bin/${executable}" ] || [ -e "/sbin/${executable}" ]; then echo "forbidden executable ${executable} survived in runtime image" >&2; exit 1; fi; done; \
+    test -s /var/lib/rpm/rpmdb.sqlite || test -s /var/lib/rpm/Packages
 
 USER 65532:65532
 

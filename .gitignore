@@ -16,6 +16,8 @@
 
 !/containers/
 !/containers/Dockerfile
+!/containers/fips/
+!/containers/fips/openssl.cnf
 
 !/docs/
 !/docs/**/*.md

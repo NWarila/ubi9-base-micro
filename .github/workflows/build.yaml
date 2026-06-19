@@ -58,6 +58,7 @@ jobs:
       - name: Check shell script syntax
         run: |
           bash -n tests/hardening.sh
+          bash -n tests/fips.sh
           bash -n tools/build.sh
           bash -n tools/install-syft.sh
 
@@ -84,3 +85,6 @@ jobs:
 
       - name: Run runtime hardening gate
         run: bash tests/hardening.sh "${RUNTIME_IMAGE}"
+
+      - name: Run runtime FIPS artifact gate
+        run: bash tests/fips.sh "${RUNTIME_IMAGE}"
