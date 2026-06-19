@@ -39,9 +39,11 @@ def check_required_files() -> None:
         "README.md",
         "VERSION",
         "containers/Dockerfile",
+        "containers/fips/openssl.cnf",
         "docs/README.md",
         "docs/acceptance.md",
         "docs/fips.md",
+        "tests/fips.sh",
         "tests/hardening.sh",
         "tools/build.sh",
         "tools/install-syft.sh",
@@ -63,9 +65,17 @@ def check_dockerfile() -> None:
         "FROM ${UBI_MICRO_IMAGE} AS dev",
         "COPY --from=rpm-rootfs /rootfs/ /",
         "COPY --from=dev-rootfs /rootfs/ /",
+        "COPY containers/fips/openssl.cnf /etc/pki/tls/openssl-fips.cnf",
         "USER 65532:65532",
         "var/lib/rpm",
         "ca-certificates",
+        "openssl-fips-provider",
+        "OPENSSL_MODULES",
+        "OPENSSL_CONF",
+        "ossl-modules",
+        "org.nwarila.fips.cmvp",
+        "org.nwarila.fips.module-version",
+        "org.nwarila.fips.provider-nevra",
     ]
     missing = [marker for marker in required if marker not in text]
     require(not missing, "Dockerfile missing required markers: " + ", ".join(missing))
@@ -81,6 +91,7 @@ def check_dockerfile() -> None:
         "rm -rf /rootfs/var/lib/rpm",
         "rm -rf /var/lib/rpm",
         "ghcr.io/nwarila-" + "platform",
+        "fips" + "install",
     ]
     present = [marker for marker in forbidden if marker in text]
     require(not present, "Dockerfile contains forbidden marker(s): " + ", ".join(present))
@@ -97,6 +108,7 @@ def check_workflow() -> None:
         "tags:",
         "tools/build.sh",
         "tests/hardening.sh",
+        "tests/fips.sh",
         "tools/verify.py",
         "ghcr.io/nwarila/ubi9-base-micro",
     ]:
@@ -124,8 +136,6 @@ def check_workflow() -> None:
     require(not bad_refs, "workflow uses entries must be pinned to 40-char SHA: " + ", ".join(bad_refs))
 
 
-
-
 def check_build_script() -> None:
     text = read("tools/build.sh")
     for marker in [
@@ -138,6 +148,7 @@ def check_build_script() -> None:
         "ghcr.io/nwarila/ubi9-base-micro",
     ]:
         require(marker in text, f"build helper missing marker: {marker}")
+
 
 def check_hardening_script() -> None:
     text = read("tests/hardening.sh")
@@ -156,6 +167,40 @@ def check_hardening_script() -> None:
         require(marker in text, f"hardening script missing marker: {marker}")
 
 
+def check_fips_config() -> None:
+    text = read("containers/fips/openssl.cnf")
+    for marker in [
+        "openssl_conf = openssl_init",
+        "[provider_sect]",
+        "fips = fips_sect",
+        "base = base_sect",
+        "[fips_sect]",
+        "activate = 1",
+        "[algorithm_sect]",
+        "default_properties = fips=yes",
+    ]:
+        require(marker in text, f"FIPS OpenSSL config missing marker: {marker}")
+
+    lower = text.lower()
+    require(".include" not in lower, "FIPS OpenSSL config must not include external files")
+    require("fipsmodule.cnf" not in lower, "FIPS OpenSSL config must not reference fipsmodule.cnf")
+    require("[default_sect]" not in lower, "FIPS OpenSSL config must not activate the default provider")
+    require("legacy" not in lower, "FIPS OpenSSL config must not activate the legacy provider")
+
+
+def check_fips_script() -> None:
+    text = read("tests/fips.sh")
+    for marker in [
+        "OPENSSL_CONF",
+        "OPENSSL_MODULES",
+        "openssl-fips.cnf",
+        "fips.so",
+        "libcrypto.so.3",
+        "legacy.so",
+    ]:
+        require(marker in text, f"FIPS script missing marker: {marker}")
+
+
 def check_docs() -> None:
     acceptance = read("docs/acceptance.md")
     fips = read("docs/fips.md")
@@ -163,8 +208,10 @@ def check_docs() -> None:
     legacy_namespace = "ghcr.io/nwarila-" + "platform/*"
     require(legacy_namespace in acceptance, "acceptance copy should preserve source DoD text")
     require("superseded for this repository" in acceptance, "acceptance.md must flag the legacy platform namespace")
-    require("P1.3" in fips, "docs/fips.md must state that FIPS is filled by P1.3")
-    require("does not claim FIPS" in fips, "docs/fips.md must avoid a present FIPS claim")
+    require("#4857" in fips, "docs/fips.md must record the OpenSSL CMVP #4857 ledger")
+    require("3.0.7-395c1a240fbfffd8" in fips, "docs/fips.md must record the validated OpenSSL provider version")
+    require("approved mode" in fips, "docs/fips.md must scope the OpenSSL claim to approved mode")
+    require("fips_enabled" in fips and "= 0" in fips, "docs/fips.md must state the non-FIPS-host caveat")
 
 
 def check_no_attribution_residue() -> None:
@@ -195,6 +242,8 @@ def main() -> int:
         check_workflow,
         check_build_script,
         check_hardening_script,
+        check_fips_config,
+        check_fips_script,
         check_docs,
         check_no_attribution_residue,
     ]

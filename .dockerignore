@@ -1,3 +1,5 @@
 **
 !containers/
 !containers/Dockerfile
+!containers/fips/
+!containers/fips/openssl.cnf
