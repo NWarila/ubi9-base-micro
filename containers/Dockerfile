@@ -7,12 +7,13 @@ ARG UBI_MINIMAL_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal@sha256:ae09ecc
 # renovate: datasource=docker depName=registry.access.redhat.com/ubi9/ubi-micro
 ARG UBI_MICRO_IMAGE=registry.access.redhat.com/ubi9/ubi-micro@sha256:b498b3ea26111ab4b81d65139f2ebd2ef9a2abb7a4588b7fdcc54889f95e9caa
 ARG OPENSSL_FIPS_MODULE_VERSION=3.0.7-395c1a240fbfffd8
-ARG OPENSSL_FIPS_PROVIDER_NEVRA=openssl-fips-provider-so-3.0.7-8.el9.x86_64
+ARG OPENSSL_FIPS_PROVIDER_NEVRA=openssl-fips-provider-so-3.0.7-8.el9
 
 FROM ${UBI_MINIMAL_IMAGE} AS fips-verify
 ARG BUILDKIT_SBOM_SCAN_STAGE=true
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+ARG TARGETARCH
 ARG DNF_REPOS=""
 ARG OPENSSL_FIPS_MODULE_VERSION
 ARG OPENSSL_FIPS_PROVIDER_NEVRA
@@ -31,10 +32,16 @@ RUN set -eux; \
     provider_nevra="$(rpm -q --qf '%{NEVRA}\n' openssl-fips-provider-so)"; \
     libs_nevra="$(rpm -q --qf '%{NEVRA}\n' openssl-libs)"; \
     fips_so_sha256="$(sha256sum /usr/lib64/ossl-modules/fips.so | awk '{print $1}')"; \
+    case "${TARGETARCH}" in \
+      amd64) rpm_arch="x86_64" ;; \
+      arm64) rpm_arch="aarch64" ;; \
+      *) echo "unsupported TARGETARCH for FIPS provider pin: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    expected_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}"; \
     echo "openssl-fips-provider-so NEVRA=${provider_nevra}"; \
     echo "openssl-libs NEVRA=${libs_nevra}"; \
     echo "openssl-fips-provider-so fips.so sha256=${fips_so_sha256}"; \
-    test "${provider_nevra}" = "${OPENSSL_FIPS_PROVIDER_NEVRA}" || { \
+    test "${provider_nevra}" = "${expected_provider_nevra}" || { \
       echo "unexpected openssl-fips-provider-so NEVRA: ${provider_nevra}" >&2; exit 1; \
     }; \
     providers_verbose="$(OPENSSL_CONF=/tmp/openssl-fips.cnf OPENSSL_MODULES=/usr/lib64/ossl-modules openssl list -providers -verbose 2>&1)"; \
@@ -57,6 +64,7 @@ RUN set -eux; \
     test -s /tmp/fips-aes.out; \
     mkdir -p /fips-proof; \
     printf '%s\n' "${provider_nevra}" > /fips-proof/provider.nevra; \
+    printf '%s\n' "${expected_provider_nevra}" > /fips-proof/expected-provider.nevra; \
     printf '%s\n' "${libs_nevra}" > /fips-proof/libs.nevra; \
     printf '%s\n' "${fips_so_sha256}" > /fips-proof/fips.so.sha256; \
     printf '%s\n' "${module_version}" > /fips-proof/module.version; \
@@ -73,6 +81,7 @@ RUN set -eux; \
     } > /fips-proof/proof.txt; \
     test -s /fips-proof/proof.txt; \
     test -s /fips-proof/provider.nevra; \
+    test -s /fips-proof/expected-provider.nevra; \
     test -s /fips-proof/libs.nevra; \
     test -s /fips-proof/fips.so.sha256; \
     test -s /fips-proof/module.version
@@ -82,6 +91,7 @@ ARG BUILDKIT_SBOM_SCAN_STAGE=true
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG RUNTIME_PACKAGES="ca-certificates openssl-fips-provider"
+ARG TARGETARCH
 ARG DNF_REPOS=""
 ARG OPENSSL_FIPS_MODULE_VERSION
 ARG OPENSSL_FIPS_PROVIDER_NEVRA
@@ -127,6 +137,12 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     shipped_provider_nevra="$(rpm --root=/rootfs -q --qf '%{NEVRA}\n' openssl-fips-provider-so)"; \
     shipped_libs_nevra="$(rpm --root=/rootfs -q --qf '%{NEVRA}\n' openssl-libs)"; \
     shipped_fips_so_sha256="$(sha256sum /rootfs/usr/lib64/ossl-modules/fips.so | awk '{print $1}')"; \
+    case "${TARGETARCH}" in \
+      amd64) rpm_arch="x86_64" ;; \
+      arm64) rpm_arch="aarch64" ;; \
+      *) echo "unsupported TARGETARCH for FIPS provider pin: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    expected_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}"; \
     verified_provider_nevra="$(cat /tmp/fips-proof/provider.nevra)"; \
     verified_libs_nevra="$(cat /tmp/fips-proof/libs.nevra)"; \
     verified_fips_so_sha256="$(cat /tmp/fips-proof/fips.so.sha256)"; \
@@ -134,13 +150,13 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     echo "runtime rootfs openssl-fips-provider-so NEVRA=${shipped_provider_nevra}"; \
     echo "runtime rootfs openssl-libs NEVRA=${shipped_libs_nevra}"; \
     echo "runtime rootfs fips.so sha256=${shipped_fips_so_sha256}"; \
-    test "${verified_provider_nevra}" = "${OPENSSL_FIPS_PROVIDER_NEVRA}" || { \
+    test "${verified_provider_nevra}" = "${expected_provider_nevra}" || { \
       echo "verified provider NEVRA does not match pin: ${verified_provider_nevra}" >&2; exit 1; \
     }; \
     test "${verified_module_version}" = "${OPENSSL_FIPS_MODULE_VERSION}" || { \
       echo "verified module version does not match pin: ${verified_module_version}" >&2; exit 1; \
     }; \
-    test "${shipped_provider_nevra}" = "${OPENSSL_FIPS_PROVIDER_NEVRA}" || { \
+    test "${shipped_provider_nevra}" = "${expected_provider_nevra}" || { \
       echo "runtime rootfs provider NEVRA does not match pin: ${shipped_provider_nevra}" >&2; exit 1; \
     }; \
     test "${shipped_provider_nevra}" = "${verified_provider_nevra}" || { \
@@ -194,6 +210,7 @@ RUN set -eux; \
       { echo "rpm database missing from dev rootfs; scanners would see zero packages" >&2; exit 1; }
 
 FROM ${UBI_MICRO_IMAGE} AS runtime
+ARG TARGETARCH
 ARG OPENSSL_FIPS_MODULE_VERSION
 ARG OPENSSL_FIPS_PROVIDER_NEVRA
 
@@ -212,7 +229,7 @@ LABEL org.opencontainers.image.created="${OCI_CREATED}" \
       org.opencontainers.image.version="${OCI_VERSION}" \
       org.nwarila.fips.cmvp="4857" \
       org.nwarila.fips.module-version="${OPENSSL_FIPS_MODULE_VERSION}" \
-      org.nwarila.fips.provider-nevra="${OPENSSL_FIPS_PROVIDER_NEVRA}"
+      org.nwarila.fips.provider-nvr="${OPENSSL_FIPS_PROVIDER_NEVRA}"
 
 COPY --from=rpm-rootfs /rootfs/ /
 COPY containers/fips/openssl.cnf /etc/pki/tls/openssl-fips.cnf
@@ -224,8 +241,15 @@ ENV OPENSSL_MODULES=/usr/lib64/ossl-modules
 # fail closed if any shell or package-manager executable remains.
 RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     set -eu; \
+    case "${TARGETARCH}" in \
+      amd64) rpm_arch="x86_64"; oe_validated=true; disclaimer="CMVP #4857-validated approved-mode configuration." ;; \
+      arm64) rpm_arch="aarch64"; oe_validated=false; disclaimer="The Red Hat OpenSSL FIPS provider (module #4857, v3.0.7-395c1a240fbfffd8) is present, approved-mode-configured, and self-test-passing, but this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list - this is NOT a CMVP-validated configuration on this architecture." ;; \
+      *) echo "unsupported TARGETARCH for FIPS status: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    expected_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}"; \
     test -s /tmp/fips-proof/proof.txt; \
-    test "$(cat /tmp/fips-proof/provider.nevra)" = "${OPENSSL_FIPS_PROVIDER_NEVRA}"; \
+    test "$(cat /tmp/fips-proof/provider.nevra)" = "${expected_provider_nevra}"; \
+    test "$(cat /tmp/fips-proof/expected-provider.nevra)" = "${expected_provider_nevra}"; \
     test "$(cat /tmp/fips-proof/module.version)" = "${OPENSSL_FIPS_MODULE_VERSION}"; \
     test -s /usr/lib64/ossl-modules/fips.so; \
     test -s /usr/lib64/libcrypto.so.3; \
@@ -233,6 +257,17 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     test ! -e /usr/lib64/ossl-modules/legacy.so; \
     test ! -e /etc/pki/tls/fipsmodule.cnf; \
     test ! -e /usr/bin/openssl; \
+    mkdir -p /etc/nwarila; \
+    { \
+      printf '{\n'; \
+      printf '  "arch": "%s",\n' "${TARGETARCH}"; \
+      printf '  "module": "%s",\n' "${OPENSSL_FIPS_MODULE_VERSION}"; \
+      printf '  "cmvp": "#4857",\n'; \
+      printf '  "oe_validated": %s,\n' "${oe_validated}"; \
+      printf '  "disclaimer": "%s"\n' "${disclaimer}"; \
+      printf '}\n'; \
+    } > /etc/nwarila/fips-status.json; \
+    test -s /etc/nwarila/fips-status.json; \
     for executable in sh bash dash ash busybox ksh zsh tcsh csh dnf microdnf rpm yum; do rm -f "/usr/bin/${executable}" "/usr/sbin/${executable}" "/bin/${executable}" "/sbin/${executable}"; done; \
     for executable in sh bash dash ash busybox ksh zsh tcsh csh dnf microdnf rpm yum; do if [ -e "/usr/bin/${executable}" ] || [ -e "/usr/sbin/${executable}" ] || [ -e "/bin/${executable}" ] || [ -e "/sbin/${executable}" ]; then echo "forbidden executable ${executable} survived in runtime image" >&2; exit 1; fi; done; \
     test -s /var/lib/rpm/rpmdb.sqlite || test -s /var/lib/rpm/Packages

@@ -108,6 +108,43 @@ assert_nonempty_file etc/pki/tls/openssl-fips.cnf
 assert_file_contains etc/pki/tls/openssl-fips.cnf "[fips_sect]"
 assert_file_contains etc/pki/tls/openssl-fips.cnf "default_properties = fips=yes"
 assert_path_absent usr/bin/openssl
+assert_path_present etc/nwarila/fips-status.json
+assert_nonempty_file etc/nwarila/fips-status.json
+
+status_file="${tmp_dir}/fips-status.json"
+if ! extract_file etc/nwarila/fips-status.json > "${status_file}"; then
+  echo "required runtime file missing or unreadable: /etc/nwarila/fips-status.json" >&2
+  exit 1
+fi
+
+image_arch="$(docker image inspect --format '{{ .Architecture }}' "${image_ref}")"
+case "${image_arch}" in
+  amd64)
+    expected_oe_validated=true
+    expected_disclaimer="CMVP #4857-validated approved-mode configuration."
+    ;;
+  arm64)
+    expected_oe_validated=false
+    expected_disclaimer="NOT in CMVP #4857's validated or vendor-affirmed list"
+    ;;
+  *)
+    echo "unsupported image architecture for FIPS status assertion: ${image_arch}" >&2
+    exit 1
+    ;;
+esac
+
+for needle in \
+  '"arch": "'"${image_arch}"'"' \
+  '"module": "3.0.7-395c1a240fbfffd8"' \
+  '"cmvp": "#4857"' \
+  '"oe_validated": '"${expected_oe_validated}" \
+  "${expected_disclaimer}"; do
+  if ! grep -Fq "${needle}" "${status_file}"; then
+    echo "fips-status.json missing required value: ${needle}" >&2
+    cat "${status_file}" >&2
+    exit 1
+  fi
+done
 
 env_values="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${image_ref}")"
 if ! grep -Fxq "OPENSSL_CONF=/etc/pki/tls/openssl-fips.cnf" <<<"${env_values}"; then
@@ -121,7 +158,7 @@ fi
 
 cmvp_label="$(docker image inspect --format '{{ index .Config.Labels "org.nwarila.fips.cmvp" }}' "${image_ref}")"
 module_label="$(docker image inspect --format '{{ index .Config.Labels "org.nwarila.fips.module-version" }}' "${image_ref}")"
-provider_label="$(docker image inspect --format '{{ index .Config.Labels "org.nwarila.fips.provider-nevra" }}' "${image_ref}")"
+provider_label="$(docker image inspect --format '{{ index .Config.Labels "org.nwarila.fips.provider-nvr" }}' "${image_ref}")"
 if [[ "${cmvp_label}" != "4857" ]]; then
   echo "image label org.nwarila.fips.cmvp mismatch: ${cmvp_label}" >&2
   exit 1
@@ -130,8 +167,8 @@ if [[ "${module_label}" != "3.0.7-395c1a240fbfffd8" ]]; then
   echo "image label org.nwarila.fips.module-version mismatch: ${module_label}" >&2
   exit 1
 fi
-if [[ "${provider_label}" != "openssl-fips-provider-so-3.0.7-8.el9.x86_64" ]]; then
-  echo "image label org.nwarila.fips.provider-nevra mismatch: ${provider_label}" >&2
+if [[ "${provider_label}" != "openssl-fips-provider-so-3.0.7-8.el9" ]]; then
+  echo "image label org.nwarila.fips.provider-nvr mismatch: ${provider_label}" >&2
   exit 1
 fi
 
@@ -141,4 +178,5 @@ echo "proof: openssl-fips.cnf present with fips section and default_properties =
 echo "proof: libcrypto.so.3 present"
 echo "proof: legacy provider, fipsmodule.cnf, and openssl CLI absent from the runtime"
 echo "proof: OPENSSL_CONF and OPENSSL_MODULES image ENV are set"
-echo "proof: FIPS OCI labels match CMVP, module version, and provider NEVRA pins"
+echo "proof: fips-status.json matches image architecture ${image_arch} with oe_validated=${expected_oe_validated}"
+echo "proof: FIPS OCI labels match CMVP, module version, and provider NVR pins"

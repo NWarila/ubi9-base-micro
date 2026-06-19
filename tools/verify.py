@@ -11,6 +11,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_USES = re.compile(r"uses:\s+([^@\s]+)@([^\s#]+)")
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
+SLSA_GENERATOR = "slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml"
+SLSA_GENERATOR_TAG = "v2.1.0"
+SLSA_GENERATOR_SHA = "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a"
 
 
 class VerifyError(Exception):
@@ -28,12 +31,25 @@ def read(relative_path: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def check_uses_pinned(text: str, source: str) -> None:
+    uses = WORKFLOW_USES.findall(text)
+    require(uses, f"{source} should pin external actions explicitly")
+    bad_refs: list[str] = []
+    for action, ref in uses:
+        if action == SLSA_GENERATOR and ref == SLSA_GENERATOR_TAG:
+            continue
+        if not SHA40.fullmatch(ref):
+            bad_refs.append(f"{action}@{ref}")
+    require(not bad_refs, f"{source} uses entries must be pinned to 40-char SHA: " + ", ".join(bad_refs))
+
+
 def check_required_files() -> None:
     for relative_path in [
         ".dockerignore",
         ".editorconfig",
         ".github/CODEOWNERS",
         ".github/workflows/build.yaml",
+        ".github/workflows/publish-image.yaml",
         ".gitignore",
         "Makefile",
         "README.md",
@@ -43,6 +59,7 @@ def check_required_files() -> None:
         "docs/README.md",
         "docs/acceptance.md",
         "docs/fips.md",
+        "docs/reference/verify.md",
         "tests/fips.sh",
         "tests/hardening.sh",
         "tools/build.sh",
@@ -59,6 +76,12 @@ def check_dockerfile() -> None:
         "# renovate: datasource=docker depName=registry.access.redhat.com/ubi9/ubi-micro",
         "ARG UBI_MINIMAL_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal@sha256:",
         "ARG UBI_MICRO_IMAGE=registry.access.redhat.com/ubi9/ubi-micro@sha256:",
+        "ARG TARGETARCH",
+        "ARG OPENSSL_FIPS_MODULE_VERSION=3.0.7-395c1a240fbfffd8",
+        "ARG OPENSSL_FIPS_PROVIDER_NEVRA=openssl-fips-provider-so-3.0.7-8.el9",
+        "amd64) rpm_arch=\"x86_64\"",
+        "arm64) rpm_arch=\"aarch64\"",
+        "expected_provider_nevra=\"${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}\"",
         "microdnf install -y --installroot=/rootfs",
         "--nodocs --setopt=install_weak_deps=0",
         "FROM ${UBI_MICRO_IMAGE} AS runtime",
@@ -75,8 +98,12 @@ def check_dockerfile() -> None:
         "ossl-modules",
         "org.nwarila.fips.cmvp",
         "org.nwarila.fips.module-version",
-        "org.nwarila.fips.provider-nevra",
+        "org.nwarila.fips.provider-nvr",
+        "/etc/nwarila/fips-status.json",
+        "oe_validated=false",
+        "NOT in CMVP #4857's validated or vendor-affirmed list",
         "/fips-proof/provider.nevra",
+        "/fips-proof/expected-provider.nevra",
         "/fips-proof/libs.nevra",
         "/fips-proof/fips.so.sha256",
         "rpm --root=/rootfs -q --qf '%{NEVRA}\\n' openssl-fips-provider-so",
@@ -97,14 +124,15 @@ def check_dockerfile() -> None:
         "rm -rf /var/lib/rpm",
         "ghcr.io/nwarila-" + "platform",
         "fips" + "install",
+        "OPENSSL_FIPS_PROVIDER_NEVRA=openssl-fips-provider-so-3.0.7-8.el9.x86_64",
     ]
     present = [marker for marker in forbidden if marker in text]
     require(not present, "Dockerfile contains forbidden marker(s): " + ", ".join(present))
 
 
 def check_workflow() -> None:
-    workflows = sorted((ROOT / ".github/workflows").glob("*.y*ml"))
-    require(len(workflows) == 1, "STEP014 must ship exactly one workflow")
+    workflows = sorted(path.name for path in (ROOT / ".github/workflows").glob("*.y*ml"))
+    require(workflows == ["build.yaml", "publish-image.yaml"], "repo must ship exactly build.yaml and publish-image.yaml")
 
     text = read(".github/workflows/build.yaml")
     for marker in [
@@ -117,7 +145,7 @@ def check_workflow() -> None:
         "tools/verify.py",
         "ghcr.io/nwarila/ubi9-base-micro",
     ]:
-        require(marker in text, f"workflow missing marker: {marker}")
+        require(marker in text, f"build workflow missing marker: {marker}")
 
     forbidden = [
         "NWarila/.github/.github/workflows/",
@@ -133,12 +161,59 @@ def check_workflow() -> None:
         "continue-on-" + "error",
     ]
     present = [marker for marker in forbidden if marker in text]
-    require(not present, "workflow contains out-of-scope marker(s): " + ", ".join(present))
+    require(not present, "build workflow contains out-of-scope marker(s): " + ", ".join(present))
+    check_uses_pinned(text, "build workflow")
+
+
+def check_publish_workflow() -> None:
+    text = read(".github/workflows/publish-image.yaml")
+    required = [
+        "pull_request:",
+        "push:",
+        "branches: [main]",
+        "tags:",
+        "ghcr.io/nwarila/ubi9-base-micro",
+        "github.event_name == 'push'",
+        "--push",
+        "--platform linux/amd64,linux/arm64",
+        "--target runtime",
+        "--provenance=mode=max",
+        "--sbom=true",
+        "--metadata-file dist/image-metadata.json",
+        "OPENSSL_FIPS_MODULE_VERSION",
+        "OPENSSL_FIPS_PROVIDER_NEVRA",
+        SLSA_GENERATOR + "@" + SLSA_GENERATOR_TAG,
+        SLSA_GENERATOR_SHA,
+        "gh api \"repos/slsa-framework/slsa-github-generator/git/ref/tags/${SLSA_GENERATOR_TAG}\"",
+        "cosign sign --recursive",
+        "cosign verify",
+        "https://github.com/${{ github.repository }}/.github/workflows/publish-image.yaml@${{ github.ref }}",
+        "--certificate-oidc-issuer \"https://token.actions.githubusercontent.com\"",
+        "manifest[linux/amd64]:org.nwarila.fips.cmvp.oe-validated=true",
+        "manifest[linux/arm64]:org.nwarila.fips.cmvp.oe-validated=false",
+    ]
+    missing = [marker for marker in required if marker not in text]
+    require(not missing, "publish workflow missing required marker(s): " + ", ".join(missing))
+
+    forbidden = [
+        "-regexp",
+        "attest-build-" + "provenance",
+        "gh attestation verify",
+        "continue-on-" + "error",
+        "tri" + "vy",
+        "gry" + "pe",
+        "os" + "cap",
+        "examples/image-manifest.json",
+        "tools/build_app.sh",
+        "tools/generate_build_args.py",
+    ]
+    present = [marker for marker in forbidden if marker in text]
+    require(not present, "publish workflow contains forbidden marker(s): " + ", ".join(present))
 
     uses = WORKFLOW_USES.findall(text)
-    require(uses, "workflow should pin external actions explicitly")
-    bad_refs = [f"{action}@{ref}" for action, ref in uses if not SHA40.fullmatch(ref)]
-    require(not bad_refs, "workflow uses entries must be pinned to 40-char SHA: " + ", ".join(bad_refs))
+    generator_uses = [(action, ref) for action, ref in uses if action == SLSA_GENERATOR]
+    require(generator_uses == [(SLSA_GENERATOR, SLSA_GENERATOR_TAG)], "publish workflow must use exactly one SLSA generator tag pin")
+    check_uses_pinned(text, "publish workflow")
 
 
 def check_build_script() -> None:
@@ -202,6 +277,9 @@ def check_fips_script() -> None:
         "fips.so",
         "libcrypto.so.3",
         "legacy.so",
+        "etc/nwarila/fips-status.json",
+        "oe_validated",
+        "org.nwarila.fips.provider-nvr",
     ]:
         require(marker in text, f"FIPS script missing marker: {marker}")
 
@@ -209,7 +287,8 @@ def check_fips_script() -> None:
 def check_docs() -> None:
     acceptance = read("docs/acceptance.md")
     fips = read("docs/fips.md")
-    read("docs/README.md")
+    docs_index = read("docs/README.md")
+    verify = read("docs/reference/verify.md")
     legacy_namespace = "ghcr.io/nwarila-" + "platform/*"
     require(legacy_namespace in acceptance, "acceptance copy should preserve source DoD text")
     require("superseded for this repository" in acceptance, "acceptance.md must flag the legacy platform namespace")
@@ -217,6 +296,24 @@ def check_docs() -> None:
     require("3.0.7-395c1a240fbfffd8" in fips, "docs/fips.md must record the validated OpenSSL provider version")
     require("approved mode" in fips, "docs/fips.md must scope the OpenSSL claim to approved mode")
     require("fips_enabled" in fips and "= 0" in fips, "docs/fips.md must state the non-FIPS-host caveat")
+    require("Per-architecture validation scope" in fips, "docs/fips.md must describe per-architecture validation scope")
+    require("TD-3" in fips, "docs/fips.md must reference TD-3")
+    require("oe_validated" in fips, "docs/fips.md must document fips-status.json oe_validated")
+    require("this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list" in fips, "docs/fips.md missing arm64 disclaimer")
+    require("x86_64" in fips and "IBM Z" in fips and "POWER" in fips and "aarch64" in fips, "docs/fips.md must cite tested OE architecture scope")
+    require("certificate/4857" in fips and "140sp4857.pdf" in fips, "docs/fips.md must cite NIST #4857 sources")
+    require("reference/verify.md" in docs_index, "docs README must index verify contract")
+
+    for marker in [
+        "cosign verify \"${IMAGE_REF}\"",
+        "cosign verify-attestation --type slsaprovenance",
+        "slsa-verifier verify-image",
+        "generator_container_slsa3.yml@refs/tags/v2.1.0",
+        "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a",
+        "gh attestation verify` is not part of this contract",
+        "P1.8",
+    ]:
+        require(marker in verify, f"docs/reference/verify.md missing marker: {marker}")
 
 
 def check_no_attribution_residue() -> None:
@@ -245,6 +342,7 @@ def main() -> int:
         check_required_files,
         check_dockerfile,
         check_workflow,
+        check_publish_workflow,
         check_build_script,
         check_hardening_script,
         check_fips_config,
