@@ -26,6 +26,7 @@ env:
   UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:b498b3ea26111ab4b81d65139f2ebd2ef9a2abb7a4588b7fdcc54889f95e9caa
   OPENSSL_FIPS_MODULE_VERSION: "3.0.7-395c1a240fbfffd8"
   OPENSSL_FIPS_PROVIDER_NEVRA: "openssl-fips-provider-so-3.0.7-8.el9"
+  NIST_800_190_PREDICATE_TYPE: "https://nwarila.dev/attestations/nist-sp-800-190-image/v1"
 
 jobs:
   slsa-generator-tag-integrity:
@@ -428,6 +429,148 @@ jobs:
 
           python tools/assert-sbom-rpms.py dist/verified-spdx-predicate.json
 
+
+      - name: Run runtime rootfs secret gates
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/rootfs-secret-scan
+          container_id=""
+          cleanup() {
+            if [[ -n "${container_id}" ]]; then
+              docker rm "${container_id}" >/dev/null
+            fi
+          }
+          trap cleanup EXIT
+
+          for arch in amd64 arm64; do
+            case "${arch}" in
+              amd64)
+                digest="${AMD64_DIGEST}"
+                platform="linux/amd64"
+                ;;
+              arm64)
+                digest="${ARM64_DIGEST}"
+                platform="linux/arm64"
+                ;;
+              *)
+                echo "unsupported secret-scan architecture: ${arch}" >&2
+                exit 1
+                ;;
+            esac
+
+            image_ref="${IMAGE}@${digest}"
+            rootfs_dir="dist/rootfs-secret-scan/rootfs.${arch}"
+            report="dist/rootfs-secret-scan/base-micro.${arch}.secret-scan.json"
+            rm -rf "${rootfs_dir}"
+            mkdir -p "${rootfs_dir}"
+
+            container_id="$(docker create --platform "${platform}" "${image_ref}" /secret-scan-export)"
+            docker export "${container_id}" | tar --no-same-owner --no-same-permissions -x -C "${rootfs_dir}"
+            chmod -R u+rwX "${rootfs_dir}"
+            docker rm "${container_id}" >/dev/null
+            container_id=""
+
+            python tools/assert-no-rootfs-secrets.py \
+              --rootfs "${rootfs_dir}" \
+              --report "${report}"
+          done
+
+      - name: Generate NIST SP 800-190 image-control predicates
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/attestations
+          for arch in amd64 arm64; do
+            case "${arch}" in
+              amd64)
+                digest="${AMD64_DIGEST}"
+                platform="linux/amd64"
+                ;;
+              arm64)
+                digest="${ARM64_DIGEST}"
+                platform="linux/arm64"
+                ;;
+              *)
+                echo "unsupported NIST 800-190 architecture: ${arch}" >&2
+                exit 1
+                ;;
+            esac
+
+            predicate="dist/attestations/nist-800-190.base-micro.${arch}.json"
+            python tools/generate-nist-800-190-predicate.py \
+              --image-ref "${IMAGE}@${digest}" \
+              --platform "${platform}" \
+              --arch "${arch}" \
+              --base-image "${UBI_MICRO_IMAGE}" \
+              --source-uri "github.com/${GITHUB_REPOSITORY}" \
+              --revision "${GITHUB_SHA}" \
+              --secret-scan-report "dist/rootfs-secret-scan/base-micro.${arch}.secret-scan.json" \
+              --output "${predicate}"
+
+            python tools/generate-nist-800-190-predicate.py --validate "${predicate}"
+          done
+
+      - name: Attest NIST SP 800-190 image-control predicates
+        env:
+          COSIGN_YES: "true"
+          IMAGE: ${{ steps.image.outputs.image }}
+          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+
+          for arch in amd64 arm64; do
+            case "${arch}" in
+              amd64) digest="${AMD64_DIGEST}" ;;
+              arm64) digest="${ARM64_DIGEST}" ;;
+              *)
+                echo "unsupported NIST 800-190 attestation architecture: ${arch}" >&2
+                exit 1
+                ;;
+            esac
+
+            cosign attest --type "${NIST_800_190_PREDICATE_TYPE}" \
+              --predicate "dist/attestations/nist-800-190.base-micro.${arch}.json" \
+              "${IMAGE}@${digest}"
+          done
+
+      - name: Verify NIST SP 800-190 image-control attestation
+        env:
+          CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/publish-image.yaml@${{ github.ref }}
+          IMAGE: ${{ steps.image.outputs.image }}
+          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/attestations/verified
+          for arch in amd64 arm64; do
+            case "${arch}" in
+              amd64) digest="${AMD64_DIGEST}" ;;
+              arm64) digest="${ARM64_DIGEST}" ;;
+              *)
+                echo "unsupported NIST 800-190 verification architecture: ${arch}" >&2
+                exit 1
+                ;;
+            esac
+
+            out="dist/attestations/verified/nist-800-190.${arch}.jsonl"
+            cosign verify-attestation --type "${NIST_800_190_PREDICATE_TYPE}" "${IMAGE}@${digest}" \
+              --certificate-identity "${CERTIFICATE_IDENTITY}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              > "${out}"
+            test -s "${out}"
+          done
+
       - name: Attest OpenVEX documents
         env:
           COSIGN_YES: "true"
@@ -511,3 +654,157 @@ jobs:
       registry-username: ${{ github.actor }}
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+
+  rekor-rollup:
+    name: rekor roll-up
+    needs:
+      - publish
+      - slsa-provenance
+    if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    env:
+      EXPECTED_BUILDER_ID: "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0"
+      PUBLISH_CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/publish-image.yaml@${{ github.ref }}
+      SLSA_CERTIFICATE_IDENTITY: "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0"
+      IMAGE: ${{ needs.publish.outputs.image }}
+      IMAGE_REF: ${{ needs.publish.outputs.ref }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@f713795cb21599bc4e5c4b58cbad1da852d7eeb9 # v3
+
+      - name: Log in to GHCR for verification
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          printf '%s' "${GHCR_TOKEN}" \
+            | docker login ghcr.io \
+                --username "${REGISTRY_USER}" \
+                --password-stdin
+
+      - name: Resolve platform image digests
+        id: platform_digests
+        env:
+          IMAGE_REF: ${{ needs.publish.outputs.ref }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/rekor
+          docker buildx imagetools inspect --raw "${IMAGE_REF}" > dist/rekor/image-index.json
+          python - <<'PY' >> "${GITHUB_OUTPUT}"
+          import json
+
+          with open("dist/rekor/image-index.json", encoding="utf-8") as handle:
+              index = json.load(handle)
+
+          found = {}
+          for descriptor in index.get("manifests") or []:
+              platform = descriptor.get("platform") or {}
+              if platform.get("os") != "linux":
+                  continue
+              arch = platform.get("architecture")
+              digest = descriptor.get("digest")
+              if arch in {"amd64", "arm64"} and digest:
+                  found[arch] = digest
+
+          missing = sorted({"amd64", "arm64"} - set(found))
+          if missing:
+              raise SystemExit("missing platform digest(s): " + ", ".join(missing))
+
+          for arch in ("amd64", "arm64"):
+              print(f"{arch}_digest={found[arch]}")
+          PY
+
+      - name: Verify Rekor roll-up
+        env:
+          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          mkdir -p dist/rekor
+          published_ref="${{ needs.publish.outputs.ref }}"
+
+          verify_rekor() {
+            local kind="$1"
+            local path="$2"
+            python tools/assert-cosign-rekor.py --kind "${kind}" "${path}"
+          }
+
+          cosign verify "${published_ref}" \
+            --certificate-identity "${PUBLISH_CERTIFICATE_IDENTITY}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            > dist/rekor/cosign-signature.index.json
+          verify_rekor "cosign signature index" dist/rekor/cosign-signature.index.json
+
+          cosign verify-attestation --type slsaprovenance "${published_ref}" \
+            --certificate-identity "${SLSA_CERTIFICATE_IDENTITY}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            > dist/rekor/slsa-provenance.index.json
+          verify_rekor "SLSA provenance index" dist/rekor/slsa-provenance.index.json
+          python tools/assert-slsa-builder-id.py \
+            --attestation dist/rekor/slsa-provenance.index.json \
+            --builder-id "${EXPECTED_BUILDER_ID}"
+
+          vex_docs=(vex/*.json)
+          for arch in amd64 arm64; do
+            case "${arch}" in
+              amd64) digest="${AMD64_DIGEST}" ;;
+              arm64) digest="${ARM64_DIGEST}" ;;
+              *)
+                echo "unsupported Rekor roll-up architecture: ${arch}" >&2
+                exit 1
+                ;;
+            esac
+
+            image_ref="${IMAGE}@${digest}"
+
+            cosign verify "${image_ref}" \
+              --certificate-identity "${PUBLISH_CERTIFICATE_IDENTITY}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              > "dist/rekor/cosign-signature.${arch}.json"
+            verify_rekor "cosign signature ${arch}" "dist/rekor/cosign-signature.${arch}.json"
+
+            cosign verify-attestation --type spdxjson "${image_ref}" \
+              --certificate-identity "${PUBLISH_CERTIFICATE_IDENTITY}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              > "dist/rekor/spdx.${arch}.jsonl"
+            verify_rekor "SPDX SBOM ${arch}" "dist/rekor/spdx.${arch}.jsonl"
+
+            cosign verify-attestation --type cyclonedx "${image_ref}" \
+              --certificate-identity "${PUBLISH_CERTIFICATE_IDENTITY}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              > "dist/rekor/cyclonedx.${arch}.jsonl"
+            verify_rekor "CycloneDX SBOM ${arch}" "dist/rekor/cyclonedx.${arch}.jsonl"
+
+            cosign verify-attestation --type "${NIST_800_190_PREDICATE_TYPE}" "${image_ref}" \
+              --certificate-identity "${PUBLISH_CERTIFICATE_IDENTITY}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              > "dist/rekor/nist-800-190.${arch}.jsonl"
+            verify_rekor "NIST 800-190 image ${arch}" "dist/rekor/nist-800-190.${arch}.jsonl"
+
+            if (( ${#vex_docs[@]} > 0 )); then
+              cosign verify-attestation --type openvex "${image_ref}" \
+                --certificate-identity "${PUBLISH_CERTIFICATE_IDENTITY}" \
+                --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+                > "dist/rekor/openvex.${arch}.jsonl"
+              verify_rekor "OpenVEX ${arch}" "dist/rekor/openvex.${arch}.jsonl"
+            else
+              echo "OpenVEX ${arch}: no vex/*.json present; no OpenVEX attestation expected."
+            fi
+          done

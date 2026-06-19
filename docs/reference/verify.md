@@ -1,6 +1,6 @@
 # Published Digest Verification
 
-P1.4c publishes `ghcr.io/nwarila/ubi9-base-micro` by digest from `.github/workflows/publish-image.yaml`. The publish workflow signs the image digest with Cosign keyless from the repository workflow identity, attaches Syft rpmdb-derived SPDX and CycloneDX SBOM attestations to each platform child digest, gates fixable HIGH and CRITICAL findings with both Trivy and Grype, applies the OpenVEX default-deny policy to unfixed HIGH and CRITICAL findings, then passes the index digest to the SLSA container generator reusable workflow.
+P1.4d publishes `ghcr.io/nwarila/ubi9-base-micro` by digest from `.github/workflows/publish-image.yaml`. The publish workflow signs the image digest with Cosign keyless from the repository workflow identity, attaches Syft rpmdb-derived SPDX and CycloneDX SBOM attestations to each platform child digest, gates fixable HIGH and CRITICAL findings with both Trivy and Grype, applies the OpenVEX default-deny policy to unfixed HIGH and CRITICAL findings, generates and attests the NIST SP 800-190 section 4.1 image predicate, then passes the index digest to the SLSA container generator reusable workflow. The final push-only roll-up verifies that the full attestation set is Rekor-logged.
 
 ## Identities
 
@@ -9,6 +9,7 @@ P1.4c publishes `ghcr.io/nwarila/ubi9-base-micro` by digest from `.github/workfl
 | Image signature | `https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@<ref>` |
 | SBOM SPDX and CycloneDX attestations | `https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@<ref>` |
 | OpenVEX attestations, when `vex/*.json` is present | `https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@<ref>` |
+| NIST SP 800-190 section 4.1 image attestation | `https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@<ref>` |
 | SLSA provenance attestation | `https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0` |
 | OIDC issuer | `https://token.actions.githubusercontent.com` |
 
@@ -48,6 +49,14 @@ cosign verify-attestation --type openvex "${IMAGE_REF}" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 ```
 
+Verify the NIST SP 800-190 section 4.1 image-control predicate on each per-platform child digest:
+
+```sh
+cosign verify-attestation --type https://nwarila.dev/attestations/nist-sp-800-190-image/v1 "${IMAGE_REF}" \
+  --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+```
+
 ```sh
 cosign verify-attestation --type slsaprovenance "${IMAGE_REF}" \
   --certificate-identity "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0" \
@@ -59,6 +68,12 @@ slsa-verifier verify-image "${IMAGE_REF}" \
   --source-uri github.com/NWarila/ubi9-base-micro \
   --builder-id "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0"
 ```
+
+The publish workflow also parses the verified SLSA predicate with `tools/assert-slsa-builder-id.py` and fails unless `builderID` is exactly `https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0`.
+
+## Rekor Roll-Up
+
+The push-only `rekor-rollup` job verifies that the full attestation set is Rekor-logged: the Cosign signature, SLSA provenance, SPDX SBOM, CycloneDX SBOM, OpenVEX when `vex/*.json` exists, and the NIST SP 800-190 section 4.1 predicate. It uses `cosign verify` and `cosign verify-attestation` with exact identities and the default Rekor behavior; it does not use `--insecure-ignore-tlog`, `--tlog-upload=false`, or a custom Rekor URL. `tools/assert-cosign-rekor.py` checks the verification JSON for Rekor bundle fields on each record.
 
 `gh attestation verify` is not part of this contract. It verifies GitHub-native Artifact Attestations, not the cosign OCI attestation written by `generator_container_slsa3.yml` or the repository publish workflow.
 

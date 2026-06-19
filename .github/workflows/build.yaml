@@ -24,6 +24,7 @@ env:
   SYFT_VERSION: "1.45.1"
   TRIVY_VERSION: "0.71.0"
   GRYPE_VERSION: "0.87.0"
+  UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:b498b3ea26111ab4b81d65139f2ebd2ef9a2abb7a4588b7fdcc54889f95e9caa
 
 jobs:
   actionlint:
@@ -59,6 +60,9 @@ jobs:
           python tools/verify.py
           python tools/assert-sbom-rpms.py --self-test
           python tools/assert-vex.py --self-test
+          python tools/assert-no-rootfs-secrets.py --self-test
+          python tools/generate-nist-800-190-predicate.py --self-test
+          python tools/assert-slsa-builder-id.py --self-test
 
       - name: Check shell script syntax
         run: |
@@ -159,3 +163,45 @@ jobs:
             --product "${RUNTIME_IMAGE}" \
             --trivy-json "${trivy_json}" \
             --grype-json "${grype_json}"
+
+      - name: Run runtime rootfs secret gate
+        run: |
+          set -euo pipefail
+
+          arch="${PLATFORM#linux/}"
+          rootfs_dir="dist/rootfs-secret-scan/rootfs.${arch}"
+          report="dist/rootfs-secret-scan/base-micro.${arch}.secret-scan.json"
+          rm -rf "${rootfs_dir}"
+          mkdir -p "${rootfs_dir}"
+
+          container_id="$(docker create "${RUNTIME_IMAGE}" /secret-scan-export)"
+          cleanup() {
+            docker rm "${container_id}" >/dev/null
+          }
+          trap cleanup EXIT
+
+          docker export "${container_id}" | tar --no-same-owner --no-same-permissions -x -C "${rootfs_dir}"
+          chmod -R u+rwX "${rootfs_dir}"
+          python tools/assert-no-rootfs-secrets.py \
+            --rootfs "${rootfs_dir}" \
+            --report "${report}"
+
+      - name: Generate and validate NIST SP 800-190 predicate
+        run: |
+          set -euo pipefail
+
+          arch="${PLATFORM#linux/}"
+          predicate="dist/attestations/nist-800-190.base-micro.${arch}.json"
+          mkdir -p dist/attestations
+
+          python tools/generate-nist-800-190-predicate.py \
+            --image-ref "${RUNTIME_IMAGE}" \
+            --platform "${PLATFORM}" \
+            --arch "${arch}" \
+            --base-image "${UBI_MICRO_IMAGE}" \
+            --source-uri "github.com/${GITHUB_REPOSITORY}" \
+            --revision "${GITHUB_SHA}" \
+            --secret-scan-report "dist/rootfs-secret-scan/base-micro.${arch}.secret-scan.json" \
+            --output "${predicate}"
+
+          python tools/generate-nist-800-190-predicate.py --validate "${predicate}"

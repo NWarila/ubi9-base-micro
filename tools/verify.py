@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -59,6 +60,7 @@ def check_required_files() -> None:
         "docs/README.md",
         "docs/acceptance.md",
         "docs/fips.md",
+        "docs/nist-800-190.md",
         "docs/reference/verify.md",
         "docs/vex.md",
         "tests/fips.sh",
@@ -69,6 +71,10 @@ def check_required_files() -> None:
         "tools/install-grype.sh",
         "tools/assert-sbom-rpms.py",
         "tools/assert-vex.py",
+        "tools/assert-no-rootfs-secrets.py",
+        "tools/generate-nist-800-190-predicate.py",
+        "tools/assert-cosign-rekor.py",
+        "tools/assert-slsa-builder-id.py",
         "tools/verify.py",
         "vex/.gitkeep",
         "vex/README.md",
@@ -152,6 +158,10 @@ def check_workflow() -> None:
         "tools/verify.py",
         "tools/assert-sbom-rpms.py --self-test",
         "tools/assert-vex.py --self-test",
+        "tools/assert-no-rootfs-secrets.py --self-test",
+        "tools/generate-nist-800-190-predicate.py --self-test",
+        "tools/assert-slsa-builder-id.py --self-test",
+        "UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:",
         "TRIVY_VERSION: \"0.71.0\"",
         "GRYPE_VERSION: \"0.87.0\"",
         "tools/install-trivy.sh",
@@ -173,6 +183,11 @@ def check_workflow() -> None:
         "--format json",
         "--file \"${grype_json}\"",
         "tools/assert-vex.py",
+        "Run runtime rootfs secret gate",
+        "tools/assert-no-rootfs-secrets.py",
+        "Generate and validate NIST SP 800-190 predicate",
+        "tools/generate-nist-800-190-predicate.py",
+        "--validate \"${predicate}\"",
         "ghcr.io/nwarila/ubi9-base-micro",
     ]:
         require(marker in text, f"build workflow missing marker: {marker}")
@@ -213,6 +228,7 @@ def check_publish_workflow() -> None:
         "SYFT_VERSION: \"1.45.1\"",
         "TRIVY_VERSION: \"0.71.0\"",
         "GRYPE_VERSION: \"0.87.0\"",
+        "NIST_800_190_PREDICATE_TYPE: \"https://nwarila.dev/attestations/nist-sp-800-190-image/v1\"",
         "tools/install-syft.sh",
         "tools/install-trivy.sh",
         "tools/install-grype.sh",
@@ -241,6 +257,20 @@ def check_publish_workflow() -> None:
         "cosign verify-attestation --type spdxjson",
         "cosign attest --type openvex",
         "cosign verify-attestation --type openvex",
+        "Run runtime rootfs secret gates",
+        "tools/assert-no-rootfs-secrets.py",
+        "Generate NIST SP 800-190 image-control predicates",
+        "tools/generate-nist-800-190-predicate.py",
+        "cosign attest --type \"${NIST_800_190_PREDICATE_TYPE}\"",
+        "cosign verify-attestation --type \"${NIST_800_190_PREDICATE_TYPE}\"",
+        "rekor-rollup:",
+        "Verify Rekor roll-up",
+        "tools/assert-cosign-rekor.py",
+        "EXPECTED_BUILDER_ID",
+        "tools/assert-slsa-builder-id.py",
+        "cosign verify-attestation --type slsaprovenance",
+        "cosign verify-attestation --type spdxjson",
+        "cosign verify-attestation --type cyclonedx",
         "COSIGN_YES: \"true\"",
         SLSA_GENERATOR + "@" + SLSA_GENERATOR_TAG,
         SLSA_GENERATOR_SHA,
@@ -259,6 +289,8 @@ def check_publish_workflow() -> None:
         "-regexp",
         "--sbom=true",
         "--tlog-upload=false",
+        "--insecure-ignore-tlog",
+        "--rekor-url",
         "attest-build-" + "provenance",
         "gh attestation verify",
         "continue-on-" + "error",
@@ -420,12 +452,82 @@ def check_vex() -> None:
     ]:
         require(marker in vex_readme, f"vex/README.md missing marker: {marker}")
 
+
+def check_nist_800_190_scripts() -> None:
+    generator = read("tools/generate-nist-800-190-predicate.py")
+    for marker in [
+        "PREDICATE_TYPE",
+        "https://nwarila.dev/attestations/nist-sp-800-190-image/v1",
+        "4.1.1",
+        "4.1.2",
+        "4.1.3",
+        "4.1.4",
+        "4.1.5",
+        "notCisDocker",
+        "a claim of arbitrary antivirus detection",
+        "--validate",
+        "--self-test",
+    ]:
+        require(marker in generator, f"NIST predicate generator missing marker: {marker}")
+
+    secrets = read("tools/assert-no-rootfs-secrets.py")
+    for marker in [
+        "private-key",
+        "aws-access-key-id",
+        "github-token",
+        "generic-secret-assignment",
+        "findings",
+        "--self-test",
+    ]:
+        require(marker in secrets, f"rootfs secret scanner missing marker: {marker}")
+
+    rekor = read("tools/assert-cosign-rekor.py")
+    for marker in [
+        "SignedEntryTimestamp",
+        "logIndex",
+        "integratedTime",
+        "logID",
+        "--self-test",
+    ]:
+        require(marker in rekor, f"Rekor assertion helper missing marker: {marker}")
+
+    slsa = read("tools/assert-slsa-builder-id.py")
+    for marker in [
+        "runDetails",
+        "builder",
+        "--builder-id",
+        "generator_container_slsa3.yml@refs/tags/v2.1.0",
+        "--self-test",
+    ]:
+        require(marker in slsa, f"SLSA builderID helper missing marker: {marker}")
+
+
+def check_helper_self_tests() -> None:
+    for relative_path in [
+        "tools/assert-no-rootfs-secrets.py",
+        "tools/generate-nist-800-190-predicate.py",
+        "tools/assert-cosign-rekor.py",
+        "tools/assert-slsa-builder-id.py",
+    ]:
+        result = subprocess.run(
+            [sys.executable, str(ROOT / relative_path), "--self-test"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        require(
+            result.returncode == 0,
+            f"{relative_path} --self-test failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
+        )
+
 def check_docs() -> None:
     acceptance = read("docs/acceptance.md")
     fips = read("docs/fips.md")
     docs_index = read("docs/README.md")
     verify = read("docs/reference/verify.md")
     vex_doc = read("docs/vex.md")
+    nist_doc = read("docs/nist-800-190.md")
     legacy_namespace = "ghcr.io/nwarila-" + "platform/*"
     require(legacy_namespace in acceptance, "acceptance copy should preserve source DoD text")
     require("superseded for this repository" in acceptance, "acceptance.md must flag the legacy platform namespace")
@@ -444,14 +546,32 @@ def check_docs() -> None:
     require("x86_64" in fips and "IBM Z" in fips and "POWER" in fips and "aarch64" in fips, "docs/fips.md must cite tested OE architecture scope")
     require("certificate/4857" in fips and "140sp4857.pdf" in fips, "docs/fips.md must cite NIST #4857 sources")
     require("reference/verify.md" in docs_index, "docs README must index verify contract")
+    require("nist-800-190.md" in docs_index, "docs README must index NIST 800-190 evidence")
     require("vex.md" in docs_index, "docs README must index VEX flow")
     require("CODEOWNERS-gated" in vex_doc and "cosign attest --type openvex" in vex_doc, "docs/vex.md must describe VEX review and attestation flow")
+    for marker in [
+        "https://nwarila.dev/attestations/nist-sp-800-190-image/v1",
+        "NIST SP 800-190 section 4.1",
+        "not CIS Docker",
+        "4.1.1",
+        "4.1.2",
+        "4.1.3",
+        "4.1.4",
+        "4.1.5",
+        "tools/assert-no-rootfs-secrets.py",
+        "not a claim of arbitrary antivirus detection",
+    ]:
+        require(marker in nist_doc, f"docs/nist-800-190.md missing marker: {marker}")
 
     for marker in [
         "cosign verify \"${IMAGE_REF}\"",
         "cosign verify-attestation --type spdxjson",
         "cosign verify-attestation --type cyclonedx",
         "cosign verify-attestation --type openvex",
+        "cosign verify-attestation --type https://nwarila.dev/attestations/nist-sp-800-190-image/v1",
+        "full attestation set is Rekor-logged",
+        "tools/assert-cosign-rekor.py",
+        "tools/assert-slsa-builder-id.py",
         "cosign download sbom \"${IMAGE_REF}\" | grep -q glibc",
         "Trivy",
         "Grype",
@@ -502,7 +622,9 @@ def main() -> int:
         check_fips_config,
         check_fips_script,
         check_vex,
+        check_nist_800_190_scripts,
         check_docs,
+        check_helper_self_tests,
         check_no_attribution_residue,
     ]
     try:
