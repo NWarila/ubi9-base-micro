@@ -180,7 +180,7 @@ jobs:
           }
           trap cleanup EXIT
 
-          docker export "${container_id}" | tar --no-same-owner -x -C "${rootfs_dir}"
+          docker export "${container_id}" | tar --no-same-owner --no-same-permissions -x -C "${rootfs_dir}"
           python tools/assert-no-rootfs-secrets.py \
             --rootfs "${rootfs_dir}" \
             --report "${report}"

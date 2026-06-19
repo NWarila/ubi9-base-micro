@@ -470,7 +470,7 @@ jobs:
             mkdir -p "${rootfs_dir}"
 
             container_id="$(docker create --platform "${platform}" "${image_ref}" /secret-scan-export)"
-            docker export "${container_id}" | tar --no-same-owner -x -C "${rootfs_dir}"
+            docker export "${container_id}" | tar --no-same-owner --no-same-permissions -x -C "${rootfs_dir}"
             docker rm "${container_id}" >/dev/null
             container_id=""
 
