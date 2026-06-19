@@ -77,6 +77,7 @@ def check_required_files() -> None:
         "tools/assert-cosign-rekor.py",
         "tools/assert-slsa-builder-id.py",
         "tools/assert-stig-tailoring.py",
+        "tools/assert-rootfs-identity.py",
         "tools/assert-stig-arf.py",
         "tools/generate-stig-arf-predicate.py",
         "tools/install-openscap.sh",
@@ -178,6 +179,7 @@ def check_workflow() -> None:
         "STIG_PROFILE: \"xccdf_org.nwarila.content_profile_ubi9_base_micro_stig\"",
         "STIG_FAIL_ON: \"low\"",
         "tools/assert-stig-tailoring.py --self-test",
+        "tools/assert-rootfs-identity.py --self-test",
         "tools/assert-stig-arf.py --self-test",
         "tools/generate-stig-arf-predicate.py --self-test",
         "tools/install-openscap.sh",
@@ -554,6 +556,7 @@ def check_helper_self_tests() -> None:
         "tools/assert-cosign-rekor.py",
         "tools/assert-slsa-builder-id.py",
         "tools/assert-stig-tailoring.py",
+        "tools/assert-rootfs-identity.py",
         "tools/assert-stig-arf.py",
         "tools/generate-stig-arf-predicate.py",
     ]:
@@ -583,6 +586,10 @@ def check_stig() -> None:
         "file_permissions_etc_group",
         "file_permissions_etc_passwd",
         "accounts_no_uid_except_zero",
+        "file_permissions_etc_shadow",
+        "file_permissions_backup_etc_shadow",
+        "file_permissions_library_dirs",
+        "file_ownership_binary_dirs",
         "file_permissions_unauthorized_world_writable",
         "file_permissions_unauthorized_suid",
         "file_permissions_unauthorized_sgid",
@@ -596,15 +603,20 @@ def check_stig() -> None:
         "selected_controls",
         "supplemental_selected_rules",
         "omission_groups",
+        "RHEL-09-232010",
         "RHEL-09-232055",
+        "RHEL-09-232270",
         "RHEL-09-411100",
         "host_filesystem_mounts",
+        "absent_audit_tool_and_config_paths",
+        "host_selinux_device_labeling",
         "interactive_account_and_pam_policy",
     ]:
         require(marker in justifications, f"STIG justification ledger missing marker: {marker}")
 
     for relative_path in [
         "tools/assert-stig-tailoring.py",
+        "tools/assert-rootfs-identity.py",
         "tools/assert-stig-arf.py",
         "tools/generate-stig-arf-predicate.py",
         "tools/build-stig-datastream.sh",
@@ -666,6 +678,9 @@ def check_docs() -> None:
         "ComplianceAsCode/content",
         "mass-N/A guard",
         "CODEOWNERS-gated",
+        "tools/assert-rootfs-identity.py",
+        "must-verify selected rule returning `notapplicable`",
+        "every `rule-result` as `idref`",
     ]:
         require(marker in stig_doc, f"docs/stig.md missing marker: {marker}")
 
@@ -688,6 +703,8 @@ def check_docs() -> None:
         "cosign verify-attestation --type slsaprovenance",
         "STIG ARF",
         "OpenSCAP",
+        "per-rule `idref` result",
+        "rootfs identity assertion report",
         "slsa-verifier verify-image",
         "generator_container_slsa3.yml@refs/tags/v2.1.0",
         "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a",

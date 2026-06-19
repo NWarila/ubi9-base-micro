@@ -65,6 +65,16 @@ arf="${out_dir}/base-micro.${arch}.stig.arf.xml"
 report="${out_dir}/base-micro.${arch}.stig.report.html"
 summary="${out_dir}/base-micro.${arch}.stig.summary.json"
 predicate="${out_dir}/stig-arf.base-micro.${arch}.json"
+rootfs_tar="${out_dir}/base-micro.${arch}.rootfs.tar"
+identity_summary="${out_dir}/base-micro.${arch}.rootfs-identity.json"
+identity_container_id=""
+
+cleanup_identity_container() {
+  if [[ -n "${identity_container_id}" ]]; then
+    sudo podman rm "${identity_container_id}" >/dev/null 2>&1
+  fi
+}
+trap cleanup_identity_container EXIT
 
 oscap_status=0
 if sudo oscap-podman "${image_ref}" xccdf eval \
@@ -83,9 +93,19 @@ if [[ "${oscap_status}" != "0" && "${oscap_status}" != "2" ]]; then
   exit "${oscap_status}"
 fi
 
+identity_container_id="$(sudo podman create "${image_ref}" /stig-rootfs-export)"
+sudo podman export --output "${rootfs_tar}" "${identity_container_id}"
+sudo podman rm "${identity_container_id}" >/dev/null
+identity_container_id=""
+
+python "${repo_root}/tools/assert-rootfs-identity.py" \
+  --rootfs-tar "${rootfs_tar}" \
+  --report "${identity_summary}"
+
 python "${repo_root}/tools/assert-stig-arf.py" \
   --arf "${arf}" \
   --fail-on "${fail_on}" \
+  --equivalent-assertions "${identity_summary}" \
   --summary "${summary}"
 
 python "${repo_root}/tools/generate-stig-arf-predicate.py" \

@@ -18,7 +18,11 @@ CODEOWNERS-gated under `/stig/ @NWarila`.
 
 The tailored profile keeps image-rootfs controls selected:
 
-- `/etc/passwd` and `/etc/group` ownership and mode.
+- `/etc/passwd`, `/etc/group`, `/etc/shadow`, and `/etc/gshadow` ownership and
+  mode.
+- The setup-shipped backup account databases: `/etc/passwd-`, `/etc/group-`,
+  `/etc/shadow-`, and `/etc/gshadow-`.
+- Ownership and mode for populated binary and library trees.
 - Valid user and group ownership for shipped files.
 - Public world-writable directory ownership and sticky-bit state.
 - UID 0 uniqueness.
@@ -28,14 +32,23 @@ The tailored profile keeps image-rootfs controls selected:
 Host-only controls are not claimed as image passes. The scope ledger documents
 why omitted control groups belong to the consuming host or runtime: bootloader,
 kernel/sysctl, auditd, PAM, SSH, firewall, GUI, systemd services, mount options,
-interactive account policy, and mutable host package-management state.
+interactive account policy, mutable host package-management state, host log
+paths, cron paths, user home directories, and SELinux device labeling.
 
 `tools/assert-stig-tailoring.py` derives the full RHEL9 STIG control set from
 the pinned source tree and fails unless every omitted control is covered by a
-documented omission group; this is the mass-N/A guard. `tools/assert-stig-arf.py` then fails closed on ARF
-parse errors, `error`/`unknown` rule results, or any `fail` at the configured
-threshold. The configured threshold is `low`, so any applicable failure blocks
-the build.
+documented omission group; this is the mass-N/A guard. `tools/assert-rootfs-identity.py`
+checks the exported runtime rootfs tar for UID 0 uniqueness and unknown file
+UID/GID ownership. `tools/assert-stig-arf.py` then fails closed on ARF parse
+errors, `error`/`unknown` rule results, any `fail` at the configured threshold,
+or a must-verify selected rule returning `notapplicable` without a passing
+equivalent deterministic assertion. The configured threshold is `low`, so any
+applicable failure blocks the build.
+
+The ARF summary JSON records every `rule-result` as `idref`, severity, and
+result, plus any equivalent assertion report used to cover a selected
+`notapplicable` identity or ownership rule. The signed STIG ARF predicate embeds
+that summary unchanged.
 
 On `pull_request`, CI builds the datastream, runs the tailored scan, and emits
 the ARF and summary locally only. On `push` to `main` or `v*` tags, the publish

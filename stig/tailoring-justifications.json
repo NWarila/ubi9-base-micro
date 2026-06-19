@@ -4,48 +4,232 @@
   "ssg_version": "0.1.81",
   "ssg_tarball_sha512": "11e26cfa96a6f1bd98b3a131837e2f86c9a9851239337d86d624b01627faf10f7a03c395a5839ddab018e0fa47719ade05a9946f90d5ca96b1261776a9164379",
   "selected_controls": {
+    "RHEL-09-232010": {
+      "rules": [
+        "file_permissions_binary_dirs"
+      ],
+      "scope": "The runtime image ships command directories where present; command path modes are image-rootfs evidence."
+    },
+    "RHEL-09-232015": {
+      "rules": [
+        "dir_permissions_library_dirs"
+      ],
+      "scope": "The runtime image ships populated library directories; directory modes are image-rootfs evidence."
+    },
+    "RHEL-09-232020": {
+      "rules": [
+        "file_permissions_library_dirs"
+      ],
+      "scope": "The runtime image ships library files under populated library trees; file modes are image-rootfs evidence."
+    },
     "RHEL-09-232055": {
-      "rules": ["file_permissions_etc_group"],
+      "rules": [
+        "file_permissions_etc_group"
+      ],
       "scope": "The runtime image ships /etc/group; its permissions are image-rootfs evidence."
     },
+    "RHEL-09-232060": {
+      "rules": [
+        "file_permissions_backup_etc_group"
+      ],
+      "scope": "The setup package ships /etc/group- in the runtime image; its permissions are image-rootfs evidence."
+    },
+    "RHEL-09-232065": {
+      "rules": [
+        "file_permissions_etc_gshadow"
+      ],
+      "scope": "The runtime image ships /etc/gshadow; its permissions are image-rootfs evidence."
+    },
+    "RHEL-09-232070": {
+      "rules": [
+        "file_permissions_backup_etc_gshadow"
+      ],
+      "scope": "The setup package ships /etc/gshadow- in the runtime image; its permissions are image-rootfs evidence."
+    },
     "RHEL-09-232075": {
-      "rules": ["file_permissions_etc_passwd"],
+      "rules": [
+        "file_permissions_etc_passwd"
+      ],
       "scope": "The runtime image ships /etc/passwd; its permissions are image-rootfs evidence."
     },
+    "RHEL-09-232080": {
+      "rules": [
+        "file_permissions_backup_etc_passwd"
+      ],
+      "scope": "The setup package ships /etc/passwd- in the runtime image; its permissions are image-rootfs evidence."
+    },
+    "RHEL-09-232085": {
+      "rules": [
+        "file_permissions_backup_etc_shadow"
+      ],
+      "scope": "The setup package ships /etc/shadow- in the runtime image; its permissions are image-rootfs evidence."
+    },
     "RHEL-09-232090": {
-      "rules": ["file_owner_etc_group"],
+      "rules": [
+        "file_owner_etc_group"
+      ],
       "scope": "The runtime image ships /etc/group; root ownership is image-rootfs evidence."
     },
     "RHEL-09-232095": {
-      "rules": ["file_groupowner_etc_group"],
+      "rules": [
+        "file_groupowner_etc_group"
+      ],
       "scope": "The runtime image ships /etc/group; root group ownership is image-rootfs evidence."
     },
+    "RHEL-09-232100": {
+      "rules": [
+        "file_owner_backup_etc_group"
+      ],
+      "scope": "The setup package ships /etc/group- in the runtime image; root ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232105": {
+      "rules": [
+        "file_groupowner_backup_etc_group"
+      ],
+      "scope": "The setup package ships /etc/group- in the runtime image; root group ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232110": {
+      "rules": [
+        "file_owner_etc_gshadow"
+      ],
+      "scope": "The runtime image ships /etc/gshadow; root ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232115": {
+      "rules": [
+        "file_groupowner_etc_gshadow"
+      ],
+      "scope": "The runtime image ships /etc/gshadow; root group ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232120": {
+      "rules": [
+        "file_owner_backup_etc_gshadow"
+      ],
+      "scope": "The setup package ships /etc/gshadow- in the runtime image; root ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232125": {
+      "rules": [
+        "file_groupowner_backup_etc_gshadow"
+      ],
+      "scope": "The setup package ships /etc/gshadow- in the runtime image; root group ownership is image-rootfs evidence."
+    },
     "RHEL-09-232130": {
-      "rules": ["file_owner_etc_passwd"],
+      "rules": [
+        "file_owner_etc_passwd"
+      ],
       "scope": "The runtime image ships /etc/passwd; root ownership is image-rootfs evidence."
     },
     "RHEL-09-232135": {
-      "rules": ["file_groupowner_etc_passwd"],
+      "rules": [
+        "file_groupowner_etc_passwd"
+      ],
       "scope": "The runtime image ships /etc/passwd; root group ownership is image-rootfs evidence."
     },
+    "RHEL-09-232140": {
+      "rules": [
+        "file_owner_backup_etc_passwd"
+      ],
+      "scope": "The setup package ships /etc/passwd- in the runtime image; root ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232145": {
+      "rules": [
+        "file_groupowner_backup_etc_passwd"
+      ],
+      "scope": "The setup package ships /etc/passwd- in the runtime image; root group ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232150": {
+      "rules": [
+        "file_owner_etc_shadow"
+      ],
+      "scope": "The runtime image ships /etc/shadow; root ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232155": {
+      "rules": [
+        "file_groupowner_etc_shadow"
+      ],
+      "scope": "The runtime image ships /etc/shadow; root group ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232160": {
+      "rules": [
+        "file_owner_backup_etc_shadow"
+      ],
+      "scope": "The setup package ships /etc/shadow- in the runtime image; root ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232165": {
+      "rules": [
+        "file_groupowner_backup_etc_shadow"
+      ],
+      "scope": "The setup package ships /etc/shadow- in the runtime image; root group ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232190": {
+      "rules": [
+        "file_ownership_binary_dirs"
+      ],
+      "scope": "The runtime image ships command directories where present; root ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232195": {
+      "rules": [
+        "file_groupownership_system_commands_dirs"
+      ],
+      "scope": "The runtime image ships command directories where present; root or system group ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232200": {
+      "rules": [
+        "file_ownership_library_dirs"
+      ],
+      "scope": "The runtime image ships library files under populated library trees; root ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232205": {
+      "rules": [
+        "root_permissions_syslibrary_files"
+      ],
+      "scope": "The runtime image ships library files under populated library trees; root or system group ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232210": {
+      "rules": [
+        "dir_ownership_library_dirs"
+      ],
+      "scope": "The runtime image ships populated library directories; root ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232215": {
+      "rules": [
+        "dir_group_ownership_library_dirs"
+      ],
+      "scope": "The runtime image ships populated library directories; root or system group ownership is image-rootfs evidence."
+    },
     "RHEL-09-232240": {
-      "rules": ["dir_perms_world_writable_system_owned"],
+      "rules": [
+        "dir_perms_world_writable_system_owned"
+      ],
       "scope": "World-writable directories in the shipped rootfs are image-rootfs evidence."
     },
     "RHEL-09-232245": {
-      "rules": ["dir_perms_world_writable_sticky_bits"],
+      "rules": [
+        "dir_perms_world_writable_sticky_bits"
+      ],
       "scope": "Public directory sticky-bit state in the shipped rootfs is image-rootfs evidence."
     },
     "RHEL-09-232250": {
-      "rules": ["file_permissions_ungroupowned"],
+      "rules": [
+        "file_permissions_ungroupowned"
+      ],
       "scope": "Valid group ownership for shipped files is image-rootfs evidence."
     },
     "RHEL-09-232255": {
-      "rules": ["no_files_unowned_by_user"],
+      "rules": [
+        "no_files_unowned_by_user"
+      ],
       "scope": "Valid file ownership for shipped files is image-rootfs evidence."
     },
+    "RHEL-09-232270": {
+      "rules": [
+        "file_permissions_etc_shadow"
+      ],
+      "scope": "The runtime image ships /etc/shadow; its permissions are image-rootfs evidence."
+    },
     "RHEL-09-411100": {
-      "rules": ["accounts_no_uid_except_zero"],
+      "rules": [
+        "accounts_no_uid_except_zero"
+      ],
       "scope": "The fixed passwd database in the runtime image must not grant UID 0 to any account except root."
     }
   },
@@ -63,52 +247,116 @@
   "omission_groups": [
     {
       "id": "profile_bootstrap_and_login_banner",
-      "control_id_patterns": ["^needed_rules$", "^RHEL-09-171011$"],
+      "control_id_patterns": [
+        "^needed_rules$",
+        "^RHEL-09-171011$"
+      ],
       "justification": "Authselect and graphical login-banner requirements configure an interactive host login stack. ubi9-base-micro has no shell login, PAM stack, GDM, or init system."
     },
     {
       "id": "host_release_update_boot_kernel_services",
-      "control_id_patterns": ["^RHEL-09-21"],
+      "control_id_patterns": [
+        "^RHEL-09-21"
+      ],
       "justification": "These controls govern vendor support checks, mutable host patch workflow, local banners, bootloader settings, kernel/sysctl state, systemd services, and host FIPS policy. The image rootfs is instead controlled by digest-pinned UBI inputs, dual CVE gates, FIPS module gates, and the consuming host/runtime."
     },
     {
       "id": "host_filesystem_mounts",
-      "control_id_patterns": ["^RHEL-09-231"],
+      "control_id_patterns": [
+        "^RHEL-09-231"
+      ],
       "justification": "Partition and mount-option controls are properties of the consuming host/container runtime mount namespace, not static image rootfs bytes. The image does not define host partitions, NFS/removable media, /boot, or /dev/shm mounts."
     },
     {
-      "id": "non_selected_filesystem_identity_and_daemon_paths",
-      "control_id_patterns": ["^RHEL-09-232"],
-      "justification": "The selected RHEL-09-232 controls cover image-rootfs identity files, world-writable directories, and valid ownership. The omitted controls target host home directories, cron/audit daemon paths, backup account databases, SELinux device labeling, or other mutable host paths absent or not authoritative in this distroless image."
+      "id": "absent_home_directory_paths",
+      "control_id_patterns": [
+        "^RHEL-09-232045$",
+        "^RHEL-09-232050$"
+      ],
+      "justification": "These controls target local interactive user initialization files and home directories. The runtime image has no shell-login users with authoritative home directory content; any such paths are supplied by the consuming workload or host."
+    },
+    {
+      "id": "absent_cron_paths",
+      "control_id_patterns": [
+        "^RHEL-09-232040$",
+        "^RHEL-09-232230$",
+        "^RHEL-09-232235$"
+      ],
+      "justification": "These controls target cron configuration directories and crontab files. ubi9-base-micro ships no cron daemon or cron configuration tree; cron scheduling is a consuming host or platform responsibility."
+    },
+    {
+      "id": "absent_audit_tool_and_config_paths",
+      "control_id_patterns": [
+        "^RHEL-09-232035$",
+        "^RHEL-09-232103$",
+        "^RHEL-09-232104$",
+        "^RHEL-09-232220$",
+        "^RHEL-09-232225$"
+      ],
+      "justification": "These controls target audit tool binaries and /etc/audit configuration paths. The distroless runtime image ships no auditd stack, audit tools, or audit configuration authority; audit policy belongs to the consuming host."
+    },
+    {
+      "id": "absent_log_paths",
+      "control_id_patterns": [
+        "^RHEL-09-232025$",
+        "^RHEL-09-232030$",
+        "^RHEL-09-232170$",
+        "^RHEL-09-232175$",
+        "^RHEL-09-232180$",
+        "^RHEL-09-232185$"
+      ],
+      "justification": "These controls target host log directories and /var/log/messages ownership or mode. The image does not ship a persistent system log tree or syslog message file; logging paths are runtime host or platform state."
+    },
+    {
+      "id": "host_selinux_device_labeling",
+      "control_id_patterns": [
+        "^RHEL-09-232260$"
+      ],
+      "justification": "SELinux device-file labeling is a property of the consuming host kernel, policy, and device namespace, not a static image-rootfs byte claim."
     },
     {
       "id": "host_selinux_crypto_package_policy",
-      "control_id_patterns": ["^RHEL-09-25"],
+      "control_id_patterns": [
+        "^RHEL-09-25"
+      ],
       "justification": "These controls rely on host SELinux state, system crypto-policy tooling, package manager state, or mutable system configuration. The image evidence for this step is static rootfs scanning; FIPS, RPM provenance, and CVE policy are enforced by separate build-failing gates."
     },
     {
       "id": "host_audit_policy_and_logging",
-      "control_id_patterns": ["^RHEL-09-27", "^RHEL-09-65"],
+      "control_id_patterns": [
+        "^RHEL-09-27",
+        "^RHEL-09-65"
+      ],
       "justification": "Audit daemon policy, log retention, audit rules, and log forwarding are runtime host responsibilities. The image has no auditd, journald service, persistent audit volume, or systemd unit graph."
     },
     {
       "id": "host_network_stack",
-      "control_id_patterns": ["^RHEL-09-29"],
+      "control_id_patterns": [
+        "^RHEL-09-29"
+      ],
       "justification": "Firewall, network service, and kernel network settings are enforced by the consuming runtime and cluster/network policy. The distroless image does not run host network daemons or configure host firewall state."
     },
     {
       "id": "interactive_account_and_pam_policy",
-      "control_id_patterns": ["^RHEL-09-41", "^RHEL-09-43"],
+      "control_id_patterns": [
+        "^RHEL-09-41(?!1100$)",
+        "^RHEL-09-43"
+      ],
       "justification": "Password aging, PAM, faillock, sudo/su, smartcard, SSH daemon, and remote-login controls require an interactive host authentication stack. ubi9-base-micro runs as fixed USER 65532 and ships no shell, sshd, PAM login path, sudo, or su."
     },
     {
       "id": "host_software_integrity_and_session_services",
-      "control_id_patterns": ["^RHEL-09-61", "^RHEL-09-63"],
+      "control_id_patterns": [
+        "^RHEL-09-61",
+        "^RHEL-09-63"
+      ],
       "justification": "These controls govern host package verification, AIDE/session/cron-like services, or mutable host security agents. The image evidence is covered by digest-pinned base inputs, rpmdb-preserving SBOM/CVE gates, rootfs secret checks, and the selected rootfs permission rules."
     },
     {
       "id": "host_disa_residual_families",
-      "control_id_patterns": ["^RHEL-09-67"],
+      "control_id_patterns": [
+        "^RHEL-09-67"
+      ],
       "justification": "The remaining DISA residual controls in this release are host or operational controls outside static image-rootfs authority. They are not marked passing by the image ARF; they are explicitly scoped to the consuming platform."
     }
   ]

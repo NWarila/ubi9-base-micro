@@ -69,6 +69,7 @@ jobs:
           python tools/generate-nist-800-190-predicate.py --self-test
           python tools/assert-slsa-builder-id.py --self-test
           python tools/assert-stig-tailoring.py --self-test
+          python tools/assert-rootfs-identity.py --self-test
           python tools/assert-stig-arf.py --self-test
           python tools/generate-stig-arf-predicate.py --self-test
 
