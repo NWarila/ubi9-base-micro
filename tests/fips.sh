@@ -119,9 +119,26 @@ if ! grep -Fxq "OPENSSL_MODULES=/usr/lib64/ossl-modules" <<<"${env_values}"; the
   exit 1
 fi
 
+cmvp_label="$(docker image inspect --format '{{ index .Config.Labels "org.nwarila.fips.cmvp" }}' "${image_ref}")"
+module_label="$(docker image inspect --format '{{ index .Config.Labels "org.nwarila.fips.module-version" }}' "${image_ref}")"
+provider_label="$(docker image inspect --format '{{ index .Config.Labels "org.nwarila.fips.provider-nevra" }}' "${image_ref}")"
+if [[ "${cmvp_label}" != "4857" ]]; then
+  echo "image label org.nwarila.fips.cmvp mismatch: ${cmvp_label}" >&2
+  exit 1
+fi
+if [[ "${module_label}" != "3.0.7-395c1a240fbfffd8" ]]; then
+  echo "image label org.nwarila.fips.module-version mismatch: ${module_label}" >&2
+  exit 1
+fi
+if [[ "${provider_label}" != "openssl-fips-provider-so-3.0.7-8.el9.x86_64" ]]; then
+  echo "image label org.nwarila.fips.provider-nevra mismatch: ${provider_label}" >&2
+  exit 1
+fi
+
 echo "FIPS artifact checks passed for ${image_ref}"
 echo "proof: fips.so present and non-empty"
 echo "proof: openssl-fips.cnf present with fips section and default_properties = fips=yes"
 echo "proof: libcrypto.so.3 present"
 echo "proof: legacy provider, fipsmodule.cnf, and openssl CLI absent from the runtime"
 echo "proof: OPENSSL_CONF and OPENSSL_MODULES image ENV are set"
+echo "proof: FIPS OCI labels match CMVP, module version, and provider NEVRA pins"

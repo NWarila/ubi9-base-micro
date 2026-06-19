@@ -76,6 +76,11 @@ def check_dockerfile() -> None:
         "org.nwarila.fips.cmvp",
         "org.nwarila.fips.module-version",
         "org.nwarila.fips.provider-nevra",
+        "/fips-proof/provider.nevra",
+        "/fips-proof/libs.nevra",
+        "/fips-proof/fips.so.sha256",
+        "rpm --root=/rootfs -q --qf '%{NEVRA}\\n' openssl-fips-provider-so",
+        "shipped_libs_nevra",
     ]
     missing = [marker for marker in required if marker not in text]
     require(not missing, "Dockerfile missing required markers: " + ", ".join(missing))
@@ -225,7 +230,7 @@ def check_no_attribution_residue() -> None:
     for path in ROOT.rglob("*"):
         if ".git" in path.parts or not path.is_file():
             continue
-        if path.suffix.lower() not in {".md", ".py", ".sh", ".yaml", ".yml", ".dockerignore", ".gitignore", ""}:
+        if path.suffix.lower() not in {".cnf", ".md", ".py", ".sh", ".yaml", ".yml", ".dockerignore", ".gitignore", ""}:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore").lower()
         for fragment in fragments:
