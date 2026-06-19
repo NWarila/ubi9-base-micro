@@ -22,6 +22,8 @@ env:
   DEV_IMAGE: ghcr.io/nwarila/ubi9-base-micro:base-micro-dev
   PLATFORM: linux/amd64
   SYFT_VERSION: "1.45.1"
+  TRIVY_VERSION: "0.71.0"
+  GRYPE_VERSION: "0.87.0"
 
 jobs:
   actionlint:
@@ -56,11 +58,14 @@ jobs:
         run: |
           python tools/verify.py
           python tools/assert-sbom-rpms.py --self-test
+          python tools/assert-vex.py --self-test
 
       - name: Check shell script syntax
         run: |
           bash -n tests/hardening.sh
           bash -n tests/fips.sh
+          bash -n tools/install-trivy.sh
+          bash -n tools/install-grype.sh
           bash -n tools/build.sh
           bash -n tools/install-syft.sh
 
@@ -81,6 +86,12 @@ jobs:
 
       - name: Install Syft for rpmdb enumeration
         run: bash tools/install-syft.sh
+
+      - name: Install Trivy for vulnerability gates
+        run: bash tools/install-trivy.sh
+
+      - name: Install Grype for vulnerability gates
+        run: bash tools/install-grype.sh
 
       - name: Build runtime and development images
         run: bash tools/build.sh
@@ -108,3 +119,43 @@ jobs:
             --source "dist/sbom/base-micro.${sbom_arch}.syft.json" \
             "dist/sbom/base-micro.${sbom_arch}.spdx.json" \
             "dist/sbom/base-micro.${sbom_arch}.cdx.json"
+
+      - name: Run Trivy fixable vulnerability gate
+        run: |
+          set -euo pipefail
+
+          dist/tools/trivy image \
+            --vuln-type os,library \
+            --ignore-unfixed \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            "${RUNTIME_IMAGE}"
+
+      - name: Run Grype fixable vulnerability gate
+        run: |
+          set -euo pipefail
+
+          dist/tools/grype "${RUNTIME_IMAGE}" --only-fixed --fail-on high
+
+      - name: Run OpenVEX default-deny gate
+        run: |
+          set -euo pipefail
+
+          sbom_arch="${PLATFORM#linux/}"
+          mkdir -p dist/vuln
+          trivy_json="dist/vuln/base-micro.${sbom_arch}.trivy.all.json"
+          grype_json="dist/vuln/base-micro.${sbom_arch}.grype.all.json"
+
+          dist/tools/trivy image \
+            --vuln-type os,library \
+            --severity HIGH,CRITICAL \
+            --format json \
+            --output "${trivy_json}" \
+            "${RUNTIME_IMAGE}"
+
+          dist/tools/grype "${RUNTIME_IMAGE}" -o json --file "${grype_json}"
+
+          python tools/assert-vex.py \
+            --product "${RUNTIME_IMAGE}" \
+            --trivy-json "${trivy_json}" \
+            --grype-json "${grype_json}"

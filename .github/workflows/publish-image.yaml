@@ -20,6 +20,8 @@ env:
   SLSA_GENERATOR_TAG: "v2.1.0"
   SLSA_GENERATOR_TAG_SHA: "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a"
   SYFT_VERSION: "1.45.1"
+  TRIVY_VERSION: "0.71.0"
+  GRYPE_VERSION: "0.87.0"
   UBI_MINIMAL_IMAGE: registry.access.redhat.com/ubi9/ubi-minimal@sha256:ae09ecc3d754bc1726cbda3e2599cc7839e09fe1cc547ce173cf669b645be3cc
   UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:b498b3ea26111ab4b81d65139f2ebd2ef9a2abb7a4588b7fdcc54889f95e9caa
   OPENSSL_FIPS_MODULE_VERSION: "3.0.7-395c1a240fbfffd8"
@@ -171,6 +173,12 @@ jobs:
       - name: Install Syft for SBOM attestations
         run: bash tools/install-syft.sh
 
+      - name: Install Trivy for vulnerability gates
+        run: bash tools/install-trivy.sh
+
+      - name: Install Grype for vulnerability gates
+        run: bash tools/install-grype.sh
+
       - name: Resolve platform image digests
         id: platform_digests
         env:
@@ -240,6 +248,107 @@ jobs:
               --source "dist/sbom/base-micro.${arch}.syft.json" \
               "dist/sbom/base-micro.${arch}.spdx.json" \
               "dist/sbom/base-micro.${arch}.cdx.json"
+          done
+
+      - name: Run Trivy fixable vulnerability gates
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+
+          for arch in amd64 arm64; do
+            case "${arch}" in
+              amd64)
+                digest="${AMD64_DIGEST}"
+                platform="linux/amd64"
+                ;;
+              arm64)
+                digest="${ARM64_DIGEST}"
+                platform="linux/arm64"
+                ;;
+              *)
+                echo "unsupported Trivy architecture: ${arch}" >&2
+                exit 1
+                ;;
+            esac
+
+            image_ref="${IMAGE}@${digest}"
+            dist/tools/trivy image \
+              --platform "${platform}" \
+              --vuln-type os,library \
+              --ignore-unfixed \
+              --severity HIGH,CRITICAL \
+              --exit-code 1 \
+              "${image_ref}"
+          done
+
+      - name: Run Grype fixable vulnerability gates
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+
+          for arch in amd64 arm64; do
+            case "${arch}" in
+              amd64) digest="${AMD64_DIGEST}" ;;
+              arm64) digest="${ARM64_DIGEST}" ;;
+              *)
+                echo "unsupported Grype architecture: ${arch}" >&2
+                exit 1
+                ;;
+            esac
+
+            image_ref="${IMAGE}@${digest}"
+            dist/tools/grype "${image_ref}" --only-fixed --fail-on high
+          done
+
+      - name: Run OpenVEX default-deny gates
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/vuln
+          for arch in amd64 arm64; do
+            case "${arch}" in
+              amd64)
+                digest="${AMD64_DIGEST}"
+                platform="linux/amd64"
+                ;;
+              arm64)
+                digest="${ARM64_DIGEST}"
+                platform="linux/arm64"
+                ;;
+              *)
+                echo "unsupported VEX architecture: ${arch}" >&2
+                exit 1
+                ;;
+            esac
+
+            image_ref="${IMAGE}@${digest}"
+            trivy_json="dist/vuln/base-micro.${arch}.trivy.all.json"
+            grype_json="dist/vuln/base-micro.${arch}.grype.all.json"
+
+            dist/tools/trivy image \
+              --platform "${platform}" \
+              --vuln-type os,library \
+              --severity HIGH,CRITICAL \
+              --format json \
+              --output "${trivy_json}" \
+              "${image_ref}"
+
+            dist/tools/grype "${image_ref}" -o json --file "${grype_json}"
+
+            python tools/assert-vex.py \
+              --product "${image_ref}" \
+              --trivy-json "${trivy_json}" \
+              --grype-json "${grype_json}"
           done
 
       - name: Attest rpmdb SBOMs
@@ -318,6 +427,74 @@ jobs:
           PY
 
           python tools/assert-sbom-rpms.py dist/verified-spdx-predicate.json
+
+      - name: Attest OpenVEX documents
+        env:
+          COSIGN_YES: "true"
+          IMAGE: ${{ steps.image.outputs.image }}
+          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          vex_docs=(vex/*.json)
+          if (( ${#vex_docs[@]} == 0 )); then
+            echo "No OpenVEX documents present; nothing to attest."
+            exit 0
+          fi
+
+          for arch in amd64 arm64; do
+            case "${arch}" in
+              amd64) digest="${AMD64_DIGEST}" ;;
+              arm64) digest="${ARM64_DIGEST}" ;;
+              *)
+                echo "unsupported OpenVEX attestation architecture: ${arch}" >&2
+                exit 1
+                ;;
+            esac
+
+            image_ref="${IMAGE}@${digest}"
+            for vex_doc in "${vex_docs[@]}"; do
+              cosign attest --type openvex --predicate "${vex_doc}" "${image_ref}"
+            done
+          done
+
+      - name: Verify OpenVEX attestation
+        env:
+          CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/publish-image.yaml@${{ github.ref }}
+          IMAGE: ${{ steps.image.outputs.image }}
+          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          vex_docs=(vex/*.json)
+          if (( ${#vex_docs[@]} == 0 )); then
+            echo "No OpenVEX documents present; nothing to verify."
+            exit 0
+          fi
+
+          mkdir -p dist/vex
+          for arch in amd64 arm64; do
+            case "${arch}" in
+              amd64) digest="${AMD64_DIGEST}" ;;
+              arm64) digest="${ARM64_DIGEST}" ;;
+              *)
+                echo "unsupported OpenVEX verification architecture: ${arch}" >&2
+                exit 1
+                ;;
+            esac
+
+            image_ref="${IMAGE}@${digest}"
+            out="dist/vex/verified-openvex.${arch}.jsonl"
+            cosign verify-attestation --type openvex "${image_ref}" \
+              --certificate-identity "${CERTIFICATE_IDENTITY}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              > "${out}"
+            test -s "${out}"
+          done
 
   slsa-provenance:
     name: slsa l3 provenance
