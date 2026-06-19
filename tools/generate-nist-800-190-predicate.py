@@ -60,6 +60,10 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
             "report": args.secret_scan_report.as_posix(),
             "filesScanned": secret_report.get("filesScanned"),
             "skippedBinaryFiles": secret_report.get("skippedBinaryFiles"),
+            "skippedLargeTextFiles": secret_report.get("skippedLargeTextFiles"),
+            "skippedSymlinks": secret_report.get("skippedSymlinks"),
+            "sampleScanBytes": secret_report.get("sampleScanBytes"),
+            "sampledPatterns": secret_report.get("sampledPatterns"),
             "scanner": "tools/assert-no-rootfs-secrets.py",
         },
         "controls": [
@@ -201,6 +205,10 @@ def run_self_test() -> None:
                     "result": "passed",
                     "filesScanned": 3,
                     "skippedBinaryFiles": 2,
+                    "skippedLargeTextFiles": 1,
+                    "skippedSymlinks": 0,
+                    "sampleScanBytes": 65536,
+                    "sampledPatterns": ["private-key", "aws-access-key-id"],
                     "findings": [],
                 }
             ),

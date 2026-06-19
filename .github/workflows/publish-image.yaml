@@ -738,6 +738,7 @@ jobs:
           shopt -s nullglob
 
           mkdir -p dist/rekor
+          published_ref="${{ needs.publish.outputs.ref }}"
 
           verify_rekor() {
             local kind="$1"
@@ -745,13 +746,13 @@ jobs:
             python tools/assert-cosign-rekor.py --kind "${kind}" "${path}"
           }
 
-          cosign verify "${IMAGE_REF}" \
+          cosign verify "${published_ref}" \
             --certificate-identity "${PUBLISH_CERTIFICATE_IDENTITY}" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             > dist/rekor/cosign-signature.index.json
           verify_rekor "cosign signature index" dist/rekor/cosign-signature.index.json
 
-          cosign verify-attestation --type slsaprovenance "${IMAGE_REF}" \
+          cosign verify-attestation --type slsaprovenance "${published_ref}" \
             --certificate-identity "${SLSA_CERTIFICATE_IDENTITY}" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             > dist/rekor/slsa-provenance.index.json
