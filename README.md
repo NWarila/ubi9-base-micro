@@ -8,13 +8,20 @@ family. This scaffold produces two local-test image tags from one Dockerfile:
 - `base-micro-dev`: the same UBI 9 floor with a shell and a minimal native
   build toolchain for leaf build-time stages.
 
-This step is intentionally test-only. P1.3 delivers the module-scoped OpenSSL
-FIPS provider floor for C/OpenSSL consumers: the runtime ships Red Hat CMVP
-#4857 `fips.so` in approved mode through `/etc/pki/tls/openssl-fips.cnf` and
-`OPENSSL_CONF`/`OPENSSL_MODULES`. This is not a host, OS, container, or
-application FIPS validation claim; the platform host remains non-FIPS. Publishing,
-signing, SLSA provenance, SBOM attestations, vulnerability scanners, STIG ARF,
-and 800-190 evidence remain out of scope for this test-only PR.
+The local build workflow stays test-only. The publish workflow runs only on
+`push` to `main` or `v*` tags, building the `base-micro` runtime for
+`linux/amd64` and `linux/arm64`, signing the pushed digest, and invoking the
+SLSA L3 container provenance generator.
+
+The runtime ships Red Hat CMVP #4857 `fips.so` in approved mode through
+`/etc/pki/tls/openssl-fips.cnf` and `OPENSSL_CONF`/`OPENSSL_MODULES`. This is
+not a host, OS, container, or application FIPS validation claim; the platform
+host remains non-FIPS. The amd64 image is in #4857's validated OE scope; the
+arm64 image is approved-mode configured and self-test passing but explicitly not
+a CMVP-validated configuration on that architecture. See `docs/fips.md`.
+
+SBOM attestations, vulnerability scanners, STIG ARF, and 800-190 evidence remain
+out of scope for this P1.4a publish spine.
 
 ## Local Build
 
