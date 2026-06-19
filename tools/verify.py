@@ -299,7 +299,7 @@ def check_docs() -> None:
     require("Per-architecture validation scope" in fips, "docs/fips.md must describe per-architecture validation scope")
     require("TD-3" in fips, "docs/fips.md must reference TD-3")
     require("oe_validated" in fips, "docs/fips.md must document fips-status.json oe_validated")
-    require("this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list" in fips, "docs/fips.md missing arm64 disclaimer")
+    require("this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list — this is NOT a CMVP-validated configuration on this architecture" in fips, "docs/fips.md missing arm64 disclaimer")
     require("x86_64" in fips and "IBM Z" in fips and "POWER" in fips and "aarch64" in fips, "docs/fips.md must cite tested OE architecture scope")
     require("certificate/4857" in fips and "140sp4857.pdf" in fips, "docs/fips.md must cite NIST #4857 sources")
     require("reference/verify.md" in docs_index, "docs README must index verify contract")

@@ -34,10 +34,10 @@ The CMVP validation scope is per operational environment:
 | `linux/amd64` | CMVP #4857-validated approved-mode configuration. | `/etc/nwarila/fips-status.json` has `"oe_validated": true`. |
 | `linux/arm64` | Approved-mode configured and self-test passing, but not a CMVP-validated configuration on this architecture. | `/etc/nwarila/fips-status.json` has `"oe_validated": false`. |
 
-The arm64 disclaimer is part of the runtime image and publish manifest annotation:
+The arm64 disclaimer is part of the runtime image. The publish manifest carries the per-architecture `org.nwarila.fips.cmvp.oe-validated` annotation.
 
 ```text
-The Red Hat OpenSSL FIPS provider (module #4857, v3.0.7-395c1a240fbfffd8) is present, approved-mode-configured, and self-test-passing, but this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list - this is NOT a CMVP-validated configuration on this architecture.
+The Red Hat OpenSSL FIPS provider (module #4857, v3.0.7-395c1a240fbfffd8) is present, approved-mode-configured, and self-test-passing, but this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list — this is NOT a CMVP-validated configuration on this architecture.
 ```
 
 NIST CMVP certificate #4857 and its security policy list tested operational environments on x86_64, IBM Z, and POWER platforms; they do not list an aarch64 operational environment. The owner-ratified TD-3 posture is therefore multi-arch with honest per-arch scope: amd64 is #4857-validated approved mode, while arm64 is approved-mode configured and explicitly non-validated.

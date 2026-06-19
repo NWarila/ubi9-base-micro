@@ -125,7 +125,7 @@ case "${image_arch}" in
     ;;
   arm64)
     expected_oe_validated=false
-    expected_disclaimer="NOT in CMVP #4857's validated or vendor-affirmed list"
+    expected_disclaimer="The Red Hat OpenSSL FIPS provider (module #4857, v3.0.7-395c1a240fbfffd8) is present, approved-mode-configured, and self-test-passing, but this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list — this is NOT a CMVP-validated configuration on this architecture."
     ;;
   *)
     echo "unsupported image architecture for FIPS status assertion: ${image_arch}" >&2

@@ -243,7 +243,7 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     set -eu; \
     case "${TARGETARCH}" in \
       amd64) rpm_arch="x86_64"; oe_validated=true; disclaimer="CMVP #4857-validated approved-mode configuration." ;; \
-      arm64) rpm_arch="aarch64"; oe_validated=false; disclaimer="The Red Hat OpenSSL FIPS provider (module #4857, v3.0.7-395c1a240fbfffd8) is present, approved-mode-configured, and self-test-passing, but this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list - this is NOT a CMVP-validated configuration on this architecture." ;; \
+      arm64) rpm_arch="aarch64"; oe_validated=false; disclaimer="The Red Hat OpenSSL FIPS provider (module #4857, v3.0.7-395c1a240fbfffd8) is present, approved-mode-configured, and self-test-passing, but this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list — this is NOT a CMVP-validated configuration on this architecture." ;; \
       *) echo "unsupported TARGETARCH for FIPS status: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     expected_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}"; \
