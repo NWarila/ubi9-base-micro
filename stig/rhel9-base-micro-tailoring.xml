@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xccdf:Tailoring xmlns:xccdf="http://checklists.nist.gov/xccdf/1.2"
+                 id="xccdf_org.nwarila.content_tailoring_ubi9_base_micro_stig">
+  <xccdf:benchmark href="ssg-rhel9-ds.xml"/>
+  <xccdf:version time="2026-06-19T00:00:00Z">1</xccdf:version>
+  <xccdf:Profile id="xccdf_org.nwarila.content_profile_ubi9_base_micro_stig">
+    <xccdf:title>NWarila ubi9-base-micro image-scoped RHEL 9 STIG</xccdf:title>
+    <xccdf:description>
+      Image-rootfs tailoring for the distroless ubi9-base-micro runtime. The
+      selected rules are the RHEL9 STIG controls that apply to a shipped image
+      filesystem: ownership and mode of shipped identity files and setup backup
+      identity files, ownership and mode of populated binary and library trees,
+      valid file ownership, public directory permissions, UID 0 uniqueness, and
+      additional SSG file-permission controls for unexpected world-writable,
+      setuid, and setgid files. Host boot, kernel, init, audit daemon, PAM,
+      SSH, mount, firewall, GUI, and mutable package-management controls are
+      excluded by the reviewed scope justifications in
+      stig/tailoring-justifications.json.
+    </xccdf:description>
+
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_permissions_binary_dirs" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_dir_permissions_library_dirs" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_permissions_library_dirs" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_permissions_etc_group" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_permissions_backup_etc_group" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_permissions_etc_gshadow" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_permissions_backup_etc_gshadow" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_permissions_etc_passwd" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_permissions_backup_etc_passwd" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_permissions_backup_etc_shadow" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_owner_etc_group" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_groupowner_etc_group" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_owner_backup_etc_group" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_groupowner_backup_etc_group" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_owner_etc_gshadow" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_groupowner_etc_gshadow" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_owner_backup_etc_gshadow" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_groupowner_backup_etc_gshadow" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_owner_etc_passwd" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_groupowner_etc_passwd" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_owner_backup_etc_passwd" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_groupowner_backup_etc_passwd" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_owner_etc_shadow" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_groupowner_etc_shadow" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_owner_backup_etc_shadow" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_groupowner_backup_etc_shadow" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_ownership_binary_dirs" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_groupownership_system_commands_dirs" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_ownership_library_dirs" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_root_permissions_syslibrary_files" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_dir_ownership_library_dirs" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_dir_group_ownership_library_dirs" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_dir_perms_world_writable_system_owned" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_dir_perms_world_writable_sticky_bits" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_permissions_ungroupowned" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_no_files_unowned_by_user" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_permissions_etc_shadow" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_accounts_no_uid_except_zero" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_permissions_unauthorized_world_writable" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_permissions_unauthorized_suid" selected="true"/>
+    <xccdf:select idref="xccdf_org.ssgproject.content_rule_file_permissions_unauthorized_sgid" selected="true"/>
+  </xccdf:Profile>
+</xccdf:Tailoring>

@@ -23,8 +23,9 @@ a CMVP-validated configuration on that architecture. See `docs/fips.md`.
 The authoritative SBOM evidence is Syft rpmdb-derived SPDX and CycloneDX,
 attested per published platform child digest. BuildKit SBOM output is disabled
 so the published SPDX evidence has a single source. Vulnerability scanners,
-OpenVEX default-deny, and NIST SP 800-190 section 4.1 image evidence are
-gated in CI; STIG ARF remains out of scope until P1.5.
+OpenVEX default-deny, NIST SP 800-190 section 4.1 image evidence, and the
+tailored RHEL9 STIG ARF gate are gated in CI; publish attaches the STIG ARF
+summary predicate per platform digest. See docs/stig.md.
 
 ## Local Build
 
