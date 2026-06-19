@@ -27,6 +27,11 @@ env:
   OPENSSL_FIPS_MODULE_VERSION: "3.0.7-395c1a240fbfffd8"
   OPENSSL_FIPS_PROVIDER_NEVRA: "openssl-fips-provider-so-3.0.7-8.el9"
   NIST_800_190_PREDICATE_TYPE: "https://nwarila.dev/attestations/nist-sp-800-190-image/v1"
+  STIG_ARF_PREDICATE_TYPE: "https://nwarila.dev/attestations/stig-arf/v1"
+  SSG_VERSION: "0.1.81"
+  SSG_TARBALL_SHA512: "11e26cfa96a6f1bd98b3a131837e2f86c9a9851239337d86d624b01627faf10f7a03c395a5839ddab018e0fa47719ade05a9946f90d5ca96b1261776a9164379"
+  STIG_PROFILE: "xccdf_org.nwarila.content_profile_ubi9_base_micro_stig"
+  STIG_FAIL_ON: "low"
 
 jobs:
   slsa-generator-tag-integrity:
@@ -62,7 +67,7 @@ jobs:
     needs: slsa-generator-tag-integrity
     if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
       id-token: write
@@ -180,6 +185,22 @@ jobs:
       - name: Install Grype for vulnerability gates
         run: bash tools/install-grype.sh
 
+      - name: Install OpenSCAP STIG tooling
+        run: bash tools/install-openscap.sh
+
+      - name: Log in to GHCR for OpenSCAP
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          printf '%s' "${GHCR_TOKEN}" \
+            | sudo podman login ghcr.io \
+                --username "${REGISTRY_USER}" \
+                --password-stdin
+
+      - name: Build RHEL9 STIG datastream
+        run: bash tools/build-stig-datastream.sh
+
       - name: Resolve platform image digests
         id: platform_digests
         env:
@@ -212,6 +233,29 @@ jobs:
           for arch in ("amd64", "arm64"):
               print(f"{arch}_digest={found[arch]}")
           PY
+
+      - name: Run tailored STIG ARF gates
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+
+          for arch in amd64 arm64; do
+            case "${arch}" in
+              amd64) digest="${AMD64_DIGEST}" ;;
+              arm64) digest="${ARM64_DIGEST}" ;;
+              *)
+                echo "unsupported STIG architecture: ${arch}" >&2
+                exit 1
+                ;;
+            esac
+
+            platform="linux/${arch}"
+            image_ref="${IMAGE}@${digest}"
+            bash tools/run-stig-arf.sh "${image_ref}" "${arch}" "${platform}" "dist/stig/${arch}"
+          done
 
       - name: Generate and verify rpmdb SBOMs
         env:
@@ -571,6 +615,58 @@ jobs:
             test -s "${out}"
           done
 
+      - name: Attest STIG ARF predicates
+        env:
+          COSIGN_YES: "true"
+          IMAGE: ${{ steps.image.outputs.image }}
+          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+
+          for arch in amd64 arm64; do
+            case "${arch}" in
+              amd64) digest="${AMD64_DIGEST}" ;;
+              arm64) digest="${ARM64_DIGEST}" ;;
+              *)
+                echo "unsupported STIG attestation architecture: ${arch}" >&2
+                exit 1
+                ;;
+            esac
+
+            cosign attest --type "${STIG_ARF_PREDICATE_TYPE}" \
+              --predicate "dist/stig/${arch}/stig-arf.base-micro.${arch}.json" \
+              "${IMAGE}@${digest}"
+          done
+
+      - name: Verify STIG ARF attestation
+        env:
+          CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/publish-image.yaml@${{ github.ref }}
+          IMAGE: ${{ steps.image.outputs.image }}
+          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/stig/verified
+          for arch in amd64 arm64; do
+            case "${arch}" in
+              amd64) digest="${AMD64_DIGEST}" ;;
+              arm64) digest="${ARM64_DIGEST}" ;;
+              *)
+                echo "unsupported STIG verification architecture: ${arch}" >&2
+                exit 1
+                ;;
+            esac
+
+            out="dist/stig/verified/stig-arf.${arch}.jsonl"
+            cosign verify-attestation --type "${STIG_ARF_PREDICATE_TYPE}" "${IMAGE}@${digest}" \
+              --certificate-identity "${CERTIFICATE_IDENTITY}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              > "${out}"
+            test -s "${out}"
+          done
+
       - name: Attest OpenVEX documents
         env:
           COSIGN_YES: "true"
@@ -845,6 +941,12 @@ jobs:
               --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
               > "dist/rekor/nist-800-190.${arch}.jsonl"
             assert_attestation_tlog "NIST 800-190 image ${arch}" "dist/rekor/nist-800-190.${arch}.jsonl"
+
+            cosign verify-attestation --type "${STIG_ARF_PREDICATE_TYPE}" "${image_ref}" \
+              --certificate-identity "${PUBLISH_CERTIFICATE_IDENTITY}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              > "dist/rekor/stig-arf.${arch}.jsonl"
+            assert_attestation_tlog "STIG ARF ${arch}" "dist/rekor/stig-arf.${arch}.jsonl"
 
             if (( ${#vex_docs[@]} > 0 )); then
               cosign verify-attestation --type openvex "${image_ref}" \

@@ -1,0 +1,115 @@
+{
+  "source_profile": "xccdf_org.ssgproject.content_profile_stig",
+  "tailored_profile": "xccdf_org.nwarila.content_profile_ubi9_base_micro_stig",
+  "ssg_version": "0.1.81",
+  "ssg_tarball_sha512": "11e26cfa96a6f1bd98b3a131837e2f86c9a9851239337d86d624b01627faf10f7a03c395a5839ddab018e0fa47719ade05a9946f90d5ca96b1261776a9164379",
+  "selected_controls": {
+    "RHEL-09-232055": {
+      "rules": ["file_permissions_etc_group"],
+      "scope": "The runtime image ships /etc/group; its permissions are image-rootfs evidence."
+    },
+    "RHEL-09-232075": {
+      "rules": ["file_permissions_etc_passwd"],
+      "scope": "The runtime image ships /etc/passwd; its permissions are image-rootfs evidence."
+    },
+    "RHEL-09-232090": {
+      "rules": ["file_owner_etc_group"],
+      "scope": "The runtime image ships /etc/group; root ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232095": {
+      "rules": ["file_groupowner_etc_group"],
+      "scope": "The runtime image ships /etc/group; root group ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232130": {
+      "rules": ["file_owner_etc_passwd"],
+      "scope": "The runtime image ships /etc/passwd; root ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232135": {
+      "rules": ["file_groupowner_etc_passwd"],
+      "scope": "The runtime image ships /etc/passwd; root group ownership is image-rootfs evidence."
+    },
+    "RHEL-09-232240": {
+      "rules": ["dir_perms_world_writable_system_owned"],
+      "scope": "World-writable directories in the shipped rootfs are image-rootfs evidence."
+    },
+    "RHEL-09-232245": {
+      "rules": ["dir_perms_world_writable_sticky_bits"],
+      "scope": "Public directory sticky-bit state in the shipped rootfs is image-rootfs evidence."
+    },
+    "RHEL-09-232250": {
+      "rules": ["file_permissions_ungroupowned"],
+      "scope": "Valid group ownership for shipped files is image-rootfs evidence."
+    },
+    "RHEL-09-232255": {
+      "rules": ["no_files_unowned_by_user"],
+      "scope": "Valid file ownership for shipped files is image-rootfs evidence."
+    },
+    "RHEL-09-411100": {
+      "rules": ["accounts_no_uid_except_zero"],
+      "scope": "The fixed passwd database in the runtime image must not grant UID 0 to any account except root."
+    }
+  },
+  "supplemental_selected_rules": {
+    "file_permissions_unauthorized_world_writable": {
+      "scope": "This SSG file-permission rule is not part of the DISA V2R8 RHEL9 STIG profile, but it is directly applicable to image-rootfs integrity and is retained as an extra signal."
+    },
+    "file_permissions_unauthorized_suid": {
+      "scope": "This SSG file-permission rule is not part of the DISA V2R8 RHEL9 STIG profile, but unexpected SUID files are directly applicable to a distroless image."
+    },
+    "file_permissions_unauthorized_sgid": {
+      "scope": "This SSG file-permission rule is not part of the DISA V2R8 RHEL9 STIG profile, but unexpected SGID files are directly applicable to a distroless image."
+    }
+  },
+  "omission_groups": [
+    {
+      "id": "profile_bootstrap_and_login_banner",
+      "control_id_patterns": ["^needed_rules$", "^RHEL-09-171011$"],
+      "justification": "Authselect and graphical login-banner requirements configure an interactive host login stack. ubi9-base-micro has no shell login, PAM stack, GDM, or init system."
+    },
+    {
+      "id": "host_release_update_boot_kernel_services",
+      "control_id_patterns": ["^RHEL-09-21"],
+      "justification": "These controls govern vendor support checks, mutable host patch workflow, local banners, bootloader settings, kernel/sysctl state, systemd services, and host FIPS policy. The image rootfs is instead controlled by digest-pinned UBI inputs, dual CVE gates, FIPS module gates, and the consuming host/runtime."
+    },
+    {
+      "id": "host_filesystem_mounts",
+      "control_id_patterns": ["^RHEL-09-231"],
+      "justification": "Partition and mount-option controls are properties of the consuming host/container runtime mount namespace, not static image rootfs bytes. The image does not define host partitions, NFS/removable media, /boot, or /dev/shm mounts."
+    },
+    {
+      "id": "non_selected_filesystem_identity_and_daemon_paths",
+      "control_id_patterns": ["^RHEL-09-232"],
+      "justification": "The selected RHEL-09-232 controls cover image-rootfs identity files, world-writable directories, and valid ownership. The omitted controls target host home directories, cron/audit daemon paths, backup account databases, SELinux device labeling, or other mutable host paths absent or not authoritative in this distroless image."
+    },
+    {
+      "id": "host_selinux_crypto_package_policy",
+      "control_id_patterns": ["^RHEL-09-25"],
+      "justification": "These controls rely on host SELinux state, system crypto-policy tooling, package manager state, or mutable system configuration. The image evidence for this step is static rootfs scanning; FIPS, RPM provenance, and CVE policy are enforced by separate build-failing gates."
+    },
+    {
+      "id": "host_audit_policy_and_logging",
+      "control_id_patterns": ["^RHEL-09-27", "^RHEL-09-65"],
+      "justification": "Audit daemon policy, log retention, audit rules, and log forwarding are runtime host responsibilities. The image has no auditd, journald service, persistent audit volume, or systemd unit graph."
+    },
+    {
+      "id": "host_network_stack",
+      "control_id_patterns": ["^RHEL-09-29"],
+      "justification": "Firewall, network service, and kernel network settings are enforced by the consuming runtime and cluster/network policy. The distroless image does not run host network daemons or configure host firewall state."
+    },
+    {
+      "id": "interactive_account_and_pam_policy",
+      "control_id_patterns": ["^RHEL-09-41", "^RHEL-09-43"],
+      "justification": "Password aging, PAM, faillock, sudo/su, smartcard, SSH daemon, and remote-login controls require an interactive host authentication stack. ubi9-base-micro runs as fixed USER 65532 and ships no shell, sshd, PAM login path, sudo, or su."
+    },
+    {
+      "id": "host_software_integrity_and_session_services",
+      "control_id_patterns": ["^RHEL-09-61", "^RHEL-09-63"],
+      "justification": "These controls govern host package verification, AIDE/session/cron-like services, or mutable host security agents. The image evidence is covered by digest-pinned base inputs, rpmdb-preserving SBOM/CVE gates, rootfs secret checks, and the selected rootfs permission rules."
+    },
+    {
+      "id": "host_disa_residual_families",
+      "control_id_patterns": ["^RHEL-09-67"],
+      "justification": "The remaining DISA residual controls in this release are host or operational controls outside static image-rootfs authority. They are not marked passing by the image ARF; they are explicitly scoped to the consuming platform."
+    }
+  ]
+}

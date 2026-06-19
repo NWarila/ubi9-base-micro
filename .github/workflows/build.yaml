@@ -24,6 +24,11 @@ env:
   SYFT_VERSION: "1.45.1"
   TRIVY_VERSION: "0.71.0"
   GRYPE_VERSION: "0.87.0"
+  SSG_VERSION: "0.1.81"
+  SSG_TARBALL_SHA512: "11e26cfa96a6f1bd98b3a131837e2f86c9a9851239337d86d624b01627faf10f7a03c395a5839ddab018e0fa47719ade05a9946f90d5ca96b1261776a9164379"
+  STIG_PROFILE: "xccdf_org.nwarila.content_profile_ubi9_base_micro_stig"
+  STIG_FAIL_ON: "low"
+  STIG_ARF_PREDICATE_TYPE: "https://nwarila.dev/attestations/stig-arf/v1"
   UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:b498b3ea26111ab4b81d65139f2ebd2ef9a2abb7a4588b7fdcc54889f95e9caa
 
 jobs:
@@ -63,6 +68,9 @@ jobs:
           python tools/assert-no-rootfs-secrets.py --self-test
           python tools/generate-nist-800-190-predicate.py --self-test
           python tools/assert-slsa-builder-id.py --self-test
+          python tools/assert-stig-tailoring.py --self-test
+          python tools/assert-stig-arf.py --self-test
+          python tools/generate-stig-arf-predicate.py --self-test
 
       - name: Check shell script syntax
         run: |
@@ -72,11 +80,14 @@ jobs:
           bash -n tools/install-grype.sh
           bash -n tools/build.sh
           bash -n tools/install-syft.sh
+          bash -n tools/install-openscap.sh
+          bash -n tools/build-stig-datastream.sh
+          bash -n tools/run-stig-arf.sh
 
   build:
     name: build and hardening
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     needs: verify
     steps:
       - name: Check out repository
@@ -97,6 +108,12 @@ jobs:
       - name: Install Grype for vulnerability gates
         run: bash tools/install-grype.sh
 
+      - name: Install OpenSCAP STIG tooling
+        run: bash tools/install-openscap.sh
+
+      - name: Build RHEL9 STIG datastream
+        run: bash tools/build-stig-datastream.sh
+
       - name: Build runtime and development images
         run: bash tools/build.sh
 
@@ -105,6 +122,9 @@ jobs:
 
       - name: Run runtime FIPS artifact gate
         run: bash tests/fips.sh "${RUNTIME_IMAGE}"
+
+      - name: Run tailored STIG ARF gate
+        run: bash tools/run-stig-arf.sh "${RUNTIME_IMAGE}" "${PLATFORM#linux/}" "${PLATFORM}" "dist/stig/${PLATFORM#linux/}"
 
       - name: Generate and verify runtime SBOMs
         run: |

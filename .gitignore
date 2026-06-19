@@ -28,6 +28,10 @@
 !/vex/*.json
 !/vex/README.md
 
+!/stig/
+!/stig/*.json
+!/stig/*.xml
+
 !/tests/
 !/tests/*.sh
 

@@ -61,6 +61,7 @@ def check_required_files() -> None:
         "docs/acceptance.md",
         "docs/fips.md",
         "docs/nist-800-190.md",
+        "docs/stig.md",
         "docs/reference/verify.md",
         "docs/vex.md",
         "tests/fips.sh",
@@ -75,7 +76,15 @@ def check_required_files() -> None:
         "tools/generate-nist-800-190-predicate.py",
         "tools/assert-cosign-rekor.py",
         "tools/assert-slsa-builder-id.py",
+        "tools/assert-stig-tailoring.py",
+        "tools/assert-stig-arf.py",
+        "tools/generate-stig-arf-predicate.py",
+        "tools/install-openscap.sh",
+        "tools/build-stig-datastream.sh",
+        "tools/run-stig-arf.sh",
         "tools/verify.py",
+        "stig/rhel9-base-micro-tailoring.xml",
+        "stig/tailoring-justifications.json",
         "vex/.gitkeep",
         "vex/README.md",
     ]:
@@ -164,6 +173,17 @@ def check_workflow() -> None:
         "UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:",
         "TRIVY_VERSION: \"0.71.0\"",
         "GRYPE_VERSION: \"0.87.0\"",
+        "SSG_VERSION: \"0.1.81\"",
+        "SSG_TARBALL_SHA512: \"11e26cfa96a6f1bd98b3a131837e2f86c9a9851239337d86d624b01627faf10f7a03c395a5839ddab018e0fa47719ade05a9946f90d5ca96b1261776a9164379\"",
+        "STIG_PROFILE: \"xccdf_org.nwarila.content_profile_ubi9_base_micro_stig\"",
+        "STIG_FAIL_ON: \"low\"",
+        "tools/assert-stig-tailoring.py --self-test",
+        "tools/assert-stig-arf.py --self-test",
+        "tools/generate-stig-arf-predicate.py --self-test",
+        "tools/install-openscap.sh",
+        "tools/build-stig-datastream.sh",
+        "tools/run-stig-arf.sh",
+        "Run tailored STIG ARF gate",
         "tools/install-trivy.sh",
         "tools/install-grype.sh",
         "Generate and verify runtime SBOMs",
@@ -200,7 +220,6 @@ def check_workflow() -> None:
         "co" + "sign",
         "generator_container_" + "sl" + "sa3",
         "attest-build-" + "provenance",
-        "os" + "cap",
         "continue-on-" + "error",
     ]
     present = [marker for marker in forbidden if marker in text]
@@ -228,7 +247,12 @@ def check_publish_workflow() -> None:
         "SYFT_VERSION: \"1.45.1\"",
         "TRIVY_VERSION: \"0.71.0\"",
         "GRYPE_VERSION: \"0.87.0\"",
+        "tools/build-stig-datastream.sh",
+        "tools/run-stig-arf.sh",
         "NIST_800_190_PREDICATE_TYPE: \"https://nwarila.dev/attestations/nist-sp-800-190-image/v1\"",
+        "STIG_ARF_PREDICATE_TYPE: \"https://nwarila.dev/attestations/stig-arf/v1\"",
+        "sudo podman login ghcr.io",
+        "Run tailored STIG ARF gates",
         "tools/install-syft.sh",
         "tools/install-trivy.sh",
         "tools/install-grype.sh",
@@ -263,6 +287,8 @@ def check_publish_workflow() -> None:
         "tools/generate-nist-800-190-predicate.py",
         "cosign attest --type \"${NIST_800_190_PREDICATE_TYPE}\"",
         "cosign verify-attestation --type \"${NIST_800_190_PREDICATE_TYPE}\"",
+        "cosign attest --type \"${STIG_ARF_PREDICATE_TYPE}\"",
+        "cosign verify-attestation --type \"${STIG_ARF_PREDICATE_TYPE}\"",
         "rekor-rollup:",
         "Verify Rekor roll-up",
         "tools/assert-cosign-rekor.py",
@@ -274,12 +300,15 @@ def check_publish_workflow() -> None:
         "EXPECTED_BUILDER_ID",
         "tools/assert-slsa-builder-id.py",
         "cosign verify-attestation --type slsaprovenance",
+        "STIG ARF",
+        "OpenSCAP",
         "assert_attestation_tlog \"SLSA provenance index\"",
         "cosign verify-attestation --type spdxjson",
         "assert_attestation_tlog \"SPDX SBOM ${arch}\"",
         "cosign verify-attestation --type cyclonedx",
         "assert_attestation_tlog \"CycloneDX SBOM ${arch}\"",
         "assert_attestation_tlog \"NIST 800-190 image ${arch}\"",
+        "assert_attestation_tlog \"STIG ARF ${arch}\"",
         "assert_attestation_tlog \"OpenVEX ${arch}\"",
         "COSIGN_YES: \"true\"",
         SLSA_GENERATOR + "@" + SLSA_GENERATOR_TAG,
@@ -304,7 +333,6 @@ def check_publish_workflow() -> None:
         "attest-build-" + "provenance",
         "gh attestation verify",
         "continue-on-" + "error",
-        "os" + "cap",
         "examples/image-manifest.json",
         "tools/build_app.sh",
         "tools/generate_build_args.py",
@@ -525,6 +553,9 @@ def check_helper_self_tests() -> None:
         "tools/generate-nist-800-190-predicate.py",
         "tools/assert-cosign-rekor.py",
         "tools/assert-slsa-builder-id.py",
+        "tools/assert-stig-tailoring.py",
+        "tools/assert-stig-arf.py",
+        "tools/generate-stig-arf-predicate.py",
     ]:
         result = subprocess.run(
             [sys.executable, str(ROOT / relative_path), "--self-test"],
@@ -538,13 +569,59 @@ def check_helper_self_tests() -> None:
             f"{relative_path} --self-test failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
         )
 
+def check_stig() -> None:
+    codeowners = read(".github/CODEOWNERS")
+    require("/stig/ @NWarila" in codeowners, "CODEOWNERS must gate stig/ with @NWarila")
+
+    gitignore = read(".gitignore")
+    for marker in ["!/stig/", "!/stig/*.xml", "!/stig/*.json"]:
+        require(marker in gitignore, f".gitignore must allowlist STIG evidence path: {marker}")
+
+    tailoring = read("stig/rhel9-base-micro-tailoring.xml")
+    for marker in [
+        "xccdf_org.nwarila.content_profile_ubi9_base_micro_stig",
+        "file_permissions_etc_group",
+        "file_permissions_etc_passwd",
+        "accounts_no_uid_except_zero",
+        "file_permissions_unauthorized_world_writable",
+        "file_permissions_unauthorized_suid",
+        "file_permissions_unauthorized_sgid",
+    ]:
+        require(marker in tailoring, f"STIG tailoring missing marker: {marker}")
+
+    justifications = read("stig/tailoring-justifications.json")
+    for marker in [
+        "0.1.81",
+        "11e26cfa96a6f1bd98b3a131837e2f86c9a9851239337d86d624b01627faf10f7a03c395a5839ddab018e0fa47719ade05a9946f90d5ca96b1261776a9164379",
+        "selected_controls",
+        "supplemental_selected_rules",
+        "omission_groups",
+        "RHEL-09-232055",
+        "RHEL-09-411100",
+        "host_filesystem_mounts",
+        "interactive_account_and_pam_policy",
+    ]:
+        require(marker in justifications, f"STIG justification ledger missing marker: {marker}")
+
+    for relative_path in [
+        "tools/assert-stig-tailoring.py",
+        "tools/assert-stig-arf.py",
+        "tools/generate-stig-arf-predicate.py",
+        "tools/build-stig-datastream.sh",
+        "tools/run-stig-arf.sh",
+    ]:
+        read(relative_path)
+
+
 def check_docs() -> None:
+    readme = read("README.md")
     acceptance = read("docs/acceptance.md")
     fips = read("docs/fips.md")
     docs_index = read("docs/README.md")
     verify = read("docs/reference/verify.md")
     vex_doc = read("docs/vex.md")
     nist_doc = read("docs/nist-800-190.md")
+    stig_doc = read("docs/stig.md")
     legacy_namespace = "ghcr.io/nwarila-" + "platform/*"
     require(legacy_namespace in acceptance, "acceptance copy should preserve source DoD text")
     require("superseded for this repository" in acceptance, "acceptance.md must flag the legacy platform namespace")
@@ -562,8 +639,10 @@ def check_docs() -> None:
     )
     require("x86_64" in fips and "IBM Z" in fips and "POWER" in fips and "aarch64" in fips, "docs/fips.md must cite tested OE architecture scope")
     require("certificate/4857" in fips and "140sp4857.pdf" in fips, "docs/fips.md must cite NIST #4857 sources")
+    require("tailored RHEL9 STIG ARF gate" in readme and "docs/stig.md" in readme, "README.md must describe current STIG gate scope")
     require("reference/verify.md" in docs_index, "docs README must index verify contract")
     require("nist-800-190.md" in docs_index, "docs README must index NIST 800-190 evidence")
+    require("stig.md" in docs_index, "docs README must index STIG evidence")
     require("vex.md" in docs_index, "docs README must index VEX flow")
     require("CODEOWNERS-gated" in vex_doc and "cosign attest --type openvex" in vex_doc, "docs/vex.md must describe VEX review and attestation flow")
     for marker in [
@@ -581,11 +660,22 @@ def check_docs() -> None:
         require(marker in nist_doc, f"docs/nist-800-190.md missing marker: {marker}")
 
     for marker in [
+        "stig/rhel9-base-micro-tailoring.xml",
+        "stig/tailoring-justifications.json",
+        "https://nwarila.dev/attestations/stig-arf/v1",
+        "ComplianceAsCode/content",
+        "mass-N/A guard",
+        "CODEOWNERS-gated",
+    ]:
+        require(marker in stig_doc, f"docs/stig.md missing marker: {marker}")
+
+    for marker in [
         "cosign verify \"${IMAGE_REF}\"",
         "cosign verify-attestation --type spdxjson",
         "cosign verify-attestation --type cyclonedx",
         "cosign verify-attestation --type openvex",
         "cosign verify-attestation --type https://nwarila.dev/attestations/nist-sp-800-190-image/v1",
+        "cosign verify-attestation --type https://nwarila.dev/attestations/stig-arf/v1",
         "full attestation set is Rekor-logged",
         "tools/assert-cosign-rekor.py",
         "signature JSON",
@@ -596,6 +686,8 @@ def check_docs() -> None:
         "Grype",
         "OpenVEX default-deny",
         "cosign verify-attestation --type slsaprovenance",
+        "STIG ARF",
+        "OpenSCAP",
         "slsa-verifier verify-image",
         "generator_container_slsa3.yml@refs/tags/v2.1.0",
         "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a",
@@ -611,14 +703,14 @@ def check_no_attribution_residue() -> None:
     fragments = [
         "[" + "cod" + "ex" + "]",
         "[" + "cla" + "ude" + "]",
-        "co-authored" + "-by",
+        "co-" + "authored" + "-by",
         "generated" + " with",
     ]
     findings: list[str] = []
     for path in ROOT.rglob("*"):
         if ".git" in path.parts or not path.is_file():
             continue
-        if path.suffix.lower() not in {".cnf", ".md", ".py", ".sh", ".yaml", ".yml", ".dockerignore", ".gitignore", ""}:
+        if path.suffix.lower() not in {".cnf", ".json", ".md", ".py", ".sh", ".xml", ".yaml", ".yml", ".dockerignore", ".gitignore", ""}:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore").lower()
         for fragment in fragments:
@@ -642,6 +734,7 @@ def main() -> int:
         check_fips_script,
         check_vex,
         check_nist_800_190_scripts,
+        check_stig,
         check_docs,
         check_helper_self_tests,
         check_no_attribution_residue,

@@ -9,4 +9,5 @@ close to the image scaffold.
 | FIPS | [`fips.md`](fips.md) | OpenSSL #4857 FIPS-provider ledger, approved-mode mechanism, per-architecture validation scope, and non-FIPS-host scope |
 | OpenVEX | [`vex.md`](vex.md) | CODEOWNERS-gated VEX authoring flow for the default-deny unfixed HIGH/CRITICAL gate |
 | NIST 800-190 | [`nist-800-190.md`](nist-800-190.md) | Section 4.1 image-control predicate URI, control mapping, and not-CIS-Docker scope |
-| Verify | [`reference/verify.md`](reference/verify.md) | Published digest signature, SBOM, OpenVEX, NIST 800-190, SLSA L3 provenance, and Rekor verification contract |
+| Tailored STIG | [`stig.md`](stig.md) | Image-scoped RHEL9 STIG tailoring, mass-N/A guard, ARF predicate type, and scan scope |
+| Verify | [`reference/verify.md`](reference/verify.md) | Published digest signature, SBOM, OpenVEX, NIST 800-190, STIG ARF, SLSA L3 provenance, and Rekor verification contract |
