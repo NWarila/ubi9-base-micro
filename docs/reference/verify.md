@@ -1,12 +1,13 @@
 # Published Digest Verification
 
-P1.4a publishes `ghcr.io/nwarila/ubi9-base-micro` by digest from `.github/workflows/publish-image.yaml`. The publish workflow signs the image digest with Cosign keyless from the repository workflow identity, then passes the same digest to the SLSA container generator reusable workflow.
+P1.4b publishes `ghcr.io/nwarila/ubi9-base-micro` by digest from `.github/workflows/publish-image.yaml`. The publish workflow signs the image digest with Cosign keyless from the repository workflow identity, attaches Syft rpmdb-derived SPDX and CycloneDX SBOM attestations to each platform child digest, then passes the index digest to the SLSA container generator reusable workflow.
 
 ## Identities
 
 | Evidence | Exact identity |
 | --- | --- |
 | Image signature | `https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@<ref>` |
+| SBOM SPDX and CycloneDX attestations | `https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@<ref>` |
 | SLSA provenance attestation | `https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0` |
 | OIDC issuer | `https://token.actions.githubusercontent.com` |
 
@@ -14,12 +15,28 @@ The SLSA generator tag `v2.1.0` is allowed only with the workflow tag-integrity 
 
 ## Contract
 
-Set `IMAGE_REF` to the published digest reference, for example `ghcr.io/nwarila/ubi9-base-micro@sha256:<digest>`. Set `PUBLISH_REF` to the publishing Git ref, such as `refs/heads/main` or `refs/tags/v1.2.3`.
+Set `IMAGE_REF` to the published digest reference being verified, for example `ghcr.io/nwarila/ubi9-base-micro@sha256:<digest>`. For SBOM verification, use the per-platform child digest because the SBOM predicates are bound to `linux/amd64` and `linux/arm64` child manifests. Set `PUBLISH_REF` to the publishing Git ref, such as `refs/heads/main` or `refs/tags/v1.2.3`.
 
 ```sh
 cosign verify "${IMAGE_REF}" \
   --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+```
+
+```sh
+cosign verify-attestation --type spdxjson "${IMAGE_REF}" \
+  --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+```
+
+```sh
+cosign verify-attestation --type cyclonedx "${IMAGE_REF}" \
+  --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+```
+
+```sh
+cosign download sbom "${IMAGE_REF}" | grep -q glibc
 ```
 
 ```sh
@@ -34,7 +51,11 @@ slsa-verifier verify-image "${IMAGE_REF}" \
   --builder-id "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0"
 ```
 
-`gh attestation verify` is not part of this contract. It verifies GitHub-native Artifact Attestations, not the cosign OCI attestation written by `generator_container_slsa3.yml`.
+`gh attestation verify` is not part of this contract. It verifies GitHub-native Artifact Attestations, not the cosign OCI attestation written by `generator_container_slsa3.yml` or the repository publish workflow.
+
+## SBOM Source
+
+BuildKit SBOM generation is disabled in the publish build with `--sbom=false`. The authoritative C3 evidence is the Syft rpmdb-derived SPDX and CycloneDX predicates emitted after push from the per-platform child digests. A gate-only Syft JSON inventory corroborates the required RPM names before the SPDX and CycloneDX predicates are attested, avoiding two competing SPDX documents with different source semantics.
 
 ## Anonymous Pull Status
 

@@ -64,6 +64,7 @@ def check_required_files() -> None:
         "tests/hardening.sh",
         "tools/build.sh",
         "tools/install-syft.sh",
+        "tools/assert-sbom-rpms.py",
         "tools/verify.py",
     ]:
         require((ROOT / relative_path).is_file(), f"missing required file: {relative_path}")
@@ -143,6 +144,13 @@ def check_workflow() -> None:
         "tests/hardening.sh",
         "tests/fips.sh",
         "tools/verify.py",
+        "tools/assert-sbom-rpms.py --self-test",
+        "Generate and verify runtime SBOMs",
+        "dist/tools/syft scan",
+        "json=dist/sbom/base-micro.${sbom_arch}.syft.json",
+        "spdx-json=dist/sbom/base-micro.${sbom_arch}.spdx.json",
+        "cyclonedx-json=dist/sbom/base-micro.${sbom_arch}.cdx.json",
+        "--source \"dist/sbom/base-micro.${sbom_arch}.syft.json\"",
         "ghcr.io/nwarila/ubi9-base-micro",
     ]:
         require(marker in text, f"build workflow missing marker: {marker}")
@@ -178,10 +186,25 @@ def check_publish_workflow() -> None:
         "--platform linux/amd64,linux/arm64",
         "--target runtime",
         "--provenance=mode=max",
-        "--sbom=true",
+        "--sbom=false",
         "--metadata-file dist/image-metadata.json",
         "OPENSSL_FIPS_MODULE_VERSION",
         "OPENSSL_FIPS_PROVIDER_NEVRA",
+        "SYFT_VERSION: \"1.45.1\"",
+        "tools/install-syft.sh",
+        "docker buildx imagetools inspect --raw",
+        "steps.platform_digests.outputs.amd64_digest",
+        "steps.platform_digests.outputs.arm64_digest",
+        "dist/tools/syft scan",
+        "json=dist/sbom/base-micro.${arch}.syft.json",
+        "spdx-json=dist/sbom/base-micro.${arch}.spdx.json",
+        "cyclonedx-json=dist/sbom/base-micro.${arch}.cdx.json",
+        "tools/assert-sbom-rpms.py",
+        "--source \"dist/sbom/base-micro.${arch}.syft.json\"",
+        "cosign attest --type spdxjson",
+        "cosign attest --type cyclonedx",
+        "cosign verify-attestation --type spdxjson",
+        "COSIGN_YES: \"true\"",
         SLSA_GENERATOR + "@" + SLSA_GENERATOR_TAG,
         SLSA_GENERATOR_SHA,
         "gh api \"repos/slsa-framework/slsa-github-generator/git/ref/tags/${SLSA_GENERATOR_TAG}\"",
@@ -197,6 +220,8 @@ def check_publish_workflow() -> None:
 
     forbidden = [
         "-regexp",
+        "--sbom=true",
+        "--tlog-upload=false",
         "attest-build-" + "provenance",
         "gh attestation verify",
         "continue-on-" + "error",
@@ -245,6 +270,26 @@ def check_hardening_script() -> None:
         "/etc/pki/tls/certs/ca-bundle.crt",
     ]:
         require(marker in text, f"hardening script missing marker: {marker}")
+
+
+def check_sbom_assertion_script() -> None:
+    text = read("tools/assert-sbom-rpms.py")
+    for marker in [
+        "REQUIRED_RPMS",
+        "ca-certificates",
+        "glibc",
+        "openssl-fips-provider-so",
+        "openssl-libs",
+        "DEFAULT_MIN_RPM_COUNT = 10",
+        "spdx-json",
+        "cyclonedx-json",
+        "syft-json",
+        "pkg:rpm/",
+        "--source",
+        "--self-test",
+        "negative-cyclonedx",
+    ]:
+        require(marker in text, f"SBOM assertion script missing marker: {marker}")
 
 
 def check_fips_config() -> None:
@@ -306,11 +351,16 @@ def check_docs() -> None:
 
     for marker in [
         "cosign verify \"${IMAGE_REF}\"",
+        "cosign verify-attestation --type spdxjson",
+        "cosign verify-attestation --type cyclonedx",
+        "cosign download sbom \"${IMAGE_REF}\" | grep -q glibc",
         "cosign verify-attestation --type slsaprovenance",
         "slsa-verifier verify-image",
         "generator_container_slsa3.yml@refs/tags/v2.1.0",
         "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a",
         "gh attestation verify` is not part of this contract",
+        "BuildKit SBOM generation is disabled",
+        "Syft rpmdb-derived",
         "P1.8",
     ]:
         require(marker in verify, f"docs/reference/verify.md missing marker: {marker}")
@@ -345,6 +395,7 @@ def main() -> int:
         check_publish_workflow,
         check_build_script,
         check_hardening_script,
+        check_sbom_assertion_script,
         check_fips_config,
         check_fips_script,
         check_docs,
