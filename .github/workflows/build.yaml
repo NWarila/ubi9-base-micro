@@ -53,7 +53,9 @@ jobs:
           persist-credentials: false
 
       - name: Verify repository contract
-        run: python tools/verify.py
+        run: |
+          python tools/verify.py
+          python tools/assert-sbom-rpms.py --self-test
 
       - name: Check shell script syntax
         run: |
@@ -88,3 +90,21 @@ jobs:
 
       - name: Run runtime FIPS artifact gate
         run: bash tests/fips.sh "${RUNTIME_IMAGE}"
+
+      - name: Generate and verify runtime SBOMs
+        run: |
+          set -euo pipefail
+
+          sbom_arch="${PLATFORM#linux/}"
+          mkdir -p dist/sbom
+
+          dist/tools/syft scan "${RUNTIME_IMAGE}" \
+            --platform "${PLATFORM}" \
+            -o "json=dist/sbom/base-micro.${sbom_arch}.syft.json" \
+            -o "spdx-json=dist/sbom/base-micro.${sbom_arch}.spdx.json" \
+            -o "cyclonedx-json=dist/sbom/base-micro.${sbom_arch}.cdx.json"
+
+          python tools/assert-sbom-rpms.py \
+            --source "dist/sbom/base-micro.${sbom_arch}.syft.json" \
+            "dist/sbom/base-micro.${sbom_arch}.spdx.json" \
+            "dist/sbom/base-micro.${sbom_arch}.cdx.json"

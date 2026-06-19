@@ -10,8 +10,8 @@ family. This scaffold produces two local-test image tags from one Dockerfile:
 
 The local build workflow stays test-only. The publish workflow runs only on
 `push` to `main` or `v*` tags, building the `base-micro` runtime for
-`linux/amd64` and `linux/arm64`, signing the pushed digest, and invoking the
-SLSA L3 container provenance generator.
+`linux/amd64` and `linux/arm64`, signing the pushed digest, attaching
+rpmdb-derived SBOMs, and invoking the SLSA L3 container provenance generator.
 
 The runtime ships Red Hat CMVP #4857 `fips.so` in approved mode through
 `/etc/pki/tls/openssl-fips.cnf` and `OPENSSL_CONF`/`OPENSSL_MODULES`. This is
@@ -20,8 +20,10 @@ host remains non-FIPS. The amd64 image is in #4857's validated OE scope; the
 arm64 image is approved-mode configured and self-test passing but explicitly not
 a CMVP-validated configuration on that architecture. See `docs/fips.md`.
 
-SBOM attestations, vulnerability scanners, STIG ARF, and 800-190 evidence remain
-out of scope for this P1.4a publish spine.
+The authoritative SBOM evidence is Syft rpmdb-derived SPDX and CycloneDX,
+attested per published platform child digest. BuildKit SBOM output is disabled
+so the published SPDX evidence has a single source. Vulnerability scanners,
+STIG ARF, and 800-190 evidence remain out of scope for this slice.
 
 ## Local Build
 
