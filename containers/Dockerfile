@@ -100,6 +100,7 @@ ARG OPENSSL_FIPS_PROVIDER_NEVRA
 ARG SOURCE_DATE_EPOCH
 
 COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/
+COPY tools/assert-rpm-lock-hashes.sh /tmp/assert-rpm-lock-hashes.sh
 
 # Assemble the runtime rootfs with microdnf --installroot so /var/lib/rpm
 # remains available to scanners. Only regenerable caches and logs are pruned.
@@ -136,6 +137,7 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     microdnf clean all; \
     rm -rf /rootfs/var/cache/* /var/cache/microdnf-installroot \
       /rootfs/var/log/dnf.log /rootfs/var/log/dnf.librepo.log /rootfs/var/log/hawkey.log; \
+    bash /tmp/assert-rpm-lock-hashes.sh --root /rootfs --lockfile "${runtime_lockfile}"; \
     if rpm --root=/rootfs -q bash >/dev/null 2>&1; then \
       rpm --root=/rootfs -e --nodeps --noscripts bash; \
     fi; \
