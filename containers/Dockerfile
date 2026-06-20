@@ -8,6 +8,7 @@ ARG UBI_MINIMAL_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal@sha256:ae09ecc
 ARG UBI_MICRO_IMAGE=registry.access.redhat.com/ubi9/ubi-micro@sha256:b498b3ea26111ab4b81d65139f2ebd2ef9a2abb7a4588b7fdcc54889f95e9caa
 ARG OPENSSL_FIPS_MODULE_VERSION=3.0.7-395c1a240fbfffd8
 ARG OPENSSL_FIPS_PROVIDER_NEVRA=openssl-fips-provider-so-3.0.7-8.el9
+ARG SOURCE_DATE_EPOCH=1704067200
 
 FROM ${UBI_MINIMAL_IMAGE} AS fips-verify
 ARG BUILDKIT_SBOM_SCAN_STAGE=true
@@ -17,10 +18,12 @@ ARG TARGETARCH
 ARG DNF_REPOS=""
 ARG OPENSSL_FIPS_MODULE_VERSION
 ARG OPENSSL_FIPS_PROVIDER_NEVRA
+ARG SOURCE_DATE_EPOCH
 
 COPY containers/fips/openssl.cnf /tmp/openssl-fips.cnf
 
 RUN set -eux; \
+    export SOURCE_DATE_EPOCH; \
     microdnf install -y --releasever=9 \
       --config=/etc/dnf/dnf.conf --noplugins \
       --setopt=reposdir=/etc/yum.repos.d \
@@ -90,11 +93,13 @@ FROM ${UBI_MINIMAL_IMAGE} AS rpm-rootfs
 ARG BUILDKIT_SBOM_SCAN_STAGE=true
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-ARG RUNTIME_PACKAGES="ca-certificates openssl-fips-provider"
 ARG TARGETARCH
 ARG DNF_REPOS=""
 ARG OPENSSL_FIPS_MODULE_VERSION
 ARG OPENSSL_FIPS_PROVIDER_NEVRA
+ARG SOURCE_DATE_EPOCH
+
+COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/
 
 # Assemble the runtime rootfs with microdnf --installroot so /var/lib/rpm
 # remains available to scanners. Only regenerable caches and logs are pruned.
@@ -102,7 +107,23 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     --mount=from=fips-verify,source=/usr/bin/openssl,target=/tmp/fips-openssl,ro \
     --mount=from=fips-verify,source=/usr/lib64,target=/tmp/fips-lib64,ro \
     set -eux; \
-    test -n "${RUNTIME_PACKAGES}" || { echo "RUNTIME_PACKAGES must be set" >&2; exit 1; }; \
+    export SOURCE_DATE_EPOCH; \
+    case "${TARGETARCH}" in \
+      amd64) rpm_arch="x86_64"; runtime_lockfile="/tmp/rpm-lock/runtime.amd64.txt" ;; \
+      arm64) rpm_arch="aarch64"; runtime_lockfile="/tmp/rpm-lock/runtime.arm64.txt" ;; \
+      *) echo "unsupported TARGETARCH for RPM lockfile: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    test -s "${runtime_lockfile}" || { echo "runtime RPM lockfile missing: ${runtime_lockfile}" >&2; exit 1; }; \
+    locked_packages=""; \
+    while IFS='|' read -r package final_rpmdb name epoch version release arch sha256_header sigmd5; do \
+      case "${package}" in ""|\#*) continue ;; esac; \
+      test -n "${final_rpmdb}" && test -n "${name}" && test -n "${epoch}" && test -n "${version}" && test -n "${release}" && test -n "${arch}" && test -n "${sha256_header}" && test -n "${sigmd5}"; \
+      case "${arch}" in noarch|"${rpm_arch}") ;; *) echo "locked package ${package} has wrong arch ${arch} for ${TARGETARCH}" >&2; exit 1 ;; esac; \
+      case "${final_rpmdb}" in yes|no) ;; *) echo "locked package ${package} has invalid final_rpmdb=${final_rpmdb}" >&2; exit 1 ;; esac; \
+      locked_packages="${locked_packages} ${package}"; \
+    done < "${runtime_lockfile}"; \
+    test -n "${locked_packages}" || { echo "runtime RPM lockfile yielded no packages" >&2; exit 1; }; \
+    echo "installing locked runtime RPM transaction:${locked_packages}"; \
     mkdir -p /rootfs; \
     microdnf install -y --installroot=/rootfs --releasever=9 \
       --config=/etc/dnf/dnf.conf --noplugins \
@@ -111,7 +132,7 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
       --setopt=cachedir=/var/cache/microdnf-installroot \
       --nodocs --setopt=install_weak_deps=0 \
       ${DNF_REPOS:+--disablerepo=* --enablerepo=${DNF_REPOS}} \
-      ${RUNTIME_PACKAGES}; \
+      ${locked_packages}; \
     microdnf clean all; \
     rm -rf /rootfs/var/cache/* /var/cache/microdnf-installroot \
       /rootfs/var/log/dnf.log /rootfs/var/log/dnf.librepo.log /rootfs/var/log/hawkey.log; \
@@ -139,11 +160,6 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     shipped_provider_nevra="$(rpm --root=/rootfs -q --qf '%{NEVRA}\n' openssl-fips-provider-so)"; \
     shipped_libs_nevra="$(rpm --root=/rootfs -q --qf '%{NEVRA}\n' openssl-libs)"; \
     shipped_fips_so_sha256="$(sha256sum /rootfs/usr/lib64/ossl-modules/fips.so | awk '{print $1}')"; \
-    case "${TARGETARCH}" in \
-      amd64) rpm_arch="x86_64" ;; \
-      arm64) rpm_arch="aarch64" ;; \
-      *) echo "unsupported TARGETARCH for FIPS provider pin: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac; \
     expected_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}"; \
     verified_provider_nevra="$(cat /tmp/fips-proof/provider.nevra)"; \
     verified_libs_nevra="$(cat /tmp/fips-proof/libs.nevra)"; \
@@ -228,6 +244,26 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
         fi; \
       done; \
     fi; \
+    actual_final_nevras="$(mktemp)"; \
+    rpm --root=/rootfs -qa --qf '%{NEVRA}\n' > "${actual_final_nevras}"; \
+    expected_final_count=0; \
+    while IFS='|' read -r package final_rpmdb name epoch version release arch sha256_header sigmd5; do \
+      case "${package}" in ""|\#*) continue ;; esac; \
+      [ "${final_rpmdb}" = "yes" ] || continue; \
+      expected_final_count=$((expected_final_count + 1)); \
+      if ! grep -Fxq "${package}" "${actual_final_nevras}"; then \
+        echo "locked final runtime RPM missing after strip: ${package}" >&2; \
+        echo "actual final runtime RPMs:" >&2; \
+        cat "${actual_final_nevras}" >&2; \
+        exit 1; \
+      fi; \
+    done < "${runtime_lockfile}"; \
+    actual_final_count="$(wc -l < "${actual_final_nevras}" | tr -d '[:space:]')"; \
+    test "${actual_final_count}" = "${expected_final_count}" || { \
+      echo "final runtime RPM count mismatch: expected ${expected_final_count}, got ${actual_final_count}" >&2; \
+      echo "actual final runtime RPMs:" >&2; cat "${actual_final_nevras}" >&2; exit 1; \
+    }; \
+    echo "final runtime RPM lock floor verified: ${actual_final_count} packages"; \
     mkdir -p /rootfs/usr/bin /rootfs/usr/sbin /rootfs/usr/lib /rootfs/usr/lib64; \
     ln -sfn usr/bin /rootfs/bin; \
     ln -sfn usr/sbin /rootfs/sbin; \
@@ -313,7 +349,8 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     fi; \
     if [ -e /rootfs/etc/pki/tls/fipsmodule.cnf ]; then \
       echo "fipsmodule.cnf survived in runtime rootfs" >&2; exit 1; \
-    fi
+    fi; \
+    find /rootfs -xdev -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 
 FROM ${UBI_MINIMAL_IMAGE} AS dev-rootfs
 ARG BUILDKIT_SBOM_SCAN_STAGE=true
@@ -321,8 +358,10 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG DEV_PACKAGES="bash ca-certificates coreutils findutils gcc glibc-devel grep gzip make pkgconf-pkg-config sed tar xz"
 ARG DNF_REPOS=""
+ARG SOURCE_DATE_EPOCH
 
 RUN set -eux; \
+    export SOURCE_DATE_EPOCH; \
     test -n "${DEV_PACKAGES}" || { echo "DEV_PACKAGES must be set" >&2; exit 1; }; \
     mkdir -p /rootfs; \
     microdnf install -y --installroot=/rootfs --releasever=9 \
@@ -343,12 +382,14 @@ RUN set -eux; \
     test -x /rootfs/usr/bin/bash || { echo "dev rootfs must include bash" >&2; exit 1; }; \
     test -x /rootfs/usr/bin/gcc || { echo "dev rootfs must include gcc" >&2; exit 1; }; \
     test -s /rootfs/var/lib/rpm/rpmdb.sqlite || test -s /rootfs/var/lib/rpm/Packages || \
-      { echo "rpm database missing from dev rootfs; scanners would see zero packages" >&2; exit 1; }
+      { echo "rpm database missing from dev rootfs; scanners would see zero packages" >&2; exit 1; }; \
+    find /rootfs -xdev -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 
 FROM ${UBI_MICRO_IMAGE} AS runtime
 ARG TARGETARCH
 ARG OPENSSL_FIPS_MODULE_VERSION
 ARG OPENSSL_FIPS_PROVIDER_NEVRA
+ARG SOURCE_DATE_EPOCH
 
 ARG OCI_CREATED="1970-01-01T00:00:00Z"
 ARG OCI_DESCRIPTION="Hardened UBI 9 micro runtime base for NWarila images"
@@ -404,6 +445,7 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
       printf '}\n'; \
     } > /etc/nwarila/fips-status.json; \
     test -s /etc/nwarila/fips-status.json; \
+    touch -h -d "@${SOURCE_DATE_EPOCH}" /etc/nwarila/fips-status.json /etc/pki/tls/openssl-fips.cnf; \
     rm -rf \
       /usr/bin/* \
       /usr/sbin/* \
@@ -460,6 +502,7 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
 USER 65532:65532
 
 FROM ${UBI_MICRO_IMAGE} AS dev
+ARG SOURCE_DATE_EPOCH
 
 ARG OCI_CREATED="1970-01-01T00:00:00Z"
 ARG OCI_DESCRIPTION="UBI 9 micro development base with shell and native build toolchain"
@@ -477,6 +520,6 @@ LABEL org.opencontainers.image.created="${OCI_CREATED}" \
 
 COPY --from=dev-rootfs /rootfs/ /
 
-RUN ["/bin/sh", "-c", "set -eu; rm -f /usr/bin/dnf /usr/sbin/dnf /bin/dnf /sbin/dnf /usr/bin/microdnf /usr/sbin/microdnf /bin/microdnf /sbin/microdnf /usr/bin/yum /usr/sbin/yum /bin/yum /sbin/yum; test -x /usr/bin/bash; test -x /usr/bin/gcc; test -s /var/lib/rpm/rpmdb.sqlite || test -s /var/lib/rpm/Packages"]
+RUN ["/bin/sh", "-c", "set -eu; touch -h -d \"@${SOURCE_DATE_EPOCH}\" /; rm -f /usr/bin/dnf /usr/sbin/dnf /bin/dnf /sbin/dnf /usr/bin/microdnf /usr/sbin/microdnf /bin/microdnf /sbin/microdnf /usr/bin/yum /usr/sbin/yum /bin/yum /sbin/yum; test -x /usr/bin/bash; test -x /usr/bin/gcc; test -s /var/lib/rpm/rpmdb.sqlite || test -s /var/lib/rpm/Packages"]
 
 USER 65532:65532

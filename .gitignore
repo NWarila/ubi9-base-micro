@@ -20,6 +20,9 @@
 !/containers/fips/
 !/containers/fips/openssl.cnf
 
+!/rpm-lock/
+!/rpm-lock/*.txt
+
 !/docs/
 !/docs/**/*.md
 

@@ -9,11 +9,12 @@ dev_image="${DEV_IMAGE:-${image_repository}:base-micro-dev}"
 platform="${PLATFORM:-linux/amd64}"
 ubi_minimal_image="${UBI_MINIMAL_IMAGE:-registry.access.redhat.com/ubi9/ubi-minimal@sha256:ae09ecc3d754bc1726cbda3e2599cc7839e09fe1cc547ce173cf669b645be3cc}"
 ubi_micro_image="${UBI_MICRO_IMAGE:-registry.access.redhat.com/ubi9/ubi-micro@sha256:b498b3ea26111ab4b81d65139f2ebd2ef9a2abb7a4588b7fdcc54889f95e9caa}"
+source_date_epoch="${SOURCE_DATE_EPOCH:-1704067200}"
 oci_version="${OCI_VERSION:-$(tr -d '[:space:]' < "${repo_root}/VERSION")}"
 oci_revision="${OCI_REVISION:-$(git -C "${repo_root}" rev-parse --short=12 HEAD 2>/dev/null)}"
 oci_revision="${oci_revision:-local}"
-oci_created="${OCI_CREATED:-$(git -C "${repo_root}" show -s --format=%cI HEAD 2>/dev/null)}"
-oci_created="${oci_created:-1970-01-01T00:00:00Z}"
+oci_created="${OCI_CREATED:-2024-01-01T00:00:00Z}"
+image_output_dir="${IMAGE_OUTPUT_DIR:-${repo_root}/dist/images}"
 
 for value in "${ubi_minimal_image}" "${ubi_micro_image}"; do
   if [[ ! "${value}" =~ @sha256:[0-9a-f]{64}$ ]]; then
@@ -23,29 +24,39 @@ for value in "${ubi_minimal_image}" "${ubi_micro_image}"; do
 done
 
 common_args=(
-  --load
   --platform "${platform}"
   --provenance=false
   --sbom=false
   --build-arg "UBI_MINIMAL_IMAGE=${ubi_minimal_image}"
   --build-arg "UBI_MICRO_IMAGE=${ubi_micro_image}"
+  --build-arg "SOURCE_DATE_EPOCH=${source_date_epoch}"
   --build-arg "OCI_CREATED=${oci_created}"
   --build-arg "OCI_REVISION=${oci_revision}"
   --build-arg "OCI_VERSION=${oci_version}"
   --file "${repo_root}/containers/Dockerfile"
 )
 
-docker buildx build \
-  "${common_args[@]}" \
-  --target runtime \
-  --tag "${runtime_image}" \
-  "${repo_root}"
+build_image() {
+  local target="$1"
+  local tag="$2"
+  local tar_name="$3"
+  local image_tar="${image_output_dir}/${tar_name}"
 
-docker buildx build \
-  "${common_args[@]}" \
-  --target dev \
-  --tag "${dev_image}" \
-  "${repo_root}"
+  mkdir -p "${image_output_dir}"
+  rm -f "${image_tar}"
+
+  docker buildx build \
+    "${common_args[@]}" \
+    --target "${target}" \
+    --tag "${tag}" \
+    --output "type=docker,dest=${image_tar},rewrite-timestamp=true" \
+    "${repo_root}"
+
+  docker load -i "${image_tar}" >/dev/null
+}
+
+build_image runtime "${runtime_image}" base-micro.runtime.docker.tar
+build_image dev "${dev_image}" base-micro-dev.docker.tar
 
 echo "built ${runtime_image}"
 echo "built ${dev_image}"
