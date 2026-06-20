@@ -1,0 +1,69 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Renovate config for NWarila/ubi9-base-micro. Extends the shared UBI9 platform preset and adds repository-local UBI input and TD-1 generator handling.",
+  "extends": [
+    "github>NWarila/.github"
+  ],
+  "ignorePaths": [
+    "rpm-lock/**"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Track workflow-level Red Hat UBI builder/runtime image digest inputs; Dockerfile ARG pins are handled by the dockerfile manager through the existing renovate annotations.",
+      "managerFilePatterns": [
+        "/(^|/)\\.github/workflows/[^/]+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "(?<depName>registry\\.access\\.redhat\\.com/ubi9/ubi-(?:minimal|micro))@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "datasourceTemplate": "docker",
+      "packageNameTemplate": "{{{depName}}}",
+      "currentValueTemplate": "latest",
+      "versioningTemplate": "redhat",
+      "autoReplaceStringTemplate": "{{{depName}}}@{{{newDigest}}}"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Keep ordinary GitHub Actions on 40-character commit SHAs when Renovate bumps them.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchPackageNames": [
+        "/.*/",
+        "!/^slsa-framework\\/slsa-github-generator(?:\\/|$)/"
+      ],
+      "pinDigests": true,
+      "semanticCommitType": "ci",
+      "semanticCommitScope": "github-actions"
+    },
+    {
+      "description": "TD-1: preserve the SLSA generator reusable workflow as the ratified v2.1.0 tag ref; tag/SHA guard updates are manual.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchPackageNames": [
+        "/^slsa-framework\\/slsa-github-generator(?:\\/|$)/"
+      ],
+      "pinDigests": false,
+      "enabled": false,
+      "semanticCommitType": "ci",
+      "semanticCommitScope": "slsa-generator"
+    },
+    {
+      "description": "Group Red Hat UBI digest refreshes for the builder and runtime inputs.",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "registry.access.redhat.com/ubi9/ubi-minimal",
+        "registry.access.redhat.com/ubi9/ubi-micro"
+      ],
+      "groupName": "red hat ubi9 base image digests",
+      "versioning": "redhat",
+      "semanticCommitType": "ci",
+      "semanticCommitScope": "ubi9-upstream-digests"
+    }
+  ]
+}
