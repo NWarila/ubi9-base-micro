@@ -53,6 +53,26 @@ The rpmdb remains present and valid because SBOM and scanner truthfulness depend
 on it. Differences in `/var/lib/rpm/rpmdb.sqlite` are gate failures; the rpmdb is
 not deleted, normalized away, or excluded from the rootfs comparison.
 
+## RPM lock refresh loop
+
+The lockfiles deliberately pin RPM NEVRAs and content hashes, so patched Red Hat
+RPMs are not absorbed automatically. The nightly sentinel detects when a pinned
+runtime RPM has a fixable CVE and turns the gate red. The weekly and manually
+runnable `.github/workflows/rpm-lock-refresh.yaml` workflow runs
+`tools/generate-rpm-lock.sh` for `linux/amd64` and `linux/arm64`; the generator
+uses the same microdnf installroot transaction shape as the Dockerfile and emits
+the `rpm-lock/runtime.<arch>.txt` format consumed by the build.
+
+A no-change refresh is expected to be byte-identical. Maintainers can reproduce
+that proof locally with `tools/generate-rpm-lock.sh --check`, which regenerates
+both lockfiles in a temporary directory and fails with a unified diff if either
+file drifts. When Red Hat has published patched RPMs, the refresh workflow opens
+a normal pull request titled `Refresh runtime RPM lockfiles`. That PR is not a
+publish path and is not auto-merged; the repository PR gates must pass first,
+including the fixable-CVE gates, both-architecture byte-for-byte reproducibility
+gates, and `%{SHA256HEADER}`/`%{SIGMD5}` RPM content-hash enforcement. Merging the
+gated PR re-establishes the reproducible floor at the new pins.
+
 F3 scope is the exported rootfs for each architecture. Published manifest
 digests, provenance metadata, and labels that intentionally vary outside the
 rootfs are not part of this rootfs byte-identity gate.
