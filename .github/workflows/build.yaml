@@ -64,6 +64,8 @@ jobs:
         run: |
           python tools/verify.py
           python tools/assert-sbom-rpms.py --self-test
+          python tools/assert-footprint.py --self-test
+          python tools/assert-no-phantom-packages.py --self-test
           python tools/assert-vex.py --self-test
           python tools/assert-no-rootfs-secrets.py --self-test
           python tools/generate-nist-800-190-predicate.py --self-test
@@ -124,6 +126,17 @@ jobs:
       - name: Run runtime FIPS artifact gate
         run: bash tests/fips.sh "${RUNTIME_IMAGE}"
 
+      - name: Run runtime footprint gate
+        run: |
+          set -euo pipefail
+
+          arch="${PLATFORM#linux/}"
+          mkdir -p dist/footprint
+          python tools/assert-footprint.py \
+            --image "${RUNTIME_IMAGE}" \
+            --platform "${PLATFORM}" \
+            --output "dist/footprint/base-micro.${arch}.json"
+
       - name: Run tailored STIG ARF gate
         run: bash tools/run-stig-arf.sh "${RUNTIME_IMAGE}" "${PLATFORM#linux/}" "${PLATFORM}" "dist/stig/${PLATFORM#linux/}"
 
@@ -144,6 +157,23 @@ jobs:
             --source "dist/sbom/base-micro.${sbom_arch}.syft.json" \
             "dist/sbom/base-micro.${sbom_arch}.spdx.json" \
             "dist/sbom/base-micro.${sbom_arch}.cdx.json"
+
+      - name: Run runtime phantom package gate
+        run: |
+          set -euo pipefail
+
+          sbom_arch="${PLATFORM#linux/}"
+          python tools/assert-no-phantom-packages.py \
+            --image "${RUNTIME_IMAGE}" \
+            --platform "${PLATFORM}" \
+            --syft-json "dist/sbom/base-micro.${sbom_arch}.syft.json" \
+            --output "dist/sbom/base-micro.${sbom_arch}.phantom-packages.json" \
+            --expect-absent libacl \
+            --expect-absent libattr \
+            --expect-absent libcap \
+            --expect-absent coreutils-common \
+            --expect-absent pcre2-syntax \
+            --expect-absent alternatives
 
       - name: Run Trivy fixable vulnerability gate
         run: |
