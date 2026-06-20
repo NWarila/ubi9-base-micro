@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -49,6 +50,7 @@ def check_required_files() -> None:
         ".dockerignore",
         ".editorconfig",
         ".github/CODEOWNERS",
+        ".github/renovate.json",
         ".github/workflows/build.yaml",
         ".github/workflows/nightly.yaml",
         ".github/workflows/publish-image.yaml",
@@ -101,6 +103,87 @@ def check_required_files() -> None:
     ]:
         require((ROOT / relative_path).is_file(), f"missing required file: {relative_path}")
 
+
+def check_renovate_config() -> None:
+    relative_path = ".github/renovate.json"
+    path = ROOT / relative_path
+    try:
+        config = json.loads(read(relative_path))
+    except json.JSONDecodeError as exc:
+        raise VerifyError(f"{relative_path} is not valid JSON: {exc}") from exc
+
+    require(
+        config.get("extends") == ["github>NWarila/.github"],
+        "Renovate config must extend only the shared UBI9 platform preset",
+    )
+    text = path.read_text(encoding="utf-8")
+    require("local>NWarila/.github" not in text, "Renovate config must use the GitHub-hosted preset form")
+
+    for inherited_key in ["enabledManagers", "prConcurrentLimit", "prHourlyLimit", "branchConcurrentLimit"]:
+        require(inherited_key not in config, f"Renovate config must inherit org default for {inherited_key}")
+
+    ignore_paths = config.get("ignorePaths")
+    require(isinstance(ignore_paths, list), "Renovate config must declare ignorePaths")
+    require("rpm-lock/**" in ignore_paths, "Renovate config must ignore rpm-lock files")
+
+    forbidden_literals = ["SOURCE_DATE_EPOCH", "SSG_VERSION", "SSG_TARBALL_SHA512", "rpm-lock/runtime."]
+    present = [literal for literal in forbidden_literals if literal in text]
+    require(not present, "Renovate config must not manage non-Renovate inputs: " + ", ".join(present))
+
+    custom_managers = config.get("customManagers")
+    require(isinstance(custom_managers, list), "Renovate config must declare customManagers")
+    ubi_managers = [
+        manager
+        for manager in custom_managers
+        if manager.get("datasourceTemplate") == "docker"
+        and manager.get("packageNameTemplate") == "{{{depName}}}"
+        and manager.get("currentValueTemplate") == "latest"
+        and manager.get("versioningTemplate") == "redhat"
+        and manager.get("autoReplaceStringTemplate") == "{{{depName}}}@{{{newDigest}}}"
+        and any("github/workflows" in pattern for pattern in manager.get("managerFilePatterns", []))
+        and any("registry\\.access\\.redhat\\.com/ubi9/ubi-" in pattern for pattern in manager.get("matchStrings", []))
+        and any("currentDigest" in pattern for pattern in manager.get("matchStrings", []))
+    ]
+    require(ubi_managers, "Renovate config must target workflow UBI image digests with docker datasource")
+
+    package_rules = config.get("packageRules")
+    require(isinstance(package_rules, list), "Renovate config must declare packageRules")
+
+    action_pin_rule_index = None
+    generator_rule_index = None
+    ubi_rule_found = False
+    for index, rule in enumerate(package_rules):
+        if (
+            "github-actions" in rule.get("matchManagers", [])
+            and rule.get("pinDigests") is True
+            and "!/^slsa-framework\\/slsa-github-generator(?:\\/|$)/" in rule.get("matchPackageNames", [])
+        ):
+            action_pin_rule_index = index
+        if (
+            "github-actions" in rule.get("matchManagers", [])
+            and rule.get("pinDigests") is False
+            and rule.get("enabled") is False
+            and "/^slsa-framework\\/slsa-github-generator(?:\\/|$)/" in rule.get("matchPackageNames", [])
+        ):
+            generator_rule_index = index
+        if (
+            "docker" in rule.get("matchDatasources", [])
+            and set(rule.get("matchPackageNames", []))
+            == {
+                "registry.access.redhat.com/ubi9/ubi-minimal",
+                "registry.access.redhat.com/ubi9/ubi-micro",
+            }
+            and rule.get("groupName") == "red hat ubi9 base image digests"
+        ):
+            ubi_rule_found = True
+
+    require(action_pin_rule_index is not None, "Renovate config must keep ordinary GitHub Actions SHA-pinned")
+    require(generator_rule_index is not None, "Renovate config must carry the TD-1 SLSA generator tag-pin rule")
+    require(
+        generator_rule_index > action_pin_rule_index,
+        "TD-1 generator rule must follow the general GitHub Actions pin rule so it overrides it",
+    )
+    require(ubi_rule_found, "Renovate config must group UBI minimal and micro digest refreshes")
 
 def check_dockerfile() -> None:
     text = read("containers/Dockerfile")
@@ -991,6 +1074,7 @@ def check_no_attribution_residue() -> None:
 def main() -> int:
     checks = [
         check_required_files,
+        check_renovate_config,
         check_dockerfile,
         check_rpm_locks,
         check_workflow,
