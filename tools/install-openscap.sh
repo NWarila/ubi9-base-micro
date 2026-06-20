@@ -16,6 +16,7 @@ sudo apt-get install -y --no-install-recommends \
   ninja-build \
   openscap-utils \
   podman \
+  rpm \
   python3-jinja2 \
   python3-yaml \
   xsltproc
@@ -23,6 +24,7 @@ sudo apt-get install -y --no-install-recommends \
 command -v oscap >/dev/null
 command -v oscap-podman >/dev/null
 command -v podman >/dev/null
+command -v rpm >/dev/null
 
 oscap --version
 podman --version

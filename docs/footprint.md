@@ -14,17 +14,19 @@ Current STEP024 local evidence:
 
 | Metric | Value |
 | --- | ---: |
-| Uncompressed exported-rootfs-regular-file-bytes | 23,928,063 bytes / 22.8196 MiB |
+| Uncompressed exported-rootfs-regular-file-bytes | 23,840,723 bytes / 22.7363 MiB |
 | Limit | 26,214,400 bytes / 25 MiB |
-| Local OCI compressed layer sum | 12,098,996 bytes / 11.5385 MiB |
-| Local Docker image `.Size` | 12,113,249 bytes |
+| Local OCI compressed layer sum | 12,095,601 bytes / 11.5353 MiB |
+| Local Docker image `.Size` | 12,102,195 bytes |
 
 The uncompressed number is produced by `tools/assert-footprint.py`, which
 exports the final image rootfs and sums regular files from the tar stream. The
 same script runs in CI and writes `dist/footprint/base-micro.${arch}.json`.
-`tools/assert-no-phantom-packages.py` then checks the Syft rpmdb file map
-against the exported rootfs so an rpmdb-listed package cannot keep only
-non-functional build-id, doc, man, or license residue after stripping.
+`tools/assert-no-phantom-packages.py` then queries the runtime rpmdb with
+`rpm -ql --dump` and checks it against the exported rootfs. An rpmdb-listed
+package cannot pass with only directories or non-functional build-id, doc, man,
+or license residue, and every non-excluded shared object or executable ELF file
+must be owned by a runtime rpmdb package.
 
 The compressed number above is a local OCI-layout layer-size sum for the same
 runtime target. The authoritative compressed registry-layer sum is recorded

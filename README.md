@@ -28,9 +28,9 @@ tailored RHEL9 STIG ARF gate are gated in CI; publish attaches the STIG ARF
 summary predicate per platform digest. See docs/stig.md.
 
 Runtime footprint is gated by `tools/assert-footprint.py` using exported-rootfs-regular-file-bytes.
-The current amd64 runtime measures 23,928,063 bytes / 22.8196 MiB against
-the 25 MiB H2 gate; local OCI compressed layer sum is 12,098,996 bytes /
-11.5385 MiB. See docs/footprint.md.
+The current amd64 runtime measures 23,840,723 bytes / 22.7363 MiB against
+the 25 MiB H2 gate; local OCI compressed layer sum is 12,095,601 bytes /
+11.5353 MiB. See docs/footprint.md.
 
 ## Local Build
 

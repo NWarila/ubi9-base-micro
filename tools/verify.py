@@ -141,6 +141,15 @@ def check_dockerfile() -> None:
         "/rootfs/usr/lib/locale/C.utf8",
         "/rootfs/usr/share/zoneinfo/Etc/UTC",
         "openssl verify",
+        "alternatives",
+        "update-alternatives",
+        "/usr/sbin/*",
+        "/etc/alternatives",
+        "/usr/libexec/coreutils",
+        "/usr/lib64/libpcre2-posix.so*",
+        "/usr/lib64/libpanel*.so*",
+        "/usr/lib64/libpanelw*.so*",
+        "ln -sfn usr/lib64 /rootfs/lib64",
     ]
     missing = [marker for marker in required if marker not in text]
     require(not missing, "Dockerfile missing required markers: " + ", ".join(missing))
@@ -208,6 +217,9 @@ def check_workflow() -> None:
         "--expect-absent libcap",
         "--expect-absent coreutils-common",
         "--expect-absent pcre2-syntax",
+        "--expect-absent alternatives",
+        "--expect-absent filesystem",
+        "--expect-absent openssl-fips-provider",
         "Run tailored STIG ARF gate",
         "tools/install-trivy.sh",
         "tools/install-grype.sh",
@@ -425,6 +437,15 @@ def check_sbom_assertion_script() -> None:
         "negative-cyclonedx",
     ]:
         require(marker in text, f"SBOM assertion script missing marker: {marker}")
+
+    phantom = read("tools/assert-no-phantom-packages.py")
+    for marker in [
+        "RUNTIME_RPMDB_PATH = \"/var/lib/rpm\"",
+        "--dbpath",
+        "orphan_binary_files",
+        "member.isdir()",
+    ]:
+        require(marker in phantom, f"phantom package guard missing marker: {marker}")
 
 
 def check_scanner_install_scripts() -> None:

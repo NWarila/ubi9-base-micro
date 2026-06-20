@@ -197,7 +197,8 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     for candidate in \
       coreutils-single coreutils findutils grep sed p11-kit p11-kit-trust \
       libsepol libselinux gmp pcre2 pcre libpcre ncurses-libs ncurses-base \
-      libsigsegv libffi libtasn1 libacl libattr libcap coreutils-common pcre2-syntax; do \
+      libsigsegv libffi libtasn1 libacl libattr libcap coreutils-common pcre2-syntax \
+      alternatives filesystem openssl-fips-provider; do \
       if rpm --root=/rootfs -q "${candidate}" >/dev/null 2>&1; then \
         candidate_nevra="$(rpm --root=/rootfs -q --qf '%{NEVRA}\n' "${candidate}")"; \
         echo "strip candidate installed: ${candidate_nevra}"; \
@@ -227,6 +228,12 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
         fi; \
       done; \
     fi; \
+    mkdir -p /rootfs/usr/bin /rootfs/usr/sbin /rootfs/usr/lib /rootfs/usr/lib64; \
+    ln -sfn usr/bin /rootfs/bin; \
+    ln -sfn usr/sbin /rootfs/sbin; \
+    ln -sfn usr/lib /rootfs/lib; \
+    ln -sfn usr/lib64 /rootfs/lib64; \
+    test "$(readlink /rootfs/lib64)" = "usr/lib64"; \
     ldconfig -r /rootfs; \
     test -s /rootfs/etc/ld.so.cache || { echo "ld.so.cache was not populated before removing ldconfig" >&2; exit 1; }; \
     rm -f \
@@ -291,7 +298,7 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
       /rootfs/usr/share/terminfo \
       /rootfs/etc/terminfo \
       /rootfs/usr/share/crypto-policies; \
-    for trimmed_executable in coreutils find xargs grep sed p11-kit trust ldconfig localedef iconv zic getconf; do \
+    for trimmed_executable in coreutils find xargs grep sed p11-kit trust ldconfig localedef iconv zic getconf alternatives update-alternatives; do \
       if [ -e "/rootfs/usr/bin/${trimmed_executable}" ] || [ -e "/rootfs/usr/sbin/${trimmed_executable}" ] || \
          [ -e "/rootfs/bin/${trimmed_executable}" ] || [ -e "/rootfs/sbin/${trimmed_executable}" ]; then \
         echo "trimmed executable '${trimmed_executable}' survived in runtime rootfs" >&2; exit 1; \
@@ -401,9 +408,11 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
       /usr/bin/* \
       /usr/sbin/* \
       /usr/libexec/getconf \
+      /usr/libexec/coreutils \
       /usr/lib64/engines-3 \
       /usr/lib64/libsepol.so* \
       /usr/lib64/libpcre2-8.so* \
+      /usr/lib64/libpcre2-posix.so* \
       /usr/lib64/libselinux.so* \
       /usr/lib64/libacl.so* \
       /usr/lib64/libcap.so* \
@@ -416,9 +425,12 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
       /usr/lib64/libtic.so* \
       /usr/lib64/libform*.so* \
       /usr/lib64/libmenu*.so* \
+      /usr/lib64/libpanel*.so* \
+      /usr/lib64/libpanelw*.so* \
       /var/lib/dnf/* \
       /var/lib/rhsm \
       /var/lib/alternatives \
+      /etc/alternatives \
       /usr/lib/rpm \
       /usr/share/licenses/libcap \
       /usr/share/licenses/pcre2-syntax \
@@ -436,7 +448,7 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
       /sbin/sh /sbin/bash /sbin/dash /sbin/ash /sbin/busybox /sbin/ksh /sbin/zsh /sbin/tcsh /sbin/csh \
       /bin/dnf /bin/microdnf /bin/rpm /bin/yum \
       /sbin/dnf /sbin/microdnf /sbin/rpm /sbin/yum; \
-    for trimmed_executable in coreutils find xargs grep sed p11-kit trust ldconfig localedef iconv zic getconf; do \
+    for trimmed_executable in coreutils find xargs grep sed p11-kit trust ldconfig localedef iconv zic getconf alternatives update-alternatives; do \
       if [ -e "/usr/bin/${trimmed_executable}" ] || [ -e "/usr/sbin/${trimmed_executable}" ] || \
          [ -e "/bin/${trimmed_executable}" ] || [ -e "/sbin/${trimmed_executable}" ]; then \
         echo "trimmed executable ${trimmed_executable} survived in runtime image" >&2; exit 1; \
