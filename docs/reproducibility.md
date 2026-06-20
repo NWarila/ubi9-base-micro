@@ -12,10 +12,31 @@ that is the same architecture path used by the publish workflow. Native arm64
 hosted runners would be a cleaner fallback if QEMU ever produces a byte diff, but
 QEMU is currently in scope and hard-gated because arm64 is a published artifact.
 
+The QEMU input is pinned by
+`docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130`.
+
+The `linux/amd64` byte-identity claim is native and toolchain-independent: no
+emulator participates in that build path. The `linux/arm64` byte-identity claim
+is emulator-relative: it is reproducible relative to the pinned QEMU/binfmt
+emulator above. The build-twice CI gate proves same-environment determinism for
+arm64 with that pinned QEMU; it does not claim byte-identity across arbitrary
+QEMU versions. A third-party arm64 reproducer needs the same pinned QEMU
+input unless they are deliberately testing a different emulator or native arm64
+path. That boundary is intrinsic to cross-architecture reproducible builds.
+
+The two-builds-in-one-CI-run gate is necessary for the F3 claim because any rootfs
+difference fails the build, but it is not sufficient by itself for a broad
+"anyone-anywhere" reproducibility claim. Future cross-host and native-arm64
+confirmation would strengthen the evidence without changing the current hard gate
+scope.
+
 Determinism controls:
 
 - `SOURCE_DATE_EPOCH=1704067200` is the committed timestamp input.
 - Buildx uses `rewrite-timestamp=true` on local, CI, and publish image exporters.
+- `docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130` pins
+  the QEMU/binfmt emulator used for the cross-architecture `linux/arm64` build
+  path on GitHub-hosted amd64 runners.
 - Runtime RPM inputs are locked by per-architecture transaction files in
   `rpm-lock/`.
 - Every locked RPM is verified immediately after install with
