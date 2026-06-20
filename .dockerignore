@@ -3,5 +3,7 @@
 !containers/Dockerfile
 !containers/fips/
 !containers/fips/openssl.cnf
+!tools/
+!tools/assert-rpm-lock-hashes.sh
 !rpm-lock/
 !rpm-lock/*.txt

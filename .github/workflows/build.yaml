@@ -69,6 +69,7 @@ jobs:
           python tools/assert-footprint.py --self-test
           python tools/assert-no-phantom-packages.py --self-test
           python tools/assert-reproducible.py --self-test
+          bash tools/assert-rpm-lock-hashes.sh --self-test
           python tools/assert-vex.py --self-test
           python tools/assert-no-rootfs-secrets.py --self-test
           python tools/generate-nist-800-190-predicate.py --self-test
@@ -85,16 +86,25 @@ jobs:
           bash -n tools/install-trivy.sh
           bash -n tools/install-grype.sh
           bash -n tools/build.sh
+          bash -n tools/assert-rpm-lock-hashes.sh
           bash -n tools/install-syft.sh
           bash -n tools/install-openscap.sh
           bash -n tools/build-stig-datastream.sh
           bash -n tools/run-stig-arf.sh
 
-  reproducibility-report:
-    name: reproducibility report
+  reproducibility-gate:
+    name: reproducibility gate (${{ matrix.arch }})
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+          - platform: linux/arm64
+            arch: arm64
     steps:
       - name: Check out repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -102,17 +112,28 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          platforms: amd64,arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
 
-      - name: Build twice and report rootfs byte diff
+      - name: Build twice and assert rootfs byte identity
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
 
           python tools/assert-reproducible.py \
-            --report dist/reproducibility/base-micro.amd64.reproducibility.json \
-            --summary dist/reproducibility/base-micro.amd64.reproducibility.txt
-          cat dist/reproducibility/base-micro.amd64.reproducibility.txt
+            --platform "${PLATFORM}" \
+            --assert-byte-identical \
+            --report "dist/reproducibility/base-micro.${ARCH}.reproducibility.json" \
+            --summary "dist/reproducibility/base-micro.${ARCH}.reproducibility.txt" \
+            --workdir "dist/reproducibility/work.${ARCH}"
+          cat "dist/reproducibility/base-micro.${ARCH}.reproducibility.txt"
 
   build:
     name: build and hardening

@@ -1,28 +1,37 @@
 # Reproducibility
 
-`base-micro` is moving toward the F3 byte-for-byte gate: two rebuilds from the
-same inputs must export byte-identical runtime rootfs archives for each
-architecture. This repository does not claim that result until
-`tools/assert-reproducible.py --assert-byte-identical` passes.
+`base-micro` enforces the F3 byte-for-byte rootfs gate in CI. The
+`reproducibility-gate` job builds the runtime target twice from identical inputs
+for both `linux/amd64` and `linux/arm64`, exports each image rootfs, and runs
+`tools/assert-reproducible.py --assert-byte-identical`. Any content, metadata,
+mtime, ownership, type, or presence difference in the exported rootfs fails the
+build.
 
-The current harness runs in report mode for `linux/amd64` in PR CI. It builds
-the runtime target twice with cache disabled, exports both rootfs archives, and
-classifies each path as identical, content-different, mtime-different,
-mode/owner-different, or present in only one export. The JSON report is written
-to `dist/reproducibility/base-micro.amd64.reproducibility.json`; the text
-summary is printed in CI.
+The arm64 proof intentionally uses QEMU on the GitHub-hosted amd64 runner because
+that is the same architecture path used by the publish workflow. Native arm64
+hosted runners would be a cleaner fallback if QEMU ever produces a byte diff, but
+QEMU is currently in scope and hard-gated because arm64 is a published artifact.
 
-Determinism controls landed for this pass:
+Determinism controls:
 
 - `SOURCE_DATE_EPOCH=1704067200` is the committed timestamp input.
-- Buildx uses `rewrite-timestamp=true` on local and publish image exporters.
-- Runtime RPM inputs are locked by per-architecture transaction NEVRA files in
-  `rpm-lock/`, including RPM header hashes where the rpmdb exposes them.
+- Buildx uses `rewrite-timestamp=true` on local, CI, and publish image exporters.
+- Runtime RPM inputs are locked by per-architecture transaction files in
+  `rpm-lock/`.
+- Every locked RPM is verified immediately after install with
+  `rpm --root=/rootfs -q --qf '%{SHA256HEADER}|%{SIGMD5}\n' <locked-nevra>`.
+  `SHA256HEADER` is the rpmdb-exposed tag that matches the lockfile
+  `sha256_header` column; `SIGMD5` matches the `sigmd5` column. A mismatch fails
+  the build before any strip step runs.
 - The Dockerfile verifies that the final runtime rpmdb still contains exactly
   the 15-package scanner-visible floor after strip.
 - Generated rootfs files such as `/etc/nwarila/fips-status.json` use the same
   deterministic timestamp path.
 
 The rpmdb remains present and valid because SBOM and scanner truthfulness depend
-on it. If byte differences remain in `/var/lib/rpm/rpmdb.sqlite`, they must be
-made deterministic without deleting or corrupting the rpmdb.
+on it. Differences in `/var/lib/rpm/rpmdb.sqlite` are gate failures; the rpmdb is
+not deleted, normalized away, or excluded from the rootfs comparison.
+
+F3 scope is the exported rootfs for each architecture. Published manifest
+digests, provenance metadata, and labels that intentionally vary outside the
+rootfs are not part of this rootfs byte-identity gate.
