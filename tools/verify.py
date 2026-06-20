@@ -50,6 +50,7 @@ def check_required_files() -> None:
         ".editorconfig",
         ".github/CODEOWNERS",
         ".github/workflows/build.yaml",
+        ".github/workflows/nightly.yaml",
         ".github/workflows/publish-image.yaml",
         ".gitignore",
         "Makefile",
@@ -71,6 +72,7 @@ def check_required_files() -> None:
         "tests/fips.sh",
         "tests/hardening.sh",
         "tools/build.sh",
+        "tools/run-test-gates.sh",
         "tools/assert-footprint.py",
         "tools/assert-no-phantom-packages.py",
         "tools/assert-reproducible.py",
@@ -186,16 +188,21 @@ def check_dockerfile() -> None:
 
 def check_workflow() -> None:
     workflows = sorted(path.name for path in (ROOT / ".github/workflows").glob("*.y*ml"))
-    require(workflows == ["build.yaml", "publish-image.yaml"], "repo must ship exactly build.yaml and publish-image.yaml")
+    require(
+        workflows == ["build.yaml", "nightly.yaml", "publish-image.yaml"],
+        "repo must ship exactly build.yaml, nightly.yaml, and publish-image.yaml",
+    )
 
-    text = read(".github/workflows/build.yaml")
+    build = read(".github/workflows/build.yaml")
+    nightly = read(".github/workflows/nightly.yaml")
+    gate_runner = read("tools/run-test-gates.sh")
+
     for marker in [
         "pull_request:",
+        "push:",
         "branches: [main]",
         "tags:",
-        "tools/build.sh",
-        "tests/hardening.sh",
-        "tests/fips.sh",
+        "workflow_dispatch:",
         "tools/verify.py",
         "tools/assert-sbom-rpms.py --self-test",
         "tools/assert-footprint.py --self-test",
@@ -206,6 +213,11 @@ def check_workflow() -> None:
         "tools/assert-no-rootfs-secrets.py --self-test",
         "tools/generate-nist-800-190-predicate.py --self-test",
         "tools/assert-slsa-builder-id.py --self-test",
+        "tools/assert-stig-tailoring.py --self-test",
+        "tools/assert-rootfs-identity.py --self-test",
+        "tools/assert-stig-arf.py --self-test",
+        "tools/generate-stig-arf-predicate.py --self-test",
+        "bash -n tools/run-test-gates.sh",
         "UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:",
         "TRIVY_VERSION: \"0.71.0\"",
         "GRYPE_VERSION: \"0.87.0\"",
@@ -213,59 +225,87 @@ def check_workflow() -> None:
         "SSG_TARBALL_SHA512: \"11e26cfa96a6f1bd98b3a131837e2f86c9a9851239337d86d624b01627faf10f7a03c395a5839ddab018e0fa47719ade05a9946f90d5ca96b1261776a9164379\"",
         "STIG_PROFILE: \"xccdf_org.nwarila.content_profile_ubi9_base_micro_stig\"",
         "STIG_FAIL_ON: \"low\"",
-        "tools/assert-stig-tailoring.py --self-test",
-        "tools/assert-rootfs-identity.py --self-test",
-        "tools/assert-stig-arf.py --self-test",
-        "tools/generate-stig-arf-predicate.py --self-test",
-        "tools/install-openscap.sh",
-        "tools/build-stig-datastream.sh",
-        "tools/run-stig-arf.sh",
         "reproducibility gate",
         "docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130",
         "platform: linux/amd64",
         "platform: linux/arm64",
         "--assert-byte-identical",
         "dist/reproducibility/base-micro.${ARCH}.reproducibility.json",
-        "Run runtime footprint gate",
+        "Run full test-only gate set",
+        "tools/run-test-gates.sh",
+        "ghcr.io/nwarila/ubi9-base-micro",
+    ]:
+        require(marker in build, f"build workflow missing marker: {marker}")
+
+    for marker in [
+        "schedule:",
+        "cron: \"23 4 * * *\"",
+        "workflow_dispatch:",
+        "contents: read",
+        "cancel-in-progress: false",
+        "tools/verify.py",
+        "bash -n tools/run-test-gates.sh",
+        "UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:",
+        "TRIVY_VERSION: \"0.71.0\"",
+        "GRYPE_VERSION: \"0.87.0\"",
+        "SSG_VERSION: \"0.1.81\"",
+        "SSG_TARBALL_SHA512: \"11e26cfa96a6f1bd98b3a131837e2f86c9a9851239337d86d624b01627faf10f7a03c395a5839ddab018e0fa47719ade05a9946f90d5ca96b1261776a9164379\"",
+        "STIG_PROFILE: \"xccdf_org.nwarila.content_profile_ubi9_base_micro_stig\"",
+        "STIG_FAIL_ON: \"low\"",
+        "reproducibility gate",
+        "docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130",
+        "platform: linux/amd64",
+        "platform: linux/arm64",
+        "--assert-byte-identical",
+        "dist/reproducibility/base-micro.${ARCH}.reproducibility.json",
+        "Run full test-only gate set",
+        "tools/run-test-gates.sh",
+        "ghcr.io/nwarila/ubi9-base-micro",
+    ]:
+        require(marker in nightly, f"nightly workflow missing marker: {marker}")
+
+    require("pull_request:" not in nightly, "nightly workflow must not run as PR CI")
+    require("\npush:" not in nightly, "nightly workflow must not run on push")
+
+    for marker in [
+        "bash tools/install-syft.sh",
+        "bash tools/install-trivy.sh",
+        "bash tools/install-grype.sh",
+        "bash tools/install-openscap.sh",
+        "bash tools/build-stig-datastream.sh",
+        "bash tools/build.sh",
+        "bash tests/hardening.sh \"${runtime_image}\"",
+        "bash tests/fips.sh \"${runtime_image}\"",
         "tools/assert-footprint.py",
         "dist/footprint/base-micro.${arch}.json",
-        "Run runtime phantom package gate",
+        "bash tools/run-stig-arf.sh",
+        "dist/tools/syft scan",
+        "json=dist/sbom/base-micro.${arch}.syft.json",
+        "spdx-json=dist/sbom/base-micro.${arch}.spdx.json",
+        "cyclonedx-json=dist/sbom/base-micro.${arch}.cdx.json",
+        "--source \"dist/sbom/base-micro.${arch}.syft.json\"",
         "tools/assert-no-phantom-packages.py",
-        "dist/sbom/base-micro.${sbom_arch}.phantom-packages.json",
+        "dist/sbom/base-micro.${arch}.phantom-packages.json",
         "--expect-absent libacl",
         "--expect-absent libattr",
         "--expect-absent libcap",
         "--expect-absent coreutils-common",
         "--expect-absent pcre2-syntax",
         "--expect-absent alternatives",
-        "Run tailored STIG ARF gate",
-        "tools/install-trivy.sh",
-        "tools/install-grype.sh",
-        "Generate and verify runtime SBOMs",
-        "dist/tools/syft scan",
-        "json=dist/sbom/base-micro.${sbom_arch}.syft.json",
-        "spdx-json=dist/sbom/base-micro.${sbom_arch}.spdx.json",
-        "cyclonedx-json=dist/sbom/base-micro.${sbom_arch}.cdx.json",
-        "--source \"dist/sbom/base-micro.${sbom_arch}.syft.json\"",
-        "Run Trivy fixable vulnerability gate",
         "dist/tools/trivy image",
         "--ignore-unfixed",
         "--severity HIGH,CRITICAL",
         "--exit-code 1",
-        "Run Grype fixable vulnerability gate",
-        "dist/tools/grype \"${RUNTIME_IMAGE}\" --only-fixed --fail-on high",
-        "Run OpenVEX default-deny gate",
+        "dist/tools/grype \"${runtime_image}\" --only-fixed --fail-on high",
         "--format json",
         "--file \"${grype_json}\"",
         "tools/assert-vex.py",
-        "Run runtime rootfs secret gate",
         "tools/assert-no-rootfs-secrets.py",
-        "Generate and validate NIST SP 800-190 predicate",
         "tools/generate-nist-800-190-predicate.py",
         "--validate \"${predicate}\"",
-        "ghcr.io/nwarila/ubi9-base-micro",
+        "bash /tmp/assert-rpm-lock-hashes.sh --root /rootfs --lockfile",
     ]:
-        require(marker in text, f"build workflow missing marker: {marker}")
+        require(marker in gate_runner or marker in read("containers/Dockerfile"), f"test gate runner missing marker: {marker}")
 
     forbidden = [
         "NWarila/.github/.github/workflows/",
@@ -277,10 +317,16 @@ def check_workflow() -> None:
         "attest-build-" + "provenance",
         "continue-on-" + "error",
     ]
-    present = [marker for marker in forbidden if marker in text]
-    require(not present, "build workflow contains out-of-scope marker(s): " + ", ".join(present))
-    check_uses_pinned(text, "build workflow")
+    for source, source_text in [
+        ("build workflow", build),
+        ("nightly workflow", nightly),
+        ("test gate runner", gate_runner),
+    ]:
+        present = [marker for marker in forbidden if marker in source_text]
+        require(not present, f"{source} contains out-of-scope marker(s): " + ", ".join(present))
 
+    check_uses_pinned(build, "build workflow")
+    check_uses_pinned(nightly, "nightly workflow")
 
 def check_publish_workflow() -> None:
     text = read(".github/workflows/publish-image.yaml")
@@ -774,6 +820,53 @@ def check_docs() -> None:
     )
     require("x86_64" in fips and "IBM Z" in fips and "POWER" in fips and "aarch64" in fips, "docs/fips.md must cite tested OE architecture scope")
     require("certificate/4857" in fips and "140sp4857.pdf" in fips, "docs/fips.md must cite NIST #4857 sources")
+
+    for marker in [
+        "Only `ubi9-base-micro` exists in",
+        "read as published artifacts from this repo",
+        "`base-python`",
+        "`base-node`",
+        "`base-java`",
+        "`FROM base-micro@sha256:<digest>`",
+        "cosign keyless",
+        "SLSA L3 provenance",
+        "SPDX and CycloneDX SBOMs",
+        "Grype fixable-CVE gates",
+        "OpenVEX default-deny",
+        "NIST SP 800-190 section 4.1 image evidence",
+        "tailored STIG ARF",
+        "byte-for-byte reproducibility",
+        "Rekor-logged",
+        "Responsibility boundary",
+        "standard hardened floor",
+        "rpmdb preserved",
+        "Java `jdeps`/`jlink`",
+        "stdlib pruning",
+    ]:
+        require(marker in readme, f"README.md missing G1 marker: {marker}")
+
+    for marker in [
+        "#4857, FIPS 140-3 Level 1 | ACTIVE",
+        "base-micro` ships only the OpenSSL provider",
+        "Go Cryptographic Module v1.0.0",
+        "#5247 ACTIVE",
+        "BC-FJA v2.0.0",
+        "#4743 ACTIVE",
+        "Node.js",
+        "No independent CMVP certificate",
+        "Out-of-scope certificates",
+        "Do not claim these certificates",
+        "RHEL 9.0 OpenSSL #4746",
+        "BC-FJA 2.1.0 interim #4943",
+        "Go module v1.26.0 is Pending Review",
+        "module-scoped and approved-mode-scoped",
+        "never an OS-scoped, host-scoped, container-scoped",
+        "uses a FIPS-validated module in approved mode",
+        "fips_enabled = 0",
+        "does not run `openssl fipsinstall`",
+        "self-verifies when it loads",
+    ]:
+        require(marker in fips, f"docs/fips.md missing G2/G2a/G3 marker: {marker}")
     require("tailored RHEL9 STIG ARF gate" in readme and "docs/stig.md" in readme, "README.md must describe current STIG gate scope")
     require("reference/verify.md" in docs_index, "docs README must index verify contract")
     require("nist-800-190.md" in docs_index, "docs README must index NIST 800-190 evidence")
