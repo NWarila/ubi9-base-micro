@@ -1,20 +1,16 @@
-name: Build base micro
+name: Nightly base micro sentinel
 
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
-    tags:
-      - "v*"
+  schedule:
+    - cron: "23 4 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-base-micro-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: nightly-base-micro-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   IMAGE_REPOSITORY: ghcr.io/nwarila/ubi9-base-micro
