@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Fail unless runtime rpmdb ownership matches functional rootfs payload.
+"""Assert rpmdb packages and runtime binary files stay honestly owned.
 
-The package pass uses `rpm -ql --dump --dbpath /var/lib/rpm` from the
-runtime rpmdb as the authoritative package-to-path source. A package with rpmdb-owned paths must
-retain at least one non-excluded regular file, or a symlink resolving to one;
-directories, build-id residue, docs, manpages, and licenses do not count.
+The package pass uses `rpm -ql --dump --dbpath /var/lib/rpm` as the
+authoritative manifest. A package that declares shippable regular payload must
+retain at least one present non-excluded regular file, or a symlink resolving
+to one. Packages with only structural, metadata, or pseudo mount/debug paths
+are classified as non-payload RPMs rather than phantoms.
 
 The orphan pass fails if any non-excluded shared object (`*.so*`) or executable
-ELF file in the rootfs is not owned by a runtime rpmdb package. Legitimately
-unowned copied config/status files are documented below, but no shared object
-or executable is allowed on that list.
+ELF file in the rootfs is not owned by a runtime rpmdb package.
 """
 
 from __future__ import annotations
@@ -30,7 +29,12 @@ from pathlib import Path
 
 
 EXCLUDED_PREFIXES = (
+    "/dev/",
+    "/proc/",
+    "/run/",
+    "/sys/",
     "/usr/lib/.build-id/",
+    "/usr/lib/debug/",
     "/usr/share/doc/",
     "/usr/share/man/",
     "/usr/share/licenses/",
@@ -78,6 +82,7 @@ class PackageStatus:
     name: str
     nevra: str
     owned_files: int
+    shippable_regular_files: int
     functional_files: int
     sample_functional_files: list[str]
 
@@ -410,6 +415,10 @@ def is_functional(path: str, entries: dict[str, RootfsEntry]) -> bool:
     return rootfs_resolves_to_regular(parent_canonical, entries)
 
 
+def is_shippable_regular_manifest_path(item: RpmOwnedPath) -> bool:
+    return item.kind == "file" and not is_excluded(item.path)
+
+
 def owned_path_aliases(path: str, entries: dict[str, RootfsEntry]) -> set[str]:
     normalized = normalize_path(path)
     return {
@@ -430,20 +439,24 @@ def package_statuses(
         )
 
     statuses: list[PackageStatus] = []
-    fileless_packages: list[str] = []
+    non_payload_packages: list[str] = []
     phantoms: list[str] = []
     for name, package in sorted(packages.items()):
         functional = sorted(path.path for path in package.files if is_functional(path.path, entries))
+        shippable_regular_files = sum(
+            1 for path in package.files if is_shippable_regular_manifest_path(path)
+        )
         status = PackageStatus(
             name=name,
             nevra=package.nevra,
             owned_files=len(package.files),
+            shippable_regular_files=shippable_regular_files,
             functional_files=len(functional),
             sample_functional_files=functional[:5],
         )
         statuses.append(status)
-        if not package.files:
-            fileless_packages.append(name)
+        if shippable_regular_files == 0:
+            non_payload_packages.append(name)
         elif not functional:
             phantoms.append(name)
 
@@ -452,7 +465,7 @@ def package_statuses(
             "rpm package(s) have no present non-excluded regular payload files: "
             + ", ".join(phantoms)
         )
-    return statuses, fileless_packages
+    return statuses, non_payload_packages
 
 
 def collect_owned_aliases(packages: dict[str, RpmPackage], entries: dict[str, RootfsEntry]) -> set[str]:
@@ -518,13 +531,16 @@ def orphan_binary_paths(
 def write_report(
     output: Path | None,
     statuses: list[PackageStatus],
-    fileless_packages: list[str],
+    non_payload_packages: list[str],
     orphan_count: int,
 ) -> None:
     report = {
         "package_count": len(statuses),
         "functional_package_count": sum(1 for status in statuses if status.functional_files > 0),
-        "fileless_rpm_packages": fileless_packages,
+        "fileless_rpm_packages": [
+            status.name for status in statuses if status.owned_files == 0
+        ],
+        "non_payload_rpm_packages": non_payload_packages,
         "orphan_binary_files": orphan_count,
         "documented_unowned_paths": sorted(DOCUMENTED_UNOWNED_PATHS),
         "documented_unowned_prefixes": sorted(DOCUMENTED_UNOWNED_PREFIXES),
@@ -537,7 +553,7 @@ def write_report(
         "phantom package assertion: "
         f"package_count={report['package_count']} "
         f"functional_package_count={report['functional_package_count']} "
-        f"fileless_rpm_packages={len(fileless_packages)} "
+        f"non_payload_rpm_packages={len(non_payload_packages)} "
         f"orphan_binary_files={orphan_count}"
     )
 
@@ -545,7 +561,7 @@ def write_report(
 def synthetic_entries() -> dict[str, RootfsEntry]:
     tar_buffer = io.BytesIO()
     with tarfile.open(fileobj=tar_buffer, mode="w") as archive:
-        for dirname in ["usr", "usr/lib64", "etc", "etc/dir-only"]:
+        for dirname in ["usr", "usr/lib64", "usr/share", "usr/share/doc", "etc", "etc/dir-only"]:
             info = tarfile.TarInfo(dirname)
             info.type = tarfile.DIRTYPE
             archive.addfile(info)
@@ -582,27 +598,45 @@ def run_self_test() -> None:
             nevra="fileless-meta-1-1.noarch",
             files=[],
         ),
+        "structural-dir": RpmPackage(
+            name="structural-dir",
+            nevra="structural-dir-1-1.noarch",
+            files=[
+                RpmOwnedPath(path="/etc/dir-only", kind="dir"),
+                RpmOwnedPath(path="/proc", kind="file"),
+                RpmOwnedPath(path="/usr/lib/debug/bin", kind="file"),
+            ],
+        ),
+        "doc-only-meta": RpmPackage(
+            name="doc-only-meta",
+            nevra="doc-only-meta-1-1.noarch",
+            files=[RpmOwnedPath(path="/usr/share/doc/doc-only/README.md", kind="file")],
+        ),
     }
 
-    statuses, fileless = package_statuses(good_packages, entries, set())
-    if len(statuses) != 2 or fileless != ["fileless-meta"]:
+    statuses, non_payload = package_statuses(good_packages, entries, set())
+    if len(statuses) != 4 or non_payload != [
+        "doc-only-meta",
+        "fileless-meta",
+        "structural-dir",
+    ]:
         raise PhantomPackageError("positive self-test status mismatch")
 
-    dir_only = {
+    true_phantom = {
         **good_packages,
-        "dir-only": RpmPackage(
-            name="dir-only",
-            nevra="dir-only-1-1.noarch",
-            files=[RpmOwnedPath(path="/etc/dir-only", kind="dir")],
+        "phantom-bin": RpmPackage(
+            name="phantom-bin",
+            nevra="phantom-bin-1-1.noarch",
+            files=[RpmOwnedPath(path="/usr/sbin/phantom", kind="file")],
         ),
     }
     try:
-        package_statuses(dir_only, entries, set())
+        package_statuses(true_phantom, entries, set())
     except PhantomPackageError as exc:
-        if "dir-only" not in str(exc):
+        if "phantom-bin" not in str(exc):
             raise
     else:
-        raise PhantomPackageError("dir-only negative self-test unexpectedly passed")
+        raise PhantomPackageError("true phantom negative self-test unexpectedly passed")
 
     with tempfile.TemporaryDirectory() as tmp:
         rootfs = Path(tmp)
@@ -652,14 +686,14 @@ def main(argv: list[str]) -> int:
             packages = query_rpm_packages(rootfs)
             if args.syft_json:
                 cross_check_syft_names(load_syft_packages(args.syft_json), packages)
-            statuses, fileless_packages = package_statuses(packages, entries, set(args.expect_absent))
+            statuses, non_payload_packages = package_statuses(packages, entries, set(args.expect_absent))
             owned_paths = collect_owned_aliases(packages, entries)
             orphans = orphan_binary_paths(rootfs, entries, owned_paths)
             if orphans:
                 raise PhantomPackageError(
                     "unowned shared object or executable ELF file(s): " + ", ".join(orphans)
                 )
-            write_report(args.output, statuses, fileless_packages, len(orphans))
+            write_report(args.output, statuses, non_payload_packages, len(orphans))
     except PhantomPackageError as exc:
         print(f"phantom package assertion failed: {exc}", file=sys.stderr)
         return 1

@@ -198,7 +198,7 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
       coreutils-single coreutils findutils grep sed p11-kit p11-kit-trust \
       libsepol libselinux gmp pcre2 pcre libpcre ncurses-libs ncurses-base \
       libsigsegv libffi libtasn1 libacl libattr libcap coreutils-common pcre2-syntax \
-      alternatives filesystem openssl-fips-provider; do \
+      alternatives; do \
       if rpm --root=/rootfs -q "${candidate}" >/dev/null 2>&1; then \
         candidate_nevra="$(rpm --root=/rootfs -q --qf '%{NEVRA}\n' "${candidate}")"; \
         echo "strip candidate installed: ${candidate_nevra}"; \

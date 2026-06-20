@@ -173,9 +173,7 @@ jobs:
             --expect-absent libcap \
             --expect-absent coreutils-common \
             --expect-absent pcre2-syntax \
-            --expect-absent alternatives \
-            --expect-absent filesystem \
-            --expect-absent openssl-fips-provider
+            --expect-absent alternatives
 
       - name: Run Trivy fixable vulnerability gate
         run: |

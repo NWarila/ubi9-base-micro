@@ -24,9 +24,12 @@ exports the final image rootfs and sums regular files from the tar stream. The
 same script runs in CI and writes `dist/footprint/base-micro.${arch}.json`.
 `tools/assert-no-phantom-packages.py` then queries the runtime rpmdb with
 `rpm -ql --dump` and checks it against the exported rootfs. An rpmdb-listed
-package cannot pass with only directories or non-functional build-id, doc, man,
-or license residue, and every non-excluded shared object or executable ELF file
-must be owned by a runtime rpmdb package.
+package that declares shippable regular payload cannot pass after that payload
+has been stripped. Structural or metadata-only packages with only directories,
+symlinks, docs, licenses, manpages, build-id residue, or mountpoint/debug
+pseudo paths are reported as non-payload RPMs instead of phantoms. Every
+non-excluded shared object or executable ELF file must be owned by a runtime
+rpmdb package.
 
 The compressed number above is a local OCI-layout layer-size sum for the same
 runtime target. The authoritative compressed registry-layer sum is recorded

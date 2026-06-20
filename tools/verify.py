@@ -218,8 +218,6 @@ def check_workflow() -> None:
         "--expect-absent coreutils-common",
         "--expect-absent pcre2-syntax",
         "--expect-absent alternatives",
-        "--expect-absent filesystem",
-        "--expect-absent openssl-fips-provider",
         "Run tailored STIG ARF gate",
         "tools/install-trivy.sh",
         "tools/install-grype.sh",
@@ -443,6 +441,7 @@ def check_sbom_assertion_script() -> None:
         "RUNTIME_RPMDB_PATH = \"/var/lib/rpm\"",
         "--dbpath",
         "orphan_binary_files",
+        "non_payload_rpm_packages",
         "member.isdir()",
     ]:
         require(marker in phantom, f"phantom package guard missing marker: {marker}")
