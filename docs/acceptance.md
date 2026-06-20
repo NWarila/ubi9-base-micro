@@ -70,7 +70,7 @@ The platform owns the **hardened base floor**: the standard runtime (full CPytho
 ## F. Operational (gating)
 - **F1. Nightly + on-CVE rebuild** workflow exists and has run **green** at least once.
 - **F2.** The repo is wired into the **shared Renovate preset** (base-digest bump cascades downstream; the SLSA signer-identity ref pin rides the cascade).
-- **F3. Reproducibility posture is *resolved*:** either a rebuild-bit-for-bit check passes (`SOURCE_DATE_EPOCH` + rpm install-order pinned) **or** the "reproducible" claim is explicitly retracted in the README. (No aspirational middle.)
+- **F3. Byte-for-byte reproducible (HARD gate):** a rebuild-from-identical-inputs check produces a byte-identical exported rootfs per architecture. The check is enforced as a build-failing gate once the diagnostic report reaches zero differences. The rpmdb remains present and valid; differences in `/var/lib/rpm/rpmdb.sqlite` must be made deterministic, not ignored or normalized away.
 
 ## G. Evidence honesty & docs (gating — the showcase bar)
 - **G1.** README/docs make the **4-variant set + the per-image evidence obvious** (transparency relocates to the repo), and **document the responsibility boundary** (base = standard hardened floor; leaf owns `jlink`/stdlib trimming).

@@ -57,11 +57,14 @@ def check_required_files() -> None:
         "VERSION",
         "containers/Dockerfile",
         "containers/fips/openssl.cnf",
+        "rpm-lock/runtime.amd64.txt",
+        "rpm-lock/runtime.arm64.txt",
         "docs/README.md",
         "docs/acceptance.md",
         "docs/fips.md",
         "docs/nist-800-190.md",
         "docs/footprint.md",
+        "docs/reproducibility.md",
         "docs/stig.md",
         "docs/reference/verify.md",
         "docs/vex.md",
@@ -70,6 +73,7 @@ def check_required_files() -> None:
         "tools/build.sh",
         "tools/assert-footprint.py",
         "tools/assert-no-phantom-packages.py",
+        "tools/assert-reproducible.py",
         "tools/install-syft.sh",
         "tools/install-trivy.sh",
         "tools/install-grype.sh",
@@ -105,9 +109,14 @@ def check_dockerfile() -> None:
         "ARG TARGETARCH",
         "ARG OPENSSL_FIPS_MODULE_VERSION=3.0.7-395c1a240fbfffd8",
         "ARG OPENSSL_FIPS_PROVIDER_NEVRA=openssl-fips-provider-so-3.0.7-8.el9",
+        "ARG SOURCE_DATE_EPOCH=1704067200",
         "amd64) rpm_arch=\"x86_64\"",
         "arm64) rpm_arch=\"aarch64\"",
         "expected_provider_nevra=\"${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}\"",
+        "COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/",
+        "locked_packages=\"\"",
+        "final runtime RPM lock floor verified",
+        "find /rootfs -xdev -exec touch -h -d \"@${SOURCE_DATE_EPOCH}\" {} +",
         "microdnf install -y --installroot=/rootfs",
         "--nodocs --setopt=install_weak_deps=0",
         "FROM ${UBI_MICRO_IMAGE} AS runtime",
@@ -188,6 +197,7 @@ def check_workflow() -> None:
         "tools/assert-sbom-rpms.py --self-test",
         "tools/assert-footprint.py --self-test",
         "tools/assert-no-phantom-packages.py --self-test",
+        "tools/assert-reproducible.py --self-test",
         "tools/assert-vex.py --self-test",
         "tools/assert-no-rootfs-secrets.py --self-test",
         "tools/generate-nist-800-190-predicate.py --self-test",
@@ -206,6 +216,8 @@ def check_workflow() -> None:
         "tools/install-openscap.sh",
         "tools/build-stig-datastream.sh",
         "tools/run-stig-arf.sh",
+        "reproducibility report",
+        "dist/reproducibility/base-micro.amd64.reproducibility.json",
         "Run runtime footprint gate",
         "tools/assert-footprint.py",
         "dist/footprint/base-micro.${arch}.json",
@@ -271,14 +283,16 @@ def check_publish_workflow() -> None:
         "tags:",
         "ghcr.io/nwarila/ubi9-base-micro",
         "github.event_name == 'push'",
-        "--push",
         "--platform linux/amd64,linux/arm64",
         "--target runtime",
         "--provenance=mode=max",
         "--sbom=false",
         "--metadata-file dist/image-metadata.json",
+        "--output \"type=registry,rewrite-timestamp=true\"",
         "OPENSSL_FIPS_MODULE_VERSION",
         "OPENSSL_FIPS_PROVIDER_NEVRA",
+        "SOURCE_DATE_EPOCH: \"1704067200\"",
+        "OCI_CREATED: \"2024-01-01T00:00:00Z\"",
         "SYFT_VERSION: \"1.45.1\"",
         "TRIVY_VERSION: \"0.71.0\"",
         "GRYPE_VERSION: \"0.87.0\"",
@@ -390,11 +404,14 @@ def check_build_script() -> None:
     text = read("tools/build.sh")
     for marker in [
         "docker buildx build",
-        "--load",
+        "--output \"type=docker,dest=${image_tar},rewrite-timestamp=true\"",
+        "docker load -i \"${image_tar}\"",
         "--provenance=false",
         "--sbom=false",
-        "--target runtime",
-        "--target dev",
+        "SOURCE_DATE_EPOCH",
+        "--target \"${target}\"",
+        "build_image runtime",
+        "build_image dev",
         "ghcr.io/nwarila/ubi9-base-micro",
     ]:
         require(marker in text, f"build helper missing marker: {marker}")
@@ -446,6 +463,54 @@ def check_sbom_assertion_script() -> None:
     ]:
         require(marker in phantom, f"phantom package guard missing marker: {marker}")
 
+
+def check_rpm_locks() -> None:
+    required_final = {
+        "basesystem",
+        "ca-certificates",
+        "crypto-policies",
+        "filesystem",
+        "glibc",
+        "glibc-common",
+        "glibc-minimal-langpack",
+        "libgcc",
+        "openssl-fips-provider",
+        "openssl-fips-provider-so",
+        "openssl-libs",
+        "redhat-release",
+        "setup",
+        "tzdata",
+        "zlib",
+    }
+    expected_arch = {"amd64": "x86_64", "arm64": "aarch64"}
+    for platform_arch, rpm_arch in expected_arch.items():
+        relative_path = f"rpm-lock/runtime.{platform_arch}.txt"
+        rows = []
+        for raw in read(relative_path).splitlines():
+            if not raw or raw.startswith("#"):
+                continue
+            parts = raw.split("|")
+            require(len(parts) == 9, f"{relative_path}: malformed lock row: {raw}")
+            package, final_rpmdb, name, epoch, version, release, arch, sha256_header, sigmd5 = parts
+            require(final_rpmdb in {"yes", "no"}, f"{relative_path}: invalid final_rpmdb for {package}")
+            require(arch in {"noarch", rpm_arch}, f"{relative_path}: invalid arch for {package}: {arch}")
+            require(
+                len(sha256_header) == 64 and all(c in "0123456789abcdef" for c in sha256_header),
+                f"{relative_path}: invalid SHA256HEADER for {package}",
+            )
+            require(
+                len(sigmd5) == 32 and all(c in "0123456789abcdef" for c in sigmd5),
+                f"{relative_path}: invalid SIGMD5 for {package}",
+            )
+            require(name in package, f"{relative_path}: package spec does not include name {name}: {package}")
+            require(epoch.isdigit(), f"{relative_path}: epoch must be numeric for {package}")
+            require(version and release, f"{relative_path}: missing version/release for {package}")
+            rows.append((package, final_rpmdb, name))
+        packages = [row[0] for row in rows]
+        require(len(packages) == len(set(packages)), f"{relative_path}: duplicate package rows")
+        require(len(packages) == 38, f"{relative_path}: expected 38 transaction RPMs, got {len(packages)}")
+        final_names = {name for _, final_rpmdb, name in rows if final_rpmdb == "yes"}
+        require(final_names == required_final, f"{relative_path}: final rpmdb set mismatch: {sorted(final_names)}")
 
 def check_scanner_install_scripts() -> None:
     trivy = read("tools/install-trivy.sh")
@@ -598,6 +663,7 @@ def check_helper_self_tests() -> None:
         "tools/generate-nist-800-190-predicate.py",
         "tools/assert-footprint.py",
         "tools/assert-no-phantom-packages.py",
+        "tools/assert-reproducible.py",
         "tools/assert-cosign-rekor.py",
         "tools/assert-slsa-builder-id.py",
         "tools/assert-stig-tailoring.py",
@@ -679,10 +745,13 @@ def check_docs() -> None:
     vex_doc = read("docs/vex.md")
     nist_doc = read("docs/nist-800-190.md")
     footprint_doc = read("docs/footprint.md")
+    reproducibility_doc = read("docs/reproducibility.md")
     stig_doc = read("docs/stig.md")
     legacy_namespace = "ghcr.io/nwarila-" + "platform/*"
     require(legacy_namespace in acceptance, "acceptance copy should preserve source DoD text")
     require("superseded for this repository" in acceptance, "acceptance.md must flag the legacy platform namespace")
+    require("Byte-for-byte reproducible (HARD gate)" in acceptance, "acceptance.md must carry hard F3 wording")
+    require("explicitly retracted" not in acceptance, "acceptance.md must not preserve the old F3 retract escape")
     require("#4857" in fips, "docs/fips.md must record the OpenSSL CMVP #4857 ledger")
     require("3.0.7-395c1a240fbfffd8" in fips, "docs/fips.md must record the validated OpenSSL provider version")
     require("approved mode" in fips, "docs/fips.md must scope the OpenSSL claim to approved mode")
@@ -701,9 +770,19 @@ def check_docs() -> None:
     require("reference/verify.md" in docs_index, "docs README must index verify contract")
     require("nist-800-190.md" in docs_index, "docs README must index NIST 800-190 evidence")
     require("footprint.md" in docs_index, "docs README must index footprint evidence")
+    require("reproducibility.md" in docs_index, "docs README must index reproducibility evidence")
     require("stig.md" in docs_index, "docs README must index STIG evidence")
     require("vex.md" in docs_index, "docs README must index VEX flow")
     require("CODEOWNERS-gated" in vex_doc and "cosign attest --type openvex" in vex_doc, "docs/vex.md must describe VEX review and attestation flow")
+    for marker in [
+        "SOURCE_DATE_EPOCH=1704067200",
+        "tools/assert-reproducible.py --assert-byte-identical",
+        "rewrite-timestamp=true",
+        "rpm-lock/",
+        "does not claim",
+    ]:
+        require(marker in reproducibility_doc, f"docs/reproducibility.md missing marker: {marker}")
+
     for marker in [
         "25 * 1024 * 1024 bytes",
         "exported-rootfs-regular-file-bytes",
@@ -799,6 +878,7 @@ def main() -> int:
     checks = [
         check_required_files,
         check_dockerfile,
+        check_rpm_locks,
         check_workflow,
         check_publish_workflow,
         check_build_script,

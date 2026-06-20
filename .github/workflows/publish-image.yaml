@@ -26,6 +26,8 @@ env:
   UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:b498b3ea26111ab4b81d65139f2ebd2ef9a2abb7a4588b7fdcc54889f95e9caa
   OPENSSL_FIPS_MODULE_VERSION: "3.0.7-395c1a240fbfffd8"
   OPENSSL_FIPS_PROVIDER_NEVRA: "openssl-fips-provider-so-3.0.7-8.el9"
+  SOURCE_DATE_EPOCH: "1704067200"
+  OCI_CREATED: "2024-01-01T00:00:00Z"
   NIST_800_190_PREDICATE_TYPE: "https://nwarila.dev/attestations/nist-sp-800-190-image/v1"
   STIG_ARF_PREDICATE_TYPE: "https://nwarila.dev/attestations/stig-arf/v1"
   SSG_VERSION: "0.1.81"
@@ -130,7 +132,7 @@ jobs:
             tags+=(--tag "${image}:${ref_tag}")
           fi
 
-          oci_created="$(git show -s --format=%cI HEAD)"
+          oci_created="${OCI_CREATED}"
           oci_version="$(tr -d '[:space:]' < VERSION)"
 
           docker buildx build \
@@ -139,6 +141,7 @@ jobs:
             --target runtime \
             --build-arg "UBI_MINIMAL_IMAGE=${UBI_MINIMAL_IMAGE}" \
             --build-arg "UBI_MICRO_IMAGE=${UBI_MICRO_IMAGE}" \
+            --build-arg "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
             --build-arg "OPENSSL_FIPS_MODULE_VERSION=${OPENSSL_FIPS_MODULE_VERSION}" \
             --build-arg "OPENSSL_FIPS_PROVIDER_NEVRA=${OPENSSL_FIPS_PROVIDER_NEVRA}" \
             --build-arg "OCI_CREATED=${oci_created}" \
@@ -150,7 +153,7 @@ jobs:
             --provenance=mode=max \
             --sbom=false \
             --metadata-file dist/image-metadata.json \
-            --push \
+            --output "type=registry,rewrite-timestamp=true" \
             "${tags[@]}" \
             .
 
