@@ -786,6 +786,8 @@ def check_docs() -> None:
         "SOURCE_DATE_EPOCH=1704067200",
         "tools/assert-reproducible.py --assert-byte-identical",
         "rewrite-timestamp=true",
+        "docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130",
+        "emulator-relative",
         "rpm-lock/",
         "linux/amd64",
         "linux/arm64",
@@ -793,6 +795,14 @@ def check_docs() -> None:
         "SIGMD5",
     ]:
         require(marker in reproducibility_doc, f"docs/reproducibility.md missing marker: {marker}")
+    require(
+        "report-mode scope" not in docs_index,
+        "docs/README.md must not describe reproducibility as report-mode scope",
+    )
+    require(
+        "build-failing hard gate" in docs_index,
+        "docs/README.md must describe reproducibility as a build-failing hard gate",
+    )
 
     for marker in [
         "25 * 1024 * 1024 bytes",
