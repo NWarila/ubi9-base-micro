@@ -1,4 +1,4 @@
-.PHONY: build test verify
+.PHONY: build test verify clean
 
 IMAGE_REPOSITORY ?= ghcr.io/nwarila/ubi9-base-micro
 RUNTIME_IMAGE ?= $(IMAGE_REPOSITORY):base-micro
@@ -12,3 +12,6 @@ test:
 
 verify:
 	python tools/verify.py
+
+clean:
+	rm -rf dist tools/__pycache__
