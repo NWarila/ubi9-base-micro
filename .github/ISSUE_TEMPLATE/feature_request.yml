@@ -1,0 +1,71 @@
+name: Feature Request
+description: Propose a repository-contract, documentation, or image-build improvement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-submission checklist
+      options:
+        - label: I have searched existing issues and pull requests.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Image build
+        - Gate or verification contract
+        - Reproducibility
+        - Documentation
+        - Repository health
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem would this solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the requested behavior or documentation change.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence or references
+      description: Link relevant docs, standards, issues, or command output.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: image-impact
+    attributes:
+      label: Would this affect image bytes or release evidence?
+      options:
+        - "No"
+        - "Yes"
+        - "Unsure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance evidence
+      description: Which local or CI gates should prove this is complete?
+      placeholder: python tools/verify.py; bash tools/run-test-gates.sh; both-arch reproducibility gates
+    validations:
+      required: false
+

@@ -16,6 +16,17 @@ SHA40 = re.compile(r"^[0-9a-f]{40}$")
 SLSA_GENERATOR = "slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml"
 SLSA_GENERATOR_TAG = "v2.1.0"
 SLSA_GENERATOR_SHA = "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a"
+COMMUNITY_PROFILE_FILES = [
+    "CHANGELOG.md",
+    "CODE_OF_CONDUCT.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "SUPPORT.md",
+    ".github/ISSUE_TEMPLATE/bug_report.yml",
+    ".github/ISSUE_TEMPLATE/config.yml",
+    ".github/ISSUE_TEMPLATE/feature_request.yml",
+    ".github/pull_request_template.md",
+]
 REPO_ADRS = [
     (
         "docs/decision-records/repo/0001-byte-for-byte-rootfs-reproducibility.md",
@@ -96,7 +107,14 @@ def check_required_files() -> None:
         ".dockerignore",
         ".editorconfig",
         ".gitattributes",
+        "CHANGELOG.md",
+        "CODE_OF_CONDUCT.md",
+        "CONTRIBUTING.md",
         ".github/CODEOWNERS",
+        ".github/ISSUE_TEMPLATE/bug_report.yml",
+        ".github/ISSUE_TEMPLATE/config.yml",
+        ".github/ISSUE_TEMPLATE/feature_request.yml",
+        ".github/pull_request_template.md",
         ".github/renovate.json",
         ".github/workflows/build.yaml",
         ".github/workflows/nightly.yaml",
@@ -107,6 +125,8 @@ def check_required_files() -> None:
         "LICENSE",
         "Makefile",
         "README.md",
+        "SECURITY.md",
+        "SUPPORT.md",
         "VERSION",
         "containers/Dockerfile",
         "containers/fips/openssl.cnf",
@@ -158,6 +178,111 @@ def check_required_files() -> None:
         require((ROOT / relative_path).is_file(), f"missing required ADR: {relative_path}")
 
 
+def check_community_profile() -> None:
+    gitignore = read(".gitignore")
+    for relative_path in COMMUNITY_PROFILE_FILES:
+        require((ROOT / relative_path).is_file(), f"missing community profile file: {relative_path}")
+        require(f"!/{relative_path}" in gitignore, f".gitignore must allowlist community profile file: {relative_path}")
+
+    contributing = read("CONTRIBUTING.md")
+    for marker in [
+        "make build",
+        "make test",
+        "make verify",
+        "make clean",
+        "tools/run-test-gates.sh",
+        "tools/assert-reproducible.py",
+        "--platform linux/amd64",
+        "--platform linux/arm64",
+        "Sign every commit",
+        "deny-all `.gitignore`",
+    ]:
+        require(marker in contributing, f"CONTRIBUTING.md missing marker: {marker}")
+
+    security = read("SECURITY.md")
+    for marker in [
+        "https://github.com/NWarila/ubi9-base-micro/security/advisories/new",
+        "no git tags",
+        "GitHub releases",
+        "docs/reference/verify.md",
+        "cosign verify",
+        "cosign verify-attestation",
+        "slsa-verifier verify-image",
+        "GitHub Actions OIDC issuer",
+        "Do not substitute `gh attestation verify`",
+    ]:
+        require(marker in security, f"SECURITY.md missing marker: {marker}")
+    require("mailto:" not in security.lower(), "SECURITY.md must not publish a personal email contact")
+
+    conduct = read("CODE_OF_CONDUCT.md")
+    for marker in [
+        "Contributor Covenant Code of Conduct",
+        "version 2.1",
+        "https://github.com/NWarila",
+        "Community Impact Guidelines",
+    ]:
+        require(marker in conduct, f"CODE_OF_CONDUCT.md missing marker: {marker}")
+
+    support = read("SUPPORT.md")
+    for marker in [
+        "GitHub Discussions are not enabled",
+        "tools/run-test-gates.sh",
+        "docs/reference/verify.md",
+        "planned `base-python`, `base-node`, or `base-java`",
+    ]:
+        require(marker in support, f"SUPPORT.md missing marker: {marker}")
+
+    changelog = read("CHANGELOG.md")
+    for marker in [
+        "Keep a Changelog",
+        "Semantic Versioning",
+        "## [Unreleased]",
+        "no git tags",
+        "GitHub releases",
+        "Community health files",
+    ]:
+        require(marker in changelog, f"CHANGELOG.md missing marker: {marker}")
+    require("## [0.1.0]" not in changelog, "CHANGELOG.md must not claim an unreleased VERSION as a release")
+
+    bug_form = read(".github/ISSUE_TEMPLATE/bug_report.yml")
+    for marker in [
+        "name: Bug Report",
+        "description: Report a reproducible problem in this repository",
+        "This is not a vulnerability report.",
+        "Reproducibility",
+        "Published digest verification",
+        "render: shell",
+    ]:
+        require(marker in bug_form, f"bug_report.yml missing marker: {marker}")
+
+    feature_form = read(".github/ISSUE_TEMPLATE/feature_request.yml")
+    for marker in [
+        "name: Feature Request",
+        "description: Propose a repository-contract, documentation, or image-build improvement",
+        "Would this affect image bytes or release evidence?",
+        "both-arch reproducibility gates",
+    ]:
+        require(marker in feature_form, f"feature_request.yml missing marker: {marker}")
+
+    issue_config = read(".github/ISSUE_TEMPLATE/config.yml")
+    for marker in [
+        "blank_issues_enabled: false",
+        "https://github.com/NWarila/ubi9-base-micro/security/policy",
+        "SUPPORT.md",
+    ]:
+        require(marker in issue_config, f"issue template config missing marker: {marker}")
+
+    pr_template = read(".github/pull_request_template.md")
+    for marker in [
+        "Commits are signed.",
+        "`python tools/verify.py` passes.",
+        "deny-all `.gitignore`",
+        "fresh amd64 and arm64 byte-for-byte reproducibility proof",
+        "`bash tools/run-test-gates.sh` passes",
+        "FIPS, STIG, footprint, SBOM, VEX, Trivy, Grype, NIST SP 800-190, SLSA, and Rekor",
+        "docs/reference/verify.md",
+    ]:
+        require(marker in pr_template, f"pull request template missing marker: {marker}")
 
 def check_renovate_config() -> None:
     relative_path = ".github/renovate.json"
@@ -1230,6 +1355,7 @@ def check_no_attribution_residue() -> None:
 def main() -> int:
     checks = [
         check_required_files,
+        check_community_profile,
         check_renovate_config,
         check_dockerfile,
         check_rpm_locks,

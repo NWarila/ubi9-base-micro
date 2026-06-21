@@ -1,0 +1,95 @@
+name: Bug Report
+description: Report a reproducible problem in this repository
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report vulnerabilities here. Use the Security policy link from the issue chooser.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-submission checklist
+      options:
+        - label: I have searched existing issues and pull requests.
+          required: true
+        - label: This is not a vulnerability report.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Build or local gate
+        - Reproducibility
+        - Published digest verification
+        - Documentation
+        - Repository health file
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: revision
+    attributes:
+      label: Commit or digest
+      description: Commit SHA, branch, tag, or image digest where the problem occurs.
+      placeholder: 4519d82 or ghcr.io/nwarila/ubi9-base-micro@sha256:...
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Provide exact commands when possible.
+      render: shell
+      placeholder: |
+        python tools/verify.py
+        bash tools/run-test-gates.sh
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, shell, Docker/Buildx version, platform, and any relevant tool versions.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Paste the smallest command output that demonstrates the issue.
+      render: shell
+    validations:
+      required: false
+
