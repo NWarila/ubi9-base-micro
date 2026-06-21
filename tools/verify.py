@@ -16,6 +16,48 @@ SHA40 = re.compile(r"^[0-9a-f]{40}$")
 SLSA_GENERATOR = "slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml"
 SLSA_GENERATOR_TAG = "v2.1.0"
 SLSA_GENERATOR_SHA = "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a"
+REPO_ADRS = [
+    (
+        "docs/decision-records/repo/0001-byte-for-byte-rootfs-reproducibility.md",
+        "Enforce Byte-For-Byte Rootfs Reproducibility",
+    ),
+    (
+        "docs/decision-records/repo/0002-rhel-openssl-fips-approved-mode.md",
+        "Use The RHEL OpenSSL FIPS Provider Approved-Mode Config",
+    ),
+    (
+        "docs/decision-records/repo/0003-per-architecture-fips-scope.md",
+        "Publish Multi-Arch Images With Per-Architecture FIPS Scope",
+    ),
+    (
+        "docs/decision-records/repo/0004-slsa-generator-tag-pin-exception.md",
+        "Keep The SLSA Generator Tag-Pinned With An Integrity Guard",
+    ),
+    (
+        "docs/decision-records/repo/0005-strip-runtime-with-phantom-package-guard.md",
+        "Strip Runtime Payload Only Behind Rpmdb And Ownership Guards",
+    ),
+    (
+        "docs/decision-records/repo/0006-rpm-lock-cve-absorption-loop.md",
+        "Absorb Patched RPMs Through A Gated Lockfile Refresh Loop",
+    ),
+    (
+        "docs/decision-records/repo/0007-dual-scanner-openvex-default-deny.md",
+        "Use Dual Scanners And Default-Deny OpenVEX",
+    ),
+    (
+        "docs/decision-records/repo/0008-tailored-stig-arf-gate.md",
+        "Gate The Image With A Tailored RHEL 9 STIG ARF",
+    ),
+    (
+        "docs/decision-records/repo/0009-nist-800-190-image-evidence.md",
+        "Emit NIST SP 800-190 Image-Control Evidence",
+    ),
+    (
+        "docs/decision-records/repo/0010-base-image-polyrepo-topology.md",
+        "Keep The Base-Image Family As Polyrepos Rooted At Base Micro",
+    ),
+]
 
 
 class VerifyError(Exception):
@@ -67,6 +109,7 @@ def check_required_files() -> None:
         "rpm-lock/runtime.amd64.txt",
         "rpm-lock/runtime.arm64.txt",
         "docs/README.md",
+        "docs/decision-records/README.md",
         "docs/acceptance.md",
         "docs/fips.md",
         "docs/nist-800-190.md",
@@ -107,6 +150,9 @@ def check_required_files() -> None:
         "vex/README.md",
     ]:
         require((ROOT / relative_path).is_file(), f"missing required file: {relative_path}")
+    for relative_path, _ in REPO_ADRS:
+        require((ROOT / relative_path).is_file(), f"missing required ADR: {relative_path}")
+
 
 
 def check_renovate_config() -> None:
@@ -924,6 +970,44 @@ def check_stig() -> None:
         read(relative_path)
 
 
+def check_decision_records() -> None:
+    index = read("docs/decision-records/README.md")
+    require("repository-scope Architecture Decision Records" in index, "decision-records index must define scope")
+    require("do not mirror shared organization or template ADRs" in index, "decision-records index must stay repo-scoped")
+    require("| ADR | Status | Decision |" in index, "decision-records index must contain an ADR table")
+    require("repo/" in index, "decision-records index must point to repo ADRs")
+
+    expected_numbers = [f"{number:04d}" for number in range(1, len(REPO_ADRS) + 1)]
+    for number, (relative_path, title) in zip(expected_numbers, REPO_ADRS, strict=True):
+        text = read(relative_path)
+        require(text.startswith(f"# ADR-{number}: {title}\n"), f"{relative_path} has wrong ADR heading")
+        for marker in [
+            "- Status: Accepted",
+            "- Date: 2026-06-21",
+            "- Scope: repo",
+            "## Context",
+            "## Decision",
+            "## Consequences",
+            "## References",
+        ]:
+            require(marker in text, f"{relative_path} missing ADR marker: {marker}")
+        require(relative_path.replace("docs/decision-records/", "") in index, f"index missing {relative_path}")
+
+    joined = "\n".join(read(path) for path, _ in REPO_ADRS)
+    for marker in [
+        "tools/assert-reproducible.py --assert-byte-identical",
+        "CMVP certificate #4857",
+        "oe_validated",
+        SLSA_GENERATOR_SHA,
+        "tools/assert-no-phantom-packages.py",
+        ".github/workflows/rpm-lock-refresh.yaml",
+        "tools/assert-vex.py",
+        "stig/rhel9-base-micro-tailoring.xml",
+        "https://nwarila.dev/attestations/nist-sp-800-190-image/v1",
+        "base-micro@sha256:<digest>",
+    ]:
+        require(marker in joined, f"repo ADRs missing load-bearing marker: {marker}")
+
 def check_docs() -> None:
     readme = read("README.md")
     acceptance = read("docs/acceptance.md")
@@ -976,6 +1060,7 @@ def check_docs() -> None:
         "rpmdb preserved",
         "Java `jdeps`/`jlink`",
         "stdlib pruning",
+        "docs/decision-records/repo/",
     ]:
         require(marker in readme, f"README.md missing G1 marker: {marker}")
 
@@ -1003,6 +1088,7 @@ def check_docs() -> None:
         require(marker in fips, f"docs/fips.md missing G2/G2a/G3 marker: {marker}")
     require("tailored RHEL9 STIG ARF gate" in readme and "docs/stig.md" in readme, "README.md must describe current STIG gate scope")
     require("reference/verify.md" in docs_index, "docs README must index verify contract")
+    require("decision-records/" in docs_index, "docs README must index decision records")
     require("nist-800-190.md" in docs_index, "docs README must index NIST 800-190 evidence")
     require("footprint.md" in docs_index, "docs README must index footprint evidence")
     require("reproducibility.md" in docs_index, "docs README must index reproducibility evidence")
@@ -1143,6 +1229,7 @@ def main() -> int:
         check_vex,
         check_nist_800_190_scripts,
         check_stig,
+        check_decision_records,
         check_docs,
         check_helper_self_tests,
         check_no_attribution_residue,
