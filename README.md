@@ -1,5 +1,8 @@
 # ubi9-base-micro
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/NWarila/ubi9-base-micro/badge)](https://scorecard.dev/viewer/?uri=github.com/NWarila/ubi9-base-micro)
+[![CodeQL](https://github.com/NWarila/ubi9-base-micro/actions/workflows/codeql.yml/badge.svg)](https://github.com/NWarila/ubi9-base-micro/actions/workflows/codeql.yml)
+
 `ubi9-base-micro` builds the root UBI 9 micro base for the NWarila base-image
 family. This repository produces two local-test image tags from one Dockerfile:
 

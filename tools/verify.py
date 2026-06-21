@@ -16,6 +16,20 @@ SHA40 = re.compile(r"^[0-9a-f]{40}$")
 SLSA_GENERATOR = "slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml"
 SLSA_GENERATOR_TAG = "v2.1.0"
 SLSA_GENERATOR_SHA = "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a"
+HARDEN_RUNNER = "step-security/harden-runner"
+HARDEN_RUNNER_SHA = "9af89fc71515a100421586dfdb3dc9c984fbf411"
+CHECKOUT_SHA = "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
+SCORECARD_ACTION_SHA = "4eaacf0543bb3f2c246792bd56e8cdeffafb205a"
+CODEQL_ACTION_SHA = "8aad20d150bbac5944a9f9d289da16a4b0d87c1e"
+DEPENDENCY_REVIEW_ACTION_SHA = "a1d282b36b6f3519aa1f3fc636f609c47dddb294"
+ZIZMOR_ACTION_SHA = "5f14fd08f7cf1cb1609c1e344975f152c7ee938d"
+ZIZMOR_VERSION = "v1.26.1"
+SUPPLY_CHAIN_WORKFLOWS = [
+    ".github/workflows/codeql.yml",
+    ".github/workflows/dependency-review.yml",
+    ".github/workflows/scorecard.yml",
+    ".github/workflows/zizmor.yml",
+]
 COMMUNITY_PROFILE_FILES = [
     "CHANGELOG.md",
     "CODE_OF_CONDUCT.md",
@@ -102,6 +116,44 @@ def check_uses_pinned(text: str, source: str) -> None:
     require(not bad_refs, f"{source} uses entries must be pinned to 40-char SHA: " + ", ".join(bad_refs))
 
 
+def check_workflow_uses_present(text: str, source: str) -> None:
+    uses = WORKFLOW_USES.findall(text)
+    require(uses, f"{source} should pin external actions explicitly")
+
+
+def check_no_continue_on_error(text: str, source: str) -> None:
+    require("continue-on-" + "error" not in text, f"{source} must not use continue-on-error")
+
+
+def check_harden_runner_audit_steps(text: str, source: str) -> None:
+    require("egress-policy: block" not in text, f"{source} must keep harden-runner in audit mode")
+    require("allowed-endpoints:" not in text, f"{source} must not configure harden-runner block-mode allowlists")
+    lines = text.splitlines()
+    step_blocks = 0
+    for index, line in enumerate(lines):
+        if line == "    steps:":
+            step_blocks += 1
+            next_index = index + 1
+            while next_index < len(lines) and not lines[next_index].strip():
+                next_index += 1
+            require(next_index < len(lines), f"{source} has an empty steps block")
+            require(
+                lines[next_index].strip() == "- name: Harden runner",
+                f"{source} steps block must start with harden-runner audit step",
+            )
+            block = "\n".join(lines[next_index : next_index + 5])
+            require(
+                f"uses: {HARDEN_RUNNER}@{HARDEN_RUNNER_SHA} # v2.19.4" in block,
+                f"{source} harden-runner must be pinned to v2.19.4 SHA",
+            )
+            require("egress-policy: audit" in block, f"{source} harden-runner must use audit egress policy")
+    require(step_blocks > 0, f"{source} must contain at least one job steps block")
+    require(
+        text.count(f"{HARDEN_RUNNER}@{HARDEN_RUNNER_SHA}") == text.count("egress-policy: audit"),
+        f"{source} harden-runner entries must all use egress-policy: audit",
+    )
+
+
 def check_required_files() -> None:
     for relative_path in [
         ".dockerignore",
@@ -116,10 +168,15 @@ def check_required_files() -> None:
         ".github/ISSUE_TEMPLATE/feature_request.yml",
         ".github/pull_request_template.md",
         ".github/renovate.json",
+        ".github/zizmor.yml",
         ".github/workflows/build.yaml",
+        ".github/workflows/codeql.yml",
+        ".github/workflows/dependency-review.yml",
         ".github/workflows/nightly.yaml",
         ".github/workflows/publish-image.yaml",
         ".github/workflows/rpm-lock-refresh.yaml",
+        ".github/workflows/scorecard.yml",
+        ".github/workflows/zizmor.yml",
         ".gitignore",
         ".markdownlint-cli2.jsonc",
         "LICENSE",
@@ -452,8 +509,17 @@ def check_dockerfile() -> None:
 def check_workflow() -> None:
     workflows = sorted(path.name for path in (ROOT / ".github/workflows").glob("*.y*ml"))
     require(
-        workflows == ["build.yaml", "nightly.yaml", "publish-image.yaml", "rpm-lock-refresh.yaml"],
-        "repo must ship exactly build.yaml, nightly.yaml, publish-image.yaml, and rpm-lock-refresh.yaml",
+        workflows == [
+            "build.yaml",
+            "codeql.yml",
+            "dependency-review.yml",
+            "nightly.yaml",
+            "publish-image.yaml",
+            "rpm-lock-refresh.yaml",
+            "scorecard.yml",
+            "zizmor.yml",
+        ],
+        "repo must ship exactly the expected baseline and supply-chain workflows",
     )
 
     build = read(".github/workflows/build.yaml")
@@ -644,6 +710,126 @@ def check_workflow() -> None:
     check_uses_pinned(build, "build workflow")
     check_uses_pinned(nightly, "nightly workflow")
     check_uses_pinned(refresh, "RPM lock refresh workflow")
+
+
+def check_supply_chain_workflows() -> None:
+    gitignore = read(".gitignore")
+    for relative_path in [".github/zizmor.yml", *SUPPLY_CHAIN_WORKFLOWS]:
+        require(f"!/{relative_path}" in gitignore, f".gitignore must allowlist supply-chain path: {relative_path}")
+
+    workflow_paths = [
+        ".github/workflows/build.yaml",
+        ".github/workflows/nightly.yaml",
+        ".github/workflows/publish-image.yaml",
+        ".github/workflows/rpm-lock-refresh.yaml",
+        *SUPPLY_CHAIN_WORKFLOWS,
+    ]
+    for relative_path in workflow_paths:
+        text = read(relative_path)
+        check_workflow_uses_present(text, relative_path)
+        check_uses_pinned(text, relative_path)
+        check_no_continue_on_error(text, relative_path)
+        check_harden_runner_audit_steps(text, relative_path)
+        require("runs-on: ubuntu-latest" not in text, f"{relative_path} must not use moving ubuntu-latest runner")
+
+    scorecard = read(".github/workflows/scorecard.yml")
+    for marker in [
+        "name: OpenSSF Scorecard",
+        "push:\n    branches: [main]",
+        "schedule:",
+        "cron: \"17 6 * * 1\"",
+        "branch_protection_rule:",
+        "types: [created, edited, deleted]",
+        "permissions: {}",
+        "permissions:\n      contents: read\n      id-token: write\n      security-events: write",
+        f"actions/checkout@{CHECKOUT_SHA}",
+        f"ossf/scorecard-action@{SCORECARD_ACTION_SHA}",
+        "results_file: results.sarif",
+        "results_format: sarif",
+        "publish_results: true",
+        f"github/codeql-action/upload-sarif@{CODEQL_ACTION_SHA}",
+        "sarif_file: results.sarif",
+    ]:
+        require(marker in scorecard, f"scorecard workflow missing marker: {marker}")
+    require("pull_request:" not in scorecard, "scorecard workflow must not run on pull_request")
+    for forbidden in ["issues:", "pull-requests:", "checks:"]:
+        require(forbidden not in scorecard, f"scorecard workflow has non-minimal permission marker: {forbidden}")
+
+    codeql = read(".github/workflows/codeql.yml")
+    for marker in [
+        "name: CodeQL",
+        "pull_request:\n    branches: [main]",
+        "push:\n    branches: [main]",
+        "schedule:",
+        "cron: \"37 6 * * 2\"",
+        "permissions: {}",
+        "permissions:\n      actions: read\n      contents: read\n      security-events: write",
+        f"actions/checkout@{CHECKOUT_SHA}",
+        f"github/codeql-action/init@{CODEQL_ACTION_SHA}",
+        "languages: python",
+        "build-mode: none",
+        "queries: security-extended",
+        "paths:\n              - tools",
+        f"github/codeql-action/analyze@{CODEQL_ACTION_SHA}",
+    ]:
+        require(marker in codeql, f"CodeQL workflow missing marker: {marker}")
+    for forbidden in ["id-token:", "packages:", "pull-requests:"]:
+        require(forbidden not in codeql, f"CodeQL workflow has non-minimal permission marker: {forbidden}")
+
+    dependency_review = read(".github/workflows/dependency-review.yml")
+    for marker in [
+        "name: Dependency review",
+        "pull_request:\n    branches: [main]",
+        "permissions: {}",
+        "permissions:\n      contents: read\n      pull-requests: read",
+        f"actions/checkout@{CHECKOUT_SHA}",
+        f"actions/dependency-review-action@{DEPENDENCY_REVIEW_ACTION_SHA}",
+        "fail-on-severity: high",
+    ]:
+        require(marker in dependency_review, f"dependency review workflow missing marker: {marker}")
+    for forbidden in ["push:", "schedule:", "id-token:", "packages:", "security-events:"]:
+        require(forbidden not in dependency_review, f"dependency review workflow has non-minimal marker: {forbidden}")
+
+    zizmor = read(".github/workflows/zizmor.yml")
+    for marker in [
+        "name: zizmor",
+        "pull_request:\n    branches: [main]",
+        "push:\n    branches: [main]",
+        "permissions: {}",
+        "permissions:\n      actions: read\n      contents: read\n      security-events: write",
+        f"actions/checkout@{CHECKOUT_SHA}",
+        f"zizmorcore/zizmor-action@{ZIZMOR_ACTION_SHA}",
+        "inputs: .github/workflows/",
+        "config: .github/zizmor.yml",
+        "advanced-security: true",
+        f"version: {ZIZMOR_VERSION}",
+    ]:
+        require(marker in zizmor, f"zizmor workflow missing marker: {marker}")
+    for forbidden in ["id-token:", "packages:", "pull-requests:"]:
+        require(forbidden not in zizmor, f"zizmor workflow has non-minimal permission marker: {forbidden}")
+
+    zizmor_config = read(".github/zizmor.yml")
+    for marker in [
+        "rules:",
+        "unpinned-uses:",
+        "policies:",
+        "slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml\": ref-pin",
+        '"*": hash-pin',
+    ]:
+        require(marker in zizmor_config, f"zizmor config missing marker: {marker}")
+
+    readme = read("README.md")
+    for marker in [
+        "https://api.scorecard.dev/projects/github.com/NWarila/ubi9-base-micro/badge",
+        "https://scorecard.dev/viewer/?uri=github.com/NWarila/ubi9-base-micro",
+        "https://github.com/NWarila/ubi9-base-micro/actions/workflows/codeql.yml/badge.svg",
+        "https://github.com/NWarila/ubi9-base-micro/actions/workflows/codeql.yml",
+    ]:
+        require(marker in readme, f"README.md missing supply-chain badge marker: {marker}")
+    forbidden_badges = ["bestpractices.coreinfrastructure.org", "bestpractices.coreinfrastructure", "CII Best Practices"]
+    present = [marker for marker in forbidden_badges if marker.lower() in readme.lower()]
+    require(not present, "README.md must not add OpenSSF Best Practices / CII badge: " + ", ".join(present))
+
 
 def check_publish_workflow() -> None:
     text = read(".github/workflows/publish-image.yaml")
@@ -1360,6 +1546,7 @@ def main() -> int:
         check_dockerfile,
         check_rpm_locks,
         check_workflow,
+        check_supply_chain_workflows,
         check_publish_workflow,
         check_build_script,
         check_hardening_script,

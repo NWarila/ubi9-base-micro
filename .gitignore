@@ -25,8 +25,13 @@
 !/.github/ISSUE_TEMPLATE/feature_request.yml
 !/.github/pull_request_template.md
 !/.github/renovate.json
+!/.github/zizmor.yml
 !/.github/workflows/
 !/.github/workflows/build.yaml
+!/.github/workflows/zizmor.yml
+!/.github/workflows/scorecard.yml
+!/.github/workflows/dependency-review.yml
+!/.github/workflows/codeql.yml
 !/.github/workflows/nightly.yaml
 !/.github/workflows/publish-image.yaml
 !/.github/workflows/rpm-lock-refresh.yaml
