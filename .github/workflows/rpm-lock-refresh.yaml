@@ -1,0 +1,109 @@
+name: RPM lock refresh
+
+on:
+  schedule:
+    - cron: "37 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: rpm-lock-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: regenerate runtime RPM locks
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          platforms: amd64,arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Validate generator
+        run: |
+          set -euo pipefail
+
+          bash -n tools/generate-rpm-lock.sh
+          bash tools/generate-rpm-lock.sh --self-test
+
+      - name: Regenerate runtime RPM lockfiles
+        run: |
+          set -euo pipefail
+
+          bash tools/generate-rpm-lock.sh --arch amd64
+          bash tools/generate-rpm-lock.sh --arch arm64
+
+      - name: Detect lockfile changes
+        id: changes
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet -- rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+            echo "RPM lockfiles already match the current UBI repositories."
+          else
+            echo "changed=true" >> "${GITHUB_OUTPUT}"
+            git diff -- rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt
+          fi
+
+      - name: Check for an existing refresh PR
+        id: existing_pr
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          existing="$(
+            gh pr list \
+              --state open \
+              --search '"Refresh runtime RPM lockfiles" in:title' \
+              --json number \
+              --jq '.[0].number // empty'
+          )"
+          echo "number=${existing}" >> "${GITHUB_OUTPUT}"
+          if [[ -n "${existing}" ]]; then
+            echo "Open RPM lock refresh PR already exists: #${existing}"
+          fi
+
+      - name: Open refresh PR
+        if: steps.changes.outputs.changed == 'true' && steps.existing_pr.outputs.number == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          branch="rpm-lock-refresh-${GITHUB_RUN_ID}"
+          body_file="$(mktemp)"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "${branch}"
+          git add rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt
+          git commit -m "chore: refresh runtime RPM lockfiles"
+          git push --set-upstream origin "${branch}"
+
+          cat > "${body_file}" <<'EOF'
+          Regenerates the runtime RPM lockfiles from the current Red Hat UBI 9 repositories.
+
+          This is a normal pull request. It must pass the repository PR gates before merge, including the build and hardening gates, both-architecture byte-for-byte reproducibility gates, fixable-CVE gates, and RPM content-hash enforcement.
+          EOF
+
+          gh pr create \
+            --base main \
+            --head "${branch}" \
+            --title "Refresh runtime RPM lockfiles" \
+            --body-file "${body_file}"

@@ -16,6 +16,7 @@
 !/.github/workflows/build.yaml
 !/.github/workflows/nightly.yaml
 !/.github/workflows/publish-image.yaml
+!/.github/workflows/rpm-lock-refresh.yaml
 
 !/containers/
 !/containers/Dockerfile

@@ -54,6 +54,7 @@ def check_required_files() -> None:
         ".github/workflows/build.yaml",
         ".github/workflows/nightly.yaml",
         ".github/workflows/publish-image.yaml",
+        ".github/workflows/rpm-lock-refresh.yaml",
         ".gitignore",
         "Makefile",
         "README.md",
@@ -79,6 +80,7 @@ def check_required_files() -> None:
         "tools/assert-no-phantom-packages.py",
         "tools/assert-reproducible.py",
         "tools/assert-rpm-lock-hashes.sh",
+        "tools/generate-rpm-lock.sh",
         "tools/install-syft.sh",
         "tools/install-trivy.sh",
         "tools/install-grype.sh",
@@ -272,12 +274,13 @@ def check_dockerfile() -> None:
 def check_workflow() -> None:
     workflows = sorted(path.name for path in (ROOT / ".github/workflows").glob("*.y*ml"))
     require(
-        workflows == ["build.yaml", "nightly.yaml", "publish-image.yaml"],
-        "repo must ship exactly build.yaml, nightly.yaml, and publish-image.yaml",
+        workflows == ["build.yaml", "nightly.yaml", "publish-image.yaml", "rpm-lock-refresh.yaml"],
+        "repo must ship exactly build.yaml, nightly.yaml, publish-image.yaml, and rpm-lock-refresh.yaml",
     )
 
     build = read(".github/workflows/build.yaml")
     nightly = read(".github/workflows/nightly.yaml")
+    refresh = read(".github/workflows/rpm-lock-refresh.yaml")
     gate_runner = read("tools/run-test-gates.sh")
 
     for marker in [
@@ -292,6 +295,7 @@ def check_workflow() -> None:
         "tools/assert-no-phantom-packages.py --self-test",
         "tools/assert-reproducible.py --self-test",
         "bash tools/assert-rpm-lock-hashes.sh --self-test",
+        "bash tools/generate-rpm-lock.sh --self-test",
         "tools/assert-vex.py --self-test",
         "tools/assert-no-rootfs-secrets.py --self-test",
         "tools/generate-nist-800-190-predicate.py --self-test",
@@ -301,6 +305,7 @@ def check_workflow() -> None:
         "tools/assert-stig-arf.py --self-test",
         "tools/generate-stig-arf-predicate.py --self-test",
         "bash -n tools/run-test-gates.sh",
+        "bash -n tools/generate-rpm-lock.sh",
         "UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:",
         "TRIVY_VERSION: \"0.71.0\"",
         "GRYPE_VERSION: \"0.87.0\"",
@@ -327,7 +332,9 @@ def check_workflow() -> None:
         "contents: read",
         "cancel-in-progress: false",
         "tools/verify.py",
+        "bash tools/generate-rpm-lock.sh --self-test",
         "bash -n tools/run-test-gates.sh",
+        "bash -n tools/generate-rpm-lock.sh",
         "UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:",
         "TRIVY_VERSION: \"0.71.0\"",
         "GRYPE_VERSION: \"0.87.0\"",
@@ -349,6 +356,45 @@ def check_workflow() -> None:
 
     require("pull_request:" not in nightly, "nightly workflow must not run as PR CI")
     require("\npush:" not in nightly, "nightly workflow must not run on push")
+
+    for marker in [
+        "schedule:",
+        "workflow_dispatch:",
+        "contents: write",
+        "pull-requests: write",
+        "cancel-in-progress: false",
+        "bash -n tools/generate-rpm-lock.sh",
+        "bash tools/generate-rpm-lock.sh --self-test",
+        "bash tools/generate-rpm-lock.sh --arch amd64",
+        "bash tools/generate-rpm-lock.sh --arch arm64",
+        "git diff --quiet -- rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt",
+        "github-actions[bot]",
+        "gh pr list",
+        "gh pr create",
+        "--base main",
+        "--head \"${branch}\"",
+        "Refresh runtime RPM lockfiles",
+        "build and hardening gates",
+        "byte-for-byte reproducibility gates",
+        "fixable-CVE gates",
+        "RPM content-hash enforcement",
+    ]:
+        require(marker in refresh, f"RPM lock refresh workflow missing marker: {marker}")
+
+    require("pull_request:" not in refresh, "RPM lock refresh workflow must not run as PR CI")
+    require("\npush:" not in refresh, "RPM lock refresh workflow must not run on push")
+    for marker in [
+        "continue-on-" + "error",
+        "gh pr merge",
+        "--auto",
+        "auto-merge",
+        "packages:",
+        "id-token:",
+        "docker " + "push",
+        "co" + "sign",
+        "generator_container_" + "sl" + "sa3",
+    ]:
+        require(marker not in refresh, f"RPM lock refresh workflow contains forbidden marker: {marker}")
 
     for marker in [
         "bash tools/install-syft.sh",
@@ -404,12 +450,14 @@ def check_workflow() -> None:
         ("build workflow", build),
         ("nightly workflow", nightly),
         ("test gate runner", gate_runner),
+        ("refresh workflow", refresh),
     ]:
         present = [marker for marker in forbidden if marker in source_text]
         require(not present, f"{source} contains out-of-scope marker(s): " + ", ".join(present))
 
     check_uses_pinned(build, "build workflow")
     check_uses_pinned(nightly, "nightly workflow")
+    check_uses_pinned(refresh, "RPM lock refresh workflow")
 
 def check_publish_workflow() -> None:
     text = read(".github/workflows/publish-image.yaml")
@@ -969,6 +1017,10 @@ def check_docs() -> None:
         "linux/arm64",
         "SHA256HEADER",
         "SIGMD5",
+        "tools/generate-rpm-lock.sh --check",
+        ".github/workflows/rpm-lock-refresh.yaml",
+        "nightly sentinel detects",
+        "Refresh runtime RPM lockfiles",
     ]:
         require(marker in reproducibility_doc, f"docs/reproducibility.md missing marker: {marker}")
     require(
