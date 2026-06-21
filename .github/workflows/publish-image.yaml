@@ -43,6 +43,10 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
       - name: Verify SLSA generator tag binding
         env:
           GH_TOKEN: ${{ github.token }}
@@ -79,6 +83,10 @@ jobs:
       digest: ${{ steps.image.outputs.digest }}
       ref: ${{ steps.image.outputs.ref }}
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
       - name: Check out repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -773,6 +781,10 @@ jobs:
       IMAGE: ${{ needs.publish.outputs.image }}
       IMAGE_REF: ${{ needs.publish.outputs.ref }}
     steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
       - name: Check out repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -837,7 +849,7 @@ jobs:
           shopt -s nullglob
 
           mkdir -p dist/rekor
-          published_ref="${{ needs.publish.outputs.ref }}"
+          published_ref="${IMAGE_REF}"
 
           verify_rekor() {
             local kind="$1"

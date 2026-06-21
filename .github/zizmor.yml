@@ -1,0 +1,6 @@
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml": ref-pin
+        "*": hash-pin
