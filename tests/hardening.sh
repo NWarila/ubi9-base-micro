@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  cat <<'USAGE'
+  cat << 'USAGE'
 Usage: tests/hardening.sh <image-ref>
 
 Validates the base-micro runtime hardening baseline:
@@ -25,17 +25,17 @@ if [[ -z "${image_ref}" ]]; then
   exit 2
 fi
 
-command -v docker >/dev/null 2>&1 || {
+command -v docker > /dev/null 2>&1 || {
   echo "docker is required for runtime hardening assertions" >&2
   exit 2
 }
 
 find_syft() {
-  if command -v syft >/dev/null 2>&1; then
+  if command -v syft > /dev/null 2>&1; then
     command -v syft
     return 0
   fi
-  if command -v syft.exe >/dev/null 2>&1; then
+  if command -v syft.exe > /dev/null 2>&1; then
     command -v syft.exe
     return 0
   fi
@@ -47,13 +47,11 @@ find_syft() {
     printf '%s\n' "dist/tools/syft.exe"
     return 0
   fi
-  return 1
-}
-
-syft_bin="$(find_syft)" || {
   echo "syft is required for rpm package enumeration; run tools/install-syft.sh" >&2
   exit 2
 }
+
+syft_bin="$(find_syft)"
 
 tmp_dir="$(mktemp -d)"
 tar_path="${tmp_dir}/rootfs.tar"
@@ -61,7 +59,7 @@ container_id=""
 
 cleanup() {
   if [[ -n "${container_id}" ]]; then
-    docker rm "${container_id}" >/dev/null
+    docker rm "${container_id}" > /dev/null
   fi
   rm -rf "${tmp_dir}"
 }
@@ -73,10 +71,10 @@ tar -tf "${tar_path}" | sed -e 's#^\./##' -e 's#/$##' > "${tmp_dir}/files.txt"
 
 extract_file() {
   local rel="${1#/}"
-  if tar -xOf "${tar_path}" "${rel}" 2>/dev/null; then
+  if tar -xOf "${tar_path}" "${rel}" 2> /dev/null; then
     return 0
   fi
-  if tar -xOf "${tar_path}" "./${rel}" 2>/dev/null; then
+  if tar -xOf "${tar_path}" "./${rel}" 2> /dev/null; then
     return 0
   fi
   return 1
@@ -85,7 +83,7 @@ extract_file() {
 assert_entrypoint_missing() {
   local executable="$1"
   local output="${tmp_dir}/entrypoint.err"
-  if docker run --rm --entrypoint "${executable}" "${image_ref}" --version >"${output}" 2>&1; then
+  if docker run --rm --entrypoint "${executable}" "${image_ref}" --version > "${output}" 2>&1; then
     echo "forbidden executable resolves as an entrypoint: ${executable}" >&2
     exit 1
   fi
@@ -99,8 +97,7 @@ for executable in \
   /usr/bin/bash \
   /usr/bin/dash \
   /usr/bin/ash \
-  /usr/bin/busybox
-do
+  /usr/bin/busybox; do
   assert_entrypoint_missing "${executable}"
 done
 
@@ -112,22 +109,21 @@ for executable in \
   /bin/dnf \
   /bin/microdnf \
   /bin/rpm \
-  /bin/yum
-do
+  /bin/yum; do
   assert_entrypoint_missing "${executable}"
 done
 
 shell_hits="$(awk '/(^|\/)(usr\/)?s?bin\/(sh|bash|dash|ash|busybox|ksh|zsh|tcsh|csh)$/ { print }' "${tmp_dir}/files.txt")"
 if [[ -n "${shell_hits}" ]]; then
   echo "shell binary present in runtime image:" >&2
-  printf '  /%s\n' ${shell_hits} >&2
+  printf '%s\n' "${shell_hits}" | sed 's#^#  /#' >&2
   exit 1
 fi
 
 package_manager_hits="$(awk '/(^|\/)(usr\/)?s?bin\/(microdnf|dnf|rpm|yum)$/ { print }' "${tmp_dir}/files.txt")"
 if [[ -n "${package_manager_hits}" ]]; then
   echo "package-manager executable present in runtime image:" >&2
-  printf '  /%s\n' ${package_manager_hits} >&2
+  printf '%s\n' "${package_manager_hits}" | sed 's#^#  /#' >&2
   exit 1
 fi
 
@@ -141,10 +137,11 @@ rpmdb_found=""
 for candidate in \
   var/lib/rpm/rpmdb.sqlite \
   var/lib/rpm/Packages \
-  var/lib/rpm/Packages.db
-do
+  var/lib/rpm/Packages.db; do
   extracted="${tmp_dir}/rpmdb-candidate"
-  if extract_file "${candidate}" >"${extracted}"; then
+  # extract_file intentionally probes alternative rpmdb tar paths.
+  # shellcheck disable=SC2310
+  if extract_file "${candidate}" > "${extracted}"; then
     bytes="$(wc -c < "${extracted}")"
     if [[ "${bytes}" -gt 0 ]]; then
       rpmdb_found="${candidate}"
@@ -159,7 +156,7 @@ fi
 
 syft_json="${tmp_dir}/syft.json"
 "${syft_bin}" scan "${image_ref}" -o json > "${syft_json}"
-python - "${syft_json}" <<'PY'
+python - "${syft_json}" << 'PY'
 import json
 import sys
 
@@ -191,10 +188,11 @@ PY
 ca_ok=""
 for candidate in \
   etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem \
-  etc/pki/tls/certs/ca-bundle.crt
-do
+  etc/pki/tls/certs/ca-bundle.crt; do
   extracted="${tmp_dir}/ca-candidate"
-  if extract_file "${candidate}" >"${extracted}"; then
+  # extract_file intentionally probes alternative CA bundle tar paths.
+  # shellcheck disable=SC2310
+  if extract_file "${candidate}" > "${extracted}"; then
     if grep -q "BEGIN CERTIFICATE" "${extracted}"; then
       ca_ok="${candidate}"
       break

@@ -7,8 +7,7 @@ import argparse
 import json
 import tempfile
 from pathlib import Path
-from typing import Any
-
+from typing import Any, cast
 
 PREDICATE_TYPE = "https://nwarila.dev/attestations/nist-sp-800-190-image/v1"
 CONTROL_IDS = ("4.1.1", "4.1.2", "4.1.3", "4.1.4", "4.1.5")
@@ -20,7 +19,10 @@ def evidence(kind: str, pointer: str, description: str) -> dict[str, str]:
 
 
 def load_secret_report(path: Path) -> dict[str, Any]:
-    report = json.loads(path.read_text(encoding="utf-8"))
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise SystemExit(f"secret-scan report must be a JSON object: {path}")
+    report = cast(dict[str, Any], loaded)
     if report.get("result") != "passed":
         raise SystemExit(f"secret-scan report did not pass: {path}")
     return report
@@ -77,9 +79,21 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
                     "findings and rpmdb-derived package evidence."
                 ),
                 "evidence": [
-                    evidence("workflow", ".github/workflows/publish-image.yaml#Run Trivy fixable vulnerability gates", "Trivy fixable HIGH/CRITICAL gate"),
-                    evidence("workflow", ".github/workflows/publish-image.yaml#Run Grype fixable vulnerability gates", "Grype fixable HIGH/CRITICAL gate"),
-                    evidence("workflow", ".github/workflows/publish-image.yaml#Run OpenVEX default-deny gates", "OpenVEX default-deny policy"),
+                    evidence(
+                        "workflow",
+                        ".github/workflows/publish-image.yaml#Run Trivy fixable vulnerability gates",
+                        "Trivy fixable HIGH/CRITICAL gate",
+                    ),
+                    evidence(
+                        "workflow",
+                        ".github/workflows/publish-image.yaml#Run Grype fixable vulnerability gates",
+                        "Grype fixable HIGH/CRITICAL gate",
+                    ),
+                    evidence(
+                        "workflow",
+                        ".github/workflows/publish-image.yaml#Run OpenVEX default-deny gates",
+                        "OpenVEX default-deny policy",
+                    ),
                     evidence("script", "tools/assert-vex.py", "default-deny OpenVEX assertion"),
                     evidence("script", "tools/assert-sbom-rpms.py", "rpmdb-backed SBOM package assertion"),
                 ],
@@ -95,7 +109,11 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
                     "in approved mode with architecture-scoped CMVP wording."
                 ),
                 "evidence": [
-                    evidence("dockerfile", "containers/Dockerfile#runtime", "distroless runtime, non-root user, rpmdb, FIPS config, digest-pinned base"),
+                    evidence(
+                        "dockerfile",
+                        "containers/Dockerfile#runtime",
+                        "distroless runtime, non-root user, rpmdb, FIPS config, digest-pinned base",
+                    ),
                     evidence("test", "tests/hardening.sh", "no shell/package-manager and USER/rpmdb/CA assertions"),
                     evidence("test", "tests/fips.sh", "FIPS provider artifact and approved-mode assertions"),
                     evidence("doc", "docs/fips.md", "architecture-scoped FIPS claim and arm64 disclaimer"),
@@ -111,10 +129,26 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
                     "a claim of arbitrary antivirus detection for opaque payloads."
                 ),
                 "evidence": [
-                    evidence("workflow", ".github/workflows/publish-image.yaml#Generate and verify rpmdb SBOMs", "published image package inventory from rpmdb"),
-                    evidence("workflow", ".github/workflows/publish-image.yaml#Run Trivy fixable vulnerability gates", "Trivy scan over published image contents"),
-                    evidence("workflow", ".github/workflows/publish-image.yaml#Run Grype fixable vulnerability gates", "Grype scan over published image contents"),
-                    evidence("dockerfile", "containers/Dockerfile#rpm-rootfs", "minimal installroot with shell/package-manager removal"),
+                    evidence(
+                        "workflow",
+                        ".github/workflows/publish-image.yaml#Generate and verify rpmdb SBOMs",
+                        "published image package inventory from rpmdb",
+                    ),
+                    evidence(
+                        "workflow",
+                        ".github/workflows/publish-image.yaml#Run Trivy fixable vulnerability gates",
+                        "Trivy scan over published image contents",
+                    ),
+                    evidence(
+                        "workflow",
+                        ".github/workflows/publish-image.yaml#Run Grype fixable vulnerability gates",
+                        "Grype scan over published image contents",
+                    ),
+                    evidence(
+                        "dockerfile",
+                        "containers/Dockerfile#rpm-rootfs",
+                        "minimal installroot with shell/package-manager removal",
+                    ),
                 ],
             },
             {
@@ -126,10 +160,24 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
                     "clear-text credential material. A finding stops the workflow before attestation."
                 ),
                 "evidence": [
-                    evidence("script", "tools/assert-no-rootfs-secrets.py", "rootfs clear-text secret scanner with negative self-test"),
-                    evidence("workflow", ".github/workflows/build.yaml#Run runtime rootfs secret gate", "PR-time rootfs secret gate"),
-                    evidence("workflow", ".github/workflows/publish-image.yaml#Run runtime rootfs secret gates", "publish-time per-architecture rootfs secret gates"),
-                    evidence("report", args.secret_scan_report.as_posix(), "secret-scan JSON report for this predicate"),
+                    evidence(
+                        "script",
+                        "tools/assert-no-rootfs-secrets.py",
+                        "rootfs clear-text secret scanner with negative self-test",
+                    ),
+                    evidence(
+                        "workflow",
+                        ".github/workflows/build.yaml#Run runtime rootfs secret gate",
+                        "PR-time rootfs secret gate",
+                    ),
+                    evidence(
+                        "workflow",
+                        ".github/workflows/publish-image.yaml#Run runtime rootfs secret gates",
+                        "publish-time per-architecture rootfs secret gates",
+                    ),
+                    evidence(
+                        "report", args.secret_scan_report.as_posix(), "secret-scan JSON report for this predicate"
+                    ),
                 ],
             },
             {
@@ -142,16 +190,38 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
                     "and receive SLSA L3 provenance from the trusted generator builder."
                 ),
                 "evidence": [
-                    evidence("dockerfile", "containers/Dockerfile#ARG UBI_MICRO_IMAGE", "UBI micro base image is digest-pinned and Renovate-tracked"),
-                    evidence("workflow", ".github/workflows/publish-image.yaml#Verify Cosign signature", "cosign signature verification with exact repository workflow identity"),
-                    evidence("workflow", ".github/workflows/publish-image.yaml#slsa-provenance", "SLSA L3 generator reusable workflow"),
-                    evidence("workflow", ".github/workflows/publish-image.yaml#Verify Rekor roll-up", "post-publish roll-up verifies signature and attestations with Rekor tlog entries"),
+                    evidence(
+                        "dockerfile",
+                        "containers/Dockerfile#ARG UBI_MICRO_IMAGE",
+                        "UBI micro base image is digest-pinned and Renovate-tracked",
+                    ),
+                    evidence(
+                        "workflow",
+                        ".github/workflows/publish-image.yaml#Verify Cosign signature",
+                        "cosign signature verification with exact repository workflow identity",
+                    ),
+                    evidence(
+                        "workflow",
+                        ".github/workflows/publish-image.yaml#slsa-provenance",
+                        "SLSA L3 generator reusable workflow",
+                    ),
+                    evidence(
+                        "workflow",
+                        ".github/workflows/publish-image.yaml#Verify Rekor roll-up",
+                        "post-publish roll-up verifies signature and attestations with Rekor tlog entries",
+                    ),
                 ],
             },
         ],
         "limitations": [
-            "This predicate is NIST SP 800-190 section 4.1 image evidence, not CIS Docker Benchmark host or daemon evidence.",
-            "The embedded-malware entry is bounded to package-content scanning and minimal-image controls; it does not assert arbitrary malware detection.",
+            (
+                "This predicate is NIST SP 800-190 section 4.1 image evidence, not CIS Docker Benchmark "
+                "host or daemon evidence."
+            ),
+            (
+                "The embedded-malware entry is bounded to package-content scanning and minimal-image controls; "
+                "it does not assert arbitrary malware detection."
+            ),
             "FIPS evidence is architecture-scoped exactly as documented in docs/fips.md.",
         ],
     }
@@ -268,7 +338,9 @@ def main() -> int:
         if getattr(args, name) in (None, "")
     ]
     if missing:
-        raise SystemExit("missing required argument(s): " + ", ".join("--" + name.replace("_", "-") for name in missing))
+        raise SystemExit(
+            "missing required argument(s): " + ", ".join("--" + name.replace("_", "-") for name in missing)
+        )
 
     predicate = generate_predicate(args)
     validate_predicate(predicate)

@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
 HIGH_CRITICAL = {"HIGH", "CRITICAL"}
 SEVERITY_ORDER = {"UNKNOWN": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
 ACCEPTED_STATUSES = {"fixed", "not_affected"}
@@ -36,7 +35,7 @@ class Finding:
     scanners: set[str] = field(default_factory=set)
     packages: set[str] = field(default_factory=set)
 
-    def merge(self, other: "Finding") -> None:
+    def merge(self, other: Finding) -> None:
         if SEVERITY_ORDER[other.severity] > SEVERITY_ORDER[self.severity]:
             self.severity = other.severity
         self.scanners.update(other.scanners)
@@ -287,8 +286,7 @@ def assert_vex(product: str, trivy_json: Path, grype_json: Path, vex_dir: Path, 
                 scanners = ",".join(sorted(finding.scanners))
                 packages = ",".join(sorted(finding.packages))
                 print(
-                    f"- {finding.vulnerability} severity={finding.severity} "
-                    f"scanners={scanners} packages={packages}",
+                    f"- {finding.vulnerability} severity={finding.severity} scanners={scanners} packages={packages}",
                     file=sys.stderr,
                 )
         return 1
@@ -373,11 +371,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
     if args.self_test:
         return args
-    missing = [
-        name
-        for name in ("product", "trivy_json", "grype_json")
-        if getattr(args, name) is None
-    ]
+    missing = [name for name in ("product", "trivy_json", "grype_json") if getattr(args, name) is None]
     if missing:
         parser.error("missing required argument(s): " + ", ".join("--" + item.replace("_", "-") for item in missing))
     return args

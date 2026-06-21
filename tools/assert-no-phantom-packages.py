@@ -26,7 +26,7 @@ import tarfile
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
-
+from typing import cast
 
 EXCLUDED_PREFIXES = (
     "/dev/",
@@ -45,9 +45,7 @@ DOCUMENTED_UNOWNED_PATHS = {
     "/etc/ld.so.cache",
 }
 
-DOCUMENTED_UNOWNED_PREFIXES = (
-    "/etc/nwarila/",
-)
+DOCUMENTED_UNOWNED_PREFIXES = ("/etc/nwarila/",)
 
 RUNTIME_RPMDB_PATH = "/var/lib/rpm"
 
@@ -94,10 +92,7 @@ def normalize_path(path: str) -> str:
 
 def is_excluded(path: str) -> bool:
     normalized = normalize_path(path)
-    for prefix in EXCLUDED_PREFIXES:
-        if normalized == prefix[:-1] or normalized.startswith(prefix):
-            return True
-    return False
+    return any(normalized == prefix[:-1] or normalized.startswith(prefix) for prefix in EXCLUDED_PREFIXES)
 
 
 def is_documented_unowned(path: str) -> bool:
@@ -137,7 +132,7 @@ def canonicalize_path(
             return canonicalize_path(
                 rewritten,
                 entries,
-                seen + (normalized,),
+                (*seen, normalized),
                 follow_final=follow_final,
             )
     return normalized
@@ -167,7 +162,7 @@ def extract_tar_to_rootfs(tar_path: Path, rootfs: Path) -> None:
                 # Keep directories writable while staging; tarfiles can carry
                 # restrictive modes such as /root before their children.
                 target.mkdir(parents=True, exist_ok=True)
-                os.chmod(target, 0o755)
+                target.chmod(0o755)
             elif member.isfile():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 source = archive.extractfile(member)
@@ -175,20 +170,18 @@ def extract_tar_to_rootfs(tar_path: Path, rootfs: Path) -> None:
                     raise PhantomPackageError(f"tar member has no file body: {member.name}")
                 with source, target.open("wb") as output:
                     shutil.copyfileobj(source, output)
-                os.chmod(target, member.mode & 0o777)
+                target.chmod(member.mode & 0o777)
             elif member.issym():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 if os.path.lexists(target):
                     target.unlink()
-                os.symlink(member.linkname, target)
+                target.symlink_to(member.linkname)
             elif member.islnk():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 link_name = normalize_path(member.linkname).lstrip("/")
                 link_target = tar_member_target(rootfs, link_name)
                 if not link_target.exists():
-                    raise PhantomPackageError(
-                        f"tar hardlink target missing: {member.name} -> {member.linkname}"
-                    )
+                    raise PhantomPackageError(f"tar hardlink target missing: {member.name} -> {member.linkname}")
                 if os.path.lexists(target):
                     target.unlink()
                 os.link(link_target, target)
@@ -221,7 +214,7 @@ def export_image_to_rootfs(image_ref: str, platform: str | None, rootfs: Path) -
 
 def stage_rootfs(args: argparse.Namespace, tempdir: Path) -> Path:
     if args.rootfs:
-        rootfs = args.rootfs
+        rootfs = cast(Path, args.rootfs)
         if not rootfs.is_dir():
             raise PhantomPackageError(f"rootfs directory does not exist: {rootfs}")
         return rootfs
@@ -244,7 +237,7 @@ def entries_from_rootfs(rootfs: Path) -> dict[str, RootfsEntry]:
         st = os.lstat(path)
         mode = st.st_mode
         if stat.S_ISLNK(mode):
-            entries[relative] = RootfsEntry(kind="symlink", linkname=os.readlink(path), mode=mode)
+            entries[relative] = RootfsEntry(kind="symlink", linkname=path.readlink().as_posix(), mode=mode)
         elif stat.S_ISDIR(mode):
             entries[relative] = RootfsEntry(kind="dir", mode=mode)
         elif stat.S_ISREG(mode):
@@ -313,9 +306,7 @@ def query_rpm_packages(rootfs: Path) -> dict[str, RpmPackage]:
     if shutil.which("rpm") is None:
         raise PhantomPackageError("rpm CLI is required for authoritative runtime rpmdb ownership checks")
 
-    package_lines = run_checked(
-        rpm_command(rootfs, "-qa", "--qf", "%{NAME}\t%{NEVRA}\n")
-    ).splitlines()
+    package_lines = run_checked(rpm_command(rootfs, "-qa", "--qf", "%{NAME}\t%{NEVRA}\n")).splitlines()
     packages: dict[str, RpmPackage] = {}
     for line in package_lines:
         if not line:
@@ -390,13 +381,13 @@ def rootfs_resolves_to_kind(
         target = normalize_path(entry.linkname)
         if target not in entries:
             target = resolve_link(canonical, entry.linkname)
-        return rootfs_resolves_to_kind(target, entries, allowed_kinds, seen + (canonical,))
+        return rootfs_resolves_to_kind(target, entries, allowed_kinds, (*seen, canonical))
     if entry.kind == "symlink" and entry.linkname:
         return rootfs_resolves_to_kind(
             resolve_link(canonical, entry.linkname),
             entries,
             allowed_kinds,
-            seen + (canonical,),
+            (*seen, canonical),
         )
     return False
 
@@ -434,18 +425,14 @@ def package_statuses(
 ) -> tuple[list[PackageStatus], list[str]]:
     present_expected_absent = sorted(expected_absent & packages.keys())
     if present_expected_absent:
-        raise PhantomPackageError(
-            "expected absent rpm package(s) still present: " + ", ".join(present_expected_absent)
-        )
+        raise PhantomPackageError("expected absent rpm package(s) still present: " + ", ".join(present_expected_absent))
 
     statuses: list[PackageStatus] = []
     non_payload_packages: list[str] = []
     phantoms: list[str] = []
     for name, package in sorted(packages.items()):
         functional = sorted(path.path for path in package.files if is_functional(path.path, entries))
-        shippable_regular_files = sum(
-            1 for path in package.files if is_shippable_regular_manifest_path(path)
-        )
+        shippable_regular_files = sum(1 for path in package.files if is_shippable_regular_manifest_path(path))
         status = PackageStatus(
             name=name,
             nevra=package.nevra,
@@ -462,8 +449,7 @@ def package_statuses(
 
     if phantoms:
         raise PhantomPackageError(
-            "rpm package(s) have no present non-excluded regular payload files: "
-            + ", ".join(phantoms)
+            "rpm package(s) have no present non-excluded regular payload files: " + ", ".join(phantoms)
         )
     return statuses, non_payload_packages
 
@@ -512,16 +498,15 @@ def orphan_binary_paths(
         if is_excluded(normalized):
             continue
         is_candidate = False
-        if entry.kind in {"file", "hardlink", "symlink"} and is_shared_object_path(normalized):
-            is_candidate = True
-        elif is_executable_elf(rootfs, normalized, entry):
+        if (entry.kind in {"file", "hardlink", "symlink"} and is_shared_object_path(normalized)) or is_executable_elf(
+            rootfs, normalized, entry
+        ):
             is_candidate = True
         if not is_candidate:
             continue
         if is_documented_unowned(normalized):
             raise PhantomPackageError(
-                "documented unowned allowlist must not contain shared objects or executable ELF files: "
-                + normalized
+                "documented unowned allowlist must not contain shared objects or executable ELF files: " + normalized
             )
         if not path_is_owned(normalized, entries, owned_paths):
             orphans.append(normalized)
@@ -537,9 +522,7 @@ def write_report(
     report = {
         "package_count": len(statuses),
         "functional_package_count": sum(1 for status in statuses if status.functional_files > 0),
-        "fileless_rpm_packages": [
-            status.name for status in statuses if status.owned_files == 0
-        ],
+        "fileless_rpm_packages": [status.name for status in statuses if status.owned_files == 0],
         "non_payload_rpm_packages": non_payload_packages,
         "orphan_binary_files": orphan_count,
         "documented_unowned_paths": sorted(DOCUMENTED_UNOWNED_PATHS),
@@ -690,9 +673,7 @@ def main(argv: list[str]) -> int:
             owned_paths = collect_owned_aliases(packages, entries)
             orphans = orphan_binary_paths(rootfs, entries, owned_paths)
             if orphans:
-                raise PhantomPackageError(
-                    "unowned shared object or executable ELF file(s): " + ", ".join(orphans)
-                )
+                raise PhantomPackageError("unowned shared object or executable ELF file(s): " + ", ".join(orphans))
             write_report(args.output, statuses, non_payload_packages, len(orphans))
     except PhantomPackageError as exc:
         print(f"phantom package assertion failed: {exc}", file=sys.stderr)

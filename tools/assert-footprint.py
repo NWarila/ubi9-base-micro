@@ -12,7 +12,7 @@ import tarfile
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
-
+from typing import IO
 
 DEFAULT_LIMIT_BYTES = 25 * 1024 * 1024
 
@@ -35,7 +35,7 @@ class Footprint:
         return self.regular_file_bytes / (1024 * 1024)
 
 
-def measure_tar(fileobj: io.BufferedIOBase) -> Footprint:
+def measure_tar(fileobj: IO[bytes]) -> Footprint:
     regular_file_bytes = 0
     regular_files = 0
     hardlinks = 0

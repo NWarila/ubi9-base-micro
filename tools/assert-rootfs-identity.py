@@ -10,7 +10,7 @@ import sys
 import tarfile
 import tempfile
 from pathlib import Path
-
+from typing import Any
 
 COVERED_RULES = {
     "accounts_no_uid_except_zero": "no_uid0_accounts_except_root",
@@ -23,7 +23,7 @@ class RootfsIdentityError(Exception):
     pass
 
 
-def require(condition: bool, message: str) -> None:
+def require(condition: object, message: str) -> None:
     if not condition:
         raise RootfsIdentityError(message)
 
@@ -77,12 +77,13 @@ def read_tar_member(tar: tarfile.TarFile, wanted: str) -> bytes:
             continue
         require(member.isfile(), f"/{wanted} is not a regular file in the exported rootfs")
         handle = tar.extractfile(member)
-        require(handle is not None, f"unable to read /{wanted} from exported rootfs")
+        if handle is None:
+            raise RootfsIdentityError(f"unable to read /{wanted} from exported rootfs")
         return handle.read()
     raise RootfsIdentityError(f"exported rootfs is missing /{wanted}")
 
 
-def assert_identity(rootfs_tar: Path) -> dict:
+def assert_identity(rootfs_tar: Path) -> dict[str, Any]:
     require(rootfs_tar.is_file() and rootfs_tar.stat().st_size > 0, f"rootfs tar is missing or empty: {rootfs_tar}")
 
     with tarfile.open(rootfs_tar, "r:*") as tar:
@@ -108,11 +109,13 @@ def assert_identity(rootfs_tar: Path) -> dict:
     require(not unexpected_uid0, "UID 0 is assigned to non-root account(s): " + ", ".join(unexpected_uid0))
     require(
         not unknown_uid_entries,
-        "rootfs entries owned by UID(s) absent from /etc/passwd: " + json.dumps(unknown_uid_entries[:20], sort_keys=True),
+        "rootfs entries owned by UID(s) absent from /etc/passwd: "
+        + json.dumps(unknown_uid_entries[:20], sort_keys=True),
     )
     require(
         not unknown_gid_entries,
-        "rootfs entries owned by GID(s) absent from /etc/group: " + json.dumps(unknown_gid_entries[:20], sort_keys=True),
+        "rootfs entries owned by GID(s) absent from /etc/group: "
+        + json.dumps(unknown_gid_entries[:20], sort_keys=True),
     )
 
     return {

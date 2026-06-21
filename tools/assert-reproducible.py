@@ -13,9 +13,9 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
-
+from typing import Any, cast
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE_DATE_EPOCH = "1704067200"
@@ -119,7 +119,6 @@ def load_tar(path: Path) -> dict[str, Entry]:
     return entries
 
 
-
 def apply_whiteout(entries: dict[str, Entry], path: str) -> bool:
     parts = path.split("/")
     basename = parts[-1]
@@ -221,6 +220,7 @@ def write_rootfs_tar(entries: dict[str, Entry], output: Path) -> None:
             else:
                 archive.addfile(info)
 
+
 def first_diff(left: bytes, right: bytes) -> dict[str, object]:
     limit = min(len(left), len(right))
     offset = limit
@@ -245,8 +245,8 @@ def content_bytes(entry: Entry) -> bytes:
     return b""
 
 
-def compare_entries(left: dict[str, Entry], right: dict[str, Entry]) -> dict[str, object]:
-    differences: list[dict[str, object]] = []
+def compare_entries(left: dict[str, Entry], right: dict[str, Entry]) -> dict[str, Any]:
+    differences: list[dict[str, Any]] = []
     identical = 0
 
     for path in sorted(set(left) | set(right)):
@@ -268,7 +268,7 @@ def compare_entries(left: dict[str, Entry], right: dict[str, Entry]) -> dict[str
             continue
 
         reasons: list[str] = []
-        detail: dict[str, object] = {}
+        detail: dict[str, Any] = {}
         differing_bytes = 0
 
         if left_entry.type != right_entry.type:
@@ -394,7 +394,6 @@ def build_image(tag: str, args: argparse.Namespace, image_tar: Path) -> None:
     run(command)
 
 
-
 def build_and_export(args: argparse.Namespace) -> tuple[Path, Path, list[dict[str, str]]]:
     workdir = args.workdir
     workdir.mkdir(parents=True, exist_ok=True)
@@ -413,18 +412,22 @@ def build_and_export(args: argparse.Namespace) -> tuple[Path, Path, list[dict[st
     write_rootfs_tar(load_image_rootfs(left_image_tar), left_tar)
     build_image(right_tag, args, right_image_tar)
     write_rootfs_tar(load_image_rootfs(right_image_tar), right_tar)
-    return left_tar, right_tar, [
-        {"image": left_tag, "image_tar": str(left_image_tar), "rootfs_tar": str(left_tar)},
-        {"image": right_tag, "image_tar": str(right_image_tar), "rootfs_tar": str(right_tar)},
-    ]
+    return (
+        left_tar,
+        right_tar,
+        [
+            {"image": left_tag, "image_tar": str(left_image_tar), "rootfs_tar": str(left_tar)},
+            {"image": right_tag, "image_tar": str(right_image_tar), "rootfs_tar": str(right_tar)},
+        ],
+    )
 
 
-def write_reports(report: dict[str, object], output: Path, summary_path: Path) -> None:
+def write_reports(report: dict[str, Any], output: Path, summary_path: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    summary = report["summary"]
-    assert isinstance(summary, dict)
+    summary = cast(dict[str, Any], report["summary"])
+    differences = cast(list[dict[str, Any]], report["differences"])
     lines = [
         f"byte-identical: {str(report['byte_identical']).lower()}",
         f"total_paths: {summary['total_paths']}",
@@ -434,19 +437,13 @@ def write_reports(report: dict[str, object], output: Path, summary_path: Path) -
         f"classification_counts: {json.dumps(summary['classification_counts'], sort_keys=True)}",
         "differences:",
     ]
-    for item in report["differences"]:
+    for item in differences:
         assert isinstance(item, dict)
         reasons = ",".join(str(reason) for reason in item["reasons"])
-        line = (
-            f"- {item['path']}: {item['classification']} "
-            f"reasons={reasons} differing_bytes={item['differing_bytes']}"
-        )
+        line = f"- {item['path']}: {item['classification']} reasons={reasons} differing_bytes={item['differing_bytes']}"
         first = item.get("first_diff")
         if isinstance(first, dict):
-            line += (
-                f" first_diff_offset={first['offset']} "
-                f"left_hex={first['left_hex']} right_hex={first['right_hex']}"
-            )
+            line += f" first_diff_offset={first['offset']} left_hex={first['left_hex']} right_hex={first['right_hex']}"
         if "left_mtime" in item or "right_mtime" in item:
             line += f" left_mtime={item.get('left_mtime')} right_mtime={item.get('right_mtime')}"
         lines.append(line)
@@ -543,10 +540,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--right-tar", type=Path, help="compare an existing right exported rootfs tar")
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT, help="write JSON diff report")
     parser.add_argument("--summary", type=Path, default=DEFAULT_SUMMARY, help="write human-readable report")
-    parser.add_argument("--workdir", type=Path, default=ROOT / "dist/reproducibility/work", help="working directory for rootfs exports")
+    parser.add_argument(
+        "--workdir", type=Path, default=ROOT / "dist/reproducibility/work", help="working directory for rootfs exports"
+    )
     parser.add_argument("--context", type=Path, default=ROOT, help="Docker build context")
     parser.add_argument("--dockerfile", type=Path, default=ROOT / "containers/Dockerfile", help="Dockerfile path")
-    parser.add_argument("--platform", default=os.environ.get("PLATFORM", "linux/amd64"), help="single platform to build and export")
+    parser.add_argument(
+        "--platform", default=os.environ.get("PLATFORM", "linux/amd64"), help="single platform to build and export"
+    )
     parser.add_argument("--image-prefix", default=DEFAULT_IMAGE_PREFIX, help="temporary local image name prefix")
     parser.add_argument("--source-date-epoch", default=os.environ.get("SOURCE_DATE_EPOCH", DEFAULT_SOURCE_DATE_EPOCH))
     parser.add_argument("--oci-created", default=os.environ.get("OCI_CREATED", DEFAULT_OCI_CREATED))
@@ -574,7 +575,7 @@ def main(argv: list[str]) -> int:
             left_tar, right_tar, builds = build_and_export(args)
 
         comparison = compare_entries(load_tar(left_tar), load_tar(right_tar))
-        report: dict[str, object] = {
+        report: dict[str, Any] = {
             "schema_version": 1,
             "mode": "assert" if args.assert_byte_identical else "report",
             "platform": args.platform,

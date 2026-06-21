@@ -19,7 +19,7 @@ if [[ ! -x "${ssg_python}" ]]; then
   exit 1
 fi
 
-if ! "${ssg_python}" -c 'import jinja2, yaml' >/dev/null 2>&1; then
+if ! "${ssg_python}" -c 'import jinja2, yaml' > /dev/null 2>&1; then
   echo "${ssg_python} cannot import jinja2 and yaml; run tools/install-openscap.sh to install python3-jinja2 and python3-yaml" >&2
   exit 1
 fi

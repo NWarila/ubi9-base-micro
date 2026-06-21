@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  cat <<'USAGE'
+  cat << 'USAGE'
 Usage: tools/run-stig-arf.sh <image-ref> <arch> <platform> <output-dir>
 
 Runs the image-scoped RHEL9 STIG tailoring against an image with oscap-podman,
@@ -53,8 +53,8 @@ python "${repo_root}/tools/assert-stig-tailoring.py" \
   --controls-yaml "${controls}" \
   --datastream "${datastream}"
 
-if ! sudo podman image exists "${image_ref}" >/dev/null 2>&1; then
-  if docker image inspect "${image_ref}" >/dev/null 2>&1; then
+if ! sudo podman image exists "${image_ref}" > /dev/null 2>&1; then
+  if docker image inspect "${image_ref}" > /dev/null 2>&1; then
     docker save "${image_ref}" | sudo podman load
   else
     sudo podman pull --arch "${arch}" "${image_ref}"
@@ -71,7 +71,7 @@ identity_container_id=""
 
 cleanup_identity_container() {
   if [[ -n "${identity_container_id}" ]]; then
-    sudo podman rm "${identity_container_id}" >/dev/null 2>&1
+    sudo podman rm "${identity_container_id}" > /dev/null 2>&1
   fi
 }
 trap cleanup_identity_container EXIT
@@ -95,7 +95,7 @@ fi
 
 identity_container_id="$(sudo podman create "${image_ref}" /stig-rootfs-export)"
 sudo podman export --output "${rootfs_tar}" "${identity_container_id}"
-sudo podman rm "${identity_container_id}" >/dev/null
+sudo podman rm "${identity_container_id}" > /dev/null
 identity_container_id=""
 
 python "${repo_root}/tools/assert-rootfs-identity.py" \

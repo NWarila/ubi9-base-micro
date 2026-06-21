@@ -1,0 +1,56 @@
+---
+minimum_pre_commit_version: "4.6.0"
+default_language_version:
+  python: python3
+
+repos:
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        files: ^(tools|tests)/.*\.sh$
+        args: [--severity=style]
+
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.13.1-1
+    hooks:
+      - id: shfmt
+        files: ^(tools|tests)/.*\.sh$
+        args: [-w, -i, "2", -ci, -sr, -bn]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.18
+    hooks:
+      - id: ruff
+        files: ^tools/.*\.py$
+        args: [--fix]
+      - id: ruff-format
+        files: ^tools/.*\.py$
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.1.0
+    hooks:
+      - id: mypy
+        pass_filenames: false
+        args: [--config-file=pyproject.toml, tools]
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.38.0
+    hooks:
+      - id: yamllint
+        files: ^(\.github/.*\.ya?ml|\.yamllint)$
+        args: [--strict, -c, .yamllint]
+
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.14.0
+    hooks:
+      - id: hadolint-docker
+        name: hadolint
+        entry: ghcr.io/hadolint/hadolint@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e hadolint
+        files: ^containers/Dockerfile$
+        args: [--config, .hadolint.yaml]
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint

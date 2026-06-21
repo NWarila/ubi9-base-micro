@@ -11,7 +11,7 @@ ubi_minimal_image="${UBI_MINIMAL_IMAGE:-registry.access.redhat.com/ubi9/ubi-mini
 ubi_micro_image="${UBI_MICRO_IMAGE:-registry.access.redhat.com/ubi9/ubi-micro@sha256:b498b3ea26111ab4b81d65139f2ebd2ef9a2abb7a4588b7fdcc54889f95e9caa}"
 source_date_epoch="${SOURCE_DATE_EPOCH:-1704067200}"
 oci_version="${OCI_VERSION:-$(tr -d '[:space:]' < "${repo_root}/VERSION")}"
-oci_revision="${OCI_REVISION:-$(git -C "${repo_root}" rev-parse --short=12 HEAD 2>/dev/null)}"
+oci_revision="${OCI_REVISION:-$(git -C "${repo_root}" rev-parse --short=12 HEAD 2> /dev/null)}"
 oci_revision="${oci_revision:-local}"
 oci_created="${OCI_CREATED:-2024-01-01T00:00:00Z}"
 image_output_dir="${IMAGE_OUTPUT_DIR:-${repo_root}/dist/images}"
@@ -52,7 +52,7 @@ build_image() {
     --output "type=docker,dest=${image_tar},rewrite-timestamp=true" \
     "${repo_root}"
 
-  docker load -i "${image_tar}" >/dev/null
+  docker load -i "${image_tar}" > /dev/null
 }
 
 build_image runtime "${runtime_image}" base-micro.runtime.docker.tar

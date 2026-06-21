@@ -9,7 +9,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
-
+from typing import Any
 
 PREDICATE_TYPE = "https://nwarila.dev/attestations/stig-arf/v1"
 
@@ -18,7 +18,7 @@ class PredicateError(Exception):
     pass
 
 
-def require(condition: bool, message: str) -> None:
+def require(condition: object, message: str) -> None:
     if not condition:
         raise PredicateError(message)
 
@@ -31,14 +31,16 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def generate(args: argparse.Namespace) -> dict:
+def generate(args: argparse.Namespace) -> dict[str, Any]:
     require(args.arf.is_file() and args.arf.stat().st_size > 0, f"ARF is missing or empty: {args.arf}")
     require(args.summary.is_file(), f"ARF summary is missing: {args.summary}")
     require(args.tailoring.is_file(), f"tailoring file is missing: {args.tailoring}")
     summary = json.loads(args.summary.read_text(encoding="utf-8"))
-    require("blocking_results" in summary and not summary["blocking_results"], "predicate requires a passing ARF summary")
+    require(
+        "blocking_results" in summary and not summary["blocking_results"], "predicate requires a passing ARF summary"
+    )
 
-    predicate = {
+    return {
         "predicateType": PREDICATE_TYPE,
         "image": {
             "ref": args.image_ref,
@@ -69,7 +71,6 @@ def generate(args: argparse.Namespace) -> dict:
             "bytes": args.arf.stat().st_size,
         },
     }
-    return predicate
 
 
 def self_test() -> None:
@@ -129,7 +130,9 @@ def main() -> int:
             self_test()
             return 0
         for field in ["arf", "summary", "output"]:
-            require(getattr(args, field) is not None, f"--{field.replace('_', '-')} is required unless --self-test is used")
+            require(
+                getattr(args, field) is not None, f"--{field.replace('_', '-')} is required unless --self-test is used"
+            )
         require(args.image_ref, "--image-ref is required")
         require(args.platform, "--platform is required")
         require(args.arch, "--arch is required")
