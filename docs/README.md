@@ -13,3 +13,4 @@ close to the image scaffold.
 | NIST 800-190 | [`nist-800-190.md`](nist-800-190.md) | Section 4.1 image-control predicate URI, control mapping, and not-CIS-Docker scope |
 | Tailored STIG | [`stig.md`](stig.md) | Image-scoped RHEL9 STIG tailoring, mass-N/A guard, ARF predicate type, and scan scope |
 | Verify | [`reference/verify.md`](reference/verify.md) | Published digest signature, SBOM, OpenVEX, NIST 800-190, STIG ARF, SLSA L3 provenance, and Rekor verification contract |
+| Decisions | [`decision-records/`](decision-records/) | Repository-scope ADRs for the image contract, evidence model, workflow host determinism, and base-family topology |

@@ -71,6 +71,11 @@ exported-rootfs-regular-file-bytes. The current amd64 runtime measures
 23,840,723 bytes / 22.7363 MiB against the 25 MiB H2 gate; local OCI compressed
 layer sum is 12,095,601 bytes / 11.5353 MiB. See `docs/footprint.md`.
 
+Repository-specific decisions are recorded under `docs/decision-records/repo/`.
+They cover the byte-for-byte reproducibility gate, FIPS scope, SLSA generator
+identity model, runtime strip posture, RPM refresh loop, scanner/VEX policy,
+STIG and NIST evidence, CI runner determinism, and base-family topology.
+
 ## Local Build
 
 Build both local tags:
