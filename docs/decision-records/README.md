@@ -20,3 +20,4 @@ canonical source.
 | [ADR-0008](repo/0008-tailored-stig-arf-gate.md) | Accepted | Gate the image with a tailored RHEL 9 STIG ARF and reviewed omissions. |
 | [ADR-0009](repo/0009-nist-800-190-image-evidence.md) | Accepted | Emit NIST SP 800-190 section 4.1 image-control evidence. |
 | [ADR-0010](repo/0010-base-image-polyrepo-topology.md) | Accepted | Keep the base-image family as polyrepos rooted at `ubi9-base-micro`. |
+| [ADR-0011](repo/0011-pin-github-hosted-runner-labels.md) | Accepted | Pin GitHub-hosted Ubuntu runner labels for workflow determinism. |

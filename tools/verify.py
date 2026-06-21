@@ -57,6 +57,10 @@ REPO_ADRS = [
         "docs/decision-records/repo/0010-base-image-polyrepo-topology.md",
         "Keep The Base-Image Family As Polyrepos Rooted At Base Micro",
     ),
+    (
+        "docs/decision-records/repo/0011-pin-github-hosted-runner-labels.md",
+        "Pin GitHub-Hosted Runner Labels",
+    ),
 ]
 
 
@@ -332,6 +336,14 @@ def check_workflow() -> None:
     refresh = read(".github/workflows/rpm-lock-refresh.yaml")
     gate_runner = read("tools/run-test-gates.sh")
 
+    for source, source_text in [
+        ("build workflow", build),
+        ("nightly workflow", nightly),
+        ("RPM lock refresh workflow", refresh),
+    ]:
+        require("runs-on: ubuntu-latest" not in source_text, f"{source} must not use moving ubuntu-latest runner")
+        require("runs-on: ubuntu-24.04" in source_text, f"{source} must pin ubuntu-24.04 runner")
+
     for marker in [
         "pull_request:",
         "push:",
@@ -510,6 +522,8 @@ def check_workflow() -> None:
 
 def check_publish_workflow() -> None:
     text = read(".github/workflows/publish-image.yaml")
+    require("runs-on: ubuntu-latest" not in text, "publish workflow must not use moving ubuntu-latest runner")
+    require("runs-on: ubuntu-24.04" in text, "publish workflow must pin ubuntu-24.04 runner")
     required = [
         "pull_request:",
         "push:",
@@ -1005,6 +1019,7 @@ def check_decision_records() -> None:
         "stig/rhel9-base-micro-tailoring.xml",
         "https://nwarila.dev/attestations/nist-sp-800-190-image/v1",
         "base-micro@sha256:<digest>",
+        "runs-on: ubuntu-24.04",
     ]:
         require(marker in joined, f"repo ADRs missing load-bearing marker: {marker}")
 
