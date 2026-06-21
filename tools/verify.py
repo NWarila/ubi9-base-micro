@@ -23,7 +23,7 @@ SCORECARD_ACTION_SHA = "4eaacf0543bb3f2c246792bd56e8cdeffafb205a"
 CODEQL_ACTION_SHA = "8aad20d150bbac5944a9f9d289da16a4b0d87c1e"
 DEPENDENCY_REVIEW_ACTION_SHA = "a1d282b36b6f3519aa1f3fc636f609c47dddb294"
 ZIZMOR_ACTION_SHA = "5f14fd08f7cf1cb1609c1e344975f152c7ee938d"
-ZIZMOR_VERSION = "1.26.1"
+ZIZMOR_VERSION = "1.25.2"
 SUPPLY_CHAIN_WORKFLOWS = [
     ".github/workflows/codeql.yml",
     ".github/workflows/dependency-review.yml",

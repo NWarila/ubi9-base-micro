@@ -40,4 +40,4 @@ jobs:
           inputs: .github/workflows/
           config: .github/zizmor.yml
           advanced-security: true
-          version: 1.26.1
+          version: 1.25.2
