@@ -90,3 +90,7 @@ The repository namespace for future publish work is:
 ```text
 ghcr.io/nwarila/ubi9-base-micro
 ```
+
+## License
+
+This repository is licensed under the terms in [LICENSE](LICENSE).

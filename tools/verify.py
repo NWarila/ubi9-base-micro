@@ -49,6 +49,7 @@ def check_required_files() -> None:
     for relative_path in [
         ".dockerignore",
         ".editorconfig",
+        ".gitattributes",
         ".github/CODEOWNERS",
         ".github/renovate.json",
         ".github/workflows/build.yaml",
@@ -56,6 +57,8 @@ def check_required_files() -> None:
         ".github/workflows/publish-image.yaml",
         ".github/workflows/rpm-lock-refresh.yaml",
         ".gitignore",
+        ".markdownlint-cli2.jsonc",
+        "LICENSE",
         "Makefile",
         "README.md",
         "VERSION",

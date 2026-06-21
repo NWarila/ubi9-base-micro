@@ -4,7 +4,10 @@
 !*/
 !/.dockerignore
 !/.editorconfig
+!/.gitattributes
 !/.gitignore
+!/.markdownlint-cli2.jsonc
+!/LICENSE
 !/Makefile
 !/README.md
 !/VERSION
