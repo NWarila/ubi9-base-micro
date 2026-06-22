@@ -20,6 +20,8 @@ dockerfile_arg_default() {
 
 source_date_epoch="${SOURCE_DATE_EPOCH:-$(dockerfile_arg_default SOURCE_DATE_EPOCH)}"
 ubi_minimal_image="${UBI_MINIMAL_IMAGE:-$(dockerfile_arg_default UBI_MINIMAL_IMAGE)}"
+openssl_fips_provider_nevra_amd64="${OPENSSL_FIPS_PROVIDER_NEVRA_AMD64:-$(dockerfile_arg_default OPENSSL_FIPS_PROVIDER_NEVRA_AMD64)}"
+openssl_fips_provider_nevra_arm64="${OPENSSL_FIPS_PROVIDER_NEVRA_ARM64:-$(dockerfile_arg_default OPENSSL_FIPS_PROVIDER_NEVRA_ARM64)}"
 dnf_repos="${DNF_REPOS:-}"
 
 validate_arch() {
@@ -60,18 +62,42 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG TARGETARCH
 ARG DNF_REPOS=""
+ARG OPENSSL_FIPS_PROVIDER_NEVRA_AMD64
+ARG OPENSSL_FIPS_PROVIDER_NEVRA_ARM64
 ARG SOURCE_DATE_EPOCH
 
 RUN <<'CAPTURE'
 set -euo pipefail
 
 case "${TARGETARCH}" in
-  amd64) rpm_arch="x86_64" ;;
-  arm64) rpm_arch="aarch64" ;;
+  amd64) rpm_arch="x86_64"; openssl_fips_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA_AMD64}" ;;
+  arm64) rpm_arch="aarch64"; openssl_fips_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA_ARM64}" ;;
   *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;;
 esac
+fips_provider_nvr="${openssl_fips_provider_nevra#openssl-fips-provider-so-}"
+if [[ "${fips_provider_nvr}" == "${openssl_fips_provider_nevra}" ]]; then
+  echo "invalid FIPS provider NEVRA pin: ${openssl_fips_provider_nevra}" >&2
+  exit 1
+fi
 
-runtime_packages=(
+runtime_package_specs=(
+  basesystem
+  ca-certificates
+  crypto-policies
+  filesystem
+  glibc
+  glibc-common
+  glibc-minimal-langpack
+  libgcc
+  "openssl-fips-provider-${fips_provider_nvr}"
+  "${openssl_fips_provider_nevra}"
+  openssl-libs
+  redhat-release
+  setup
+  tzdata
+  zlib
+)
+required_final_names=(
   basesystem
   ca-certificates
   crypto-policies
@@ -102,7 +128,7 @@ microdnf install -y --installroot=/rootfs --releasever=9 \
   --setopt=cachedir=/var/cache/microdnf-installroot \
   --nodocs --setopt=install_weak_deps=0 \
   "${dnf_repo_args[@]}" \
-  "${runtime_packages[@]}"
+  "${runtime_package_specs[@]}"
 microdnf clean all
 rm -rf /rootfs/var/cache/* /var/cache/microdnf-installroot \
   /rootfs/var/log/dnf.log /rootfs/var/log/dnf.librepo.log /rootfs/var/log/hawkey.log
@@ -212,7 +238,7 @@ if [[ "${actual_final_count}" != "15" ]]; then
   cat /tmp/runtime.final.nevras >&2
   exit 1
 fi
-for package_name in "${runtime_packages[@]}"; do
+for package_name in "${required_final_names[@]}"; do
   if ! rpm --root=/rootfs -q "${package_name}" >/dev/null 2>&1; then
     echo "expected final runtime RPM missing after strip: ${package_name}" >&2
     cat /tmp/runtime.final.nevras >&2
@@ -253,6 +279,13 @@ validate_lockfile() {
   local platform_arch="$2"
   local rpm_arch
   rpm_arch="$(arch_to_rpm_arch "${platform_arch}")"
+  local expected_provider_nvr
+  case "${platform_arch}" in
+    amd64) expected_provider_nvr="${openssl_fips_provider_nevra_amd64}" ;;
+    arm64) expected_provider_nvr="${openssl_fips_provider_nevra_arm64}" ;;
+    *) return 2 ;;
+  esac
+  local expected_provider_nevra="${expected_provider_nvr}.${rpm_arch}"
 
   [[ -s "${path}" ]] || {
     echo "RPM lockfile missing or empty: ${path}" >&2
@@ -295,6 +328,7 @@ validate_lockfile() {
     zlib
   )
   local final_seen=" "
+  local provider_pin_seen=0
 
   while IFS='|' read -r package final_rpmdb name epoch version release arch sha256_header sigmd5 extra; do
     case "${package}" in
@@ -345,6 +379,9 @@ validate_lockfile() {
       echo "${path}: duplicate package row: ${package}" >&2
       return 1
     fi
+    if [[ "${package}" == "${expected_provider_nevra}" && "${name}" == "openssl-fips-provider-so" ]]; then
+      provider_pin_seen=1
+    fi
     previous_package="${package}"
     rows=$((rows + 1))
   done < "${path}"
@@ -363,6 +400,10 @@ validate_lockfile() {
       return 1
     }
   done
+  [[ "${provider_pin_seen}" -eq 1 ]] || {
+    echo "${path}: missing pinned OpenSSL FIPS provider ${expected_provider_nevra}" >&2
+    return 1
+  }
 }
 
 generate_one() {
@@ -382,6 +423,8 @@ generate_one() {
     --build-arg "UBI_MINIMAL_IMAGE=${ubi_minimal_image}" \
     --build-arg "SOURCE_DATE_EPOCH=${source_date_epoch}" \
     --build-arg "DNF_REPOS=${dnf_repos}" \
+    --build-arg "OPENSSL_FIPS_PROVIDER_NEVRA_AMD64=${openssl_fips_provider_nevra_amd64}" \
+    --build-arg "OPENSSL_FIPS_PROVIDER_NEVRA_ARM64=${openssl_fips_provider_nevra_arm64}" \
     --output "type=local,dest=${tmpdir}/out" \
     "${tmpdir}"
 

@@ -120,12 +120,18 @@ fi
 image_arch="$(docker image inspect --format '{{ .Architecture }}' "${image_ref}")"
 case "${image_arch}" in
   amd64)
+    expected_module="3.0.7-395c1a240fbfffd8"
+    expected_provider_nvr="openssl-fips-provider-so-3.0.7-8.el9"
+    expected_provider_nevra="${expected_provider_nvr}.x86_64"
     expected_oe_validated=true
     expected_disclaimer="CMVP #4857-validated approved-mode configuration."
     ;;
   arm64)
+    expected_module="3.0.7-cda111b5812c30d4"
+    expected_provider_nvr="openssl-fips-provider-so-3.0.7-11.el9_8"
+    expected_provider_nevra="${expected_provider_nvr}.aarch64"
     expected_oe_validated=false
-    expected_disclaimer="The Red Hat OpenSSL FIPS provider (module #4857, v3.0.7-395c1a240fbfffd8) is present, approved-mode-configured, and self-test-passing, but this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list — this is NOT a CMVP-validated configuration on this architecture."
+    expected_disclaimer="The Red Hat OpenSSL FIPS provider is present, approved-mode-configured, and self-test-passing, but this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list - this is NOT a CMVP-validated configuration on this architecture."
     ;;
   *)
     echo "unsupported image architecture for FIPS status assertion: ${image_arch}" >&2
@@ -133,12 +139,29 @@ case "${image_arch}" in
     ;;
 esac
 
-for needle in \
-  '"arch": "'"${image_arch}"'"' \
-  '"module": "3.0.7-395c1a240fbfffd8"' \
-  '"cmvp": "#4857"' \
-  '"oe_validated": '"${expected_oe_validated}" \
-  "${expected_disclaimer}"; do
+status_needles=(
+  '"arch": "'"${image_arch}"'"'
+  '"module": "'"${expected_module}"'"'
+  '"cmvp": "#4857"'
+  '"oe_validated": '"${expected_oe_validated}"
+  "${expected_disclaimer}"
+)
+if [[ "${image_arch}" == "arm64" ]]; then
+  status_needles+=(
+    '"provider_nvr": "'"${expected_provider_nvr}"'"'
+    '"provider_nevra": "'"${expected_provider_nevra}"'"'
+  )
+else
+  for legacy_absent in '"provider_nvr":' '"provider_nevra":'; do
+    if grep -Fq "${legacy_absent}" "${status_file}"; then
+      echo "amd64 fips-status.json changed from the main byte-identity baseline: ${legacy_absent}" >&2
+      cat "${status_file}" >&2
+      exit 1
+    fi
+  done
+fi
+
+for needle in "${status_needles[@]}"; do
   if ! grep -Fq "${needle}" "${status_file}"; then
     echo "fips-status.json missing required value: ${needle}" >&2
     cat "${status_file}" >&2
@@ -157,17 +180,22 @@ if ! grep -Fxq "OPENSSL_MODULES=/usr/lib64/ossl-modules" <<<"${env_values}"; the
 fi
 
 cmvp_label="$(docker image inspect --format '{{ index .Config.Labels "org.nwarila.fips.cmvp" }}' "${image_ref}")"
+oe_label="$(docker image inspect --format '{{ index .Config.Labels "org.nwarila.fips.cmvp.oe-validated" }}' "${image_ref}")"
 module_label="$(docker image inspect --format '{{ index .Config.Labels "org.nwarila.fips.module-version" }}' "${image_ref}")"
 provider_label="$(docker image inspect --format '{{ index .Config.Labels "org.nwarila.fips.provider-nvr" }}' "${image_ref}")"
 if [[ "${cmvp_label}" != "4857" ]]; then
   echo "image label org.nwarila.fips.cmvp mismatch: ${cmvp_label}" >&2
   exit 1
 fi
-if [[ "${module_label}" != "3.0.7-395c1a240fbfffd8" ]]; then
+if [[ "${oe_label}" != "${expected_oe_validated}" ]]; then
+  echo "image label org.nwarila.fips.cmvp.oe-validated mismatch: ${oe_label}" >&2
+  exit 1
+fi
+if [[ "${module_label}" != "${expected_module}" ]]; then
   echo "image label org.nwarila.fips.module-version mismatch: ${module_label}" >&2
   exit 1
 fi
-if [[ "${provider_label}" != "openssl-fips-provider-so-3.0.7-8.el9" ]]; then
+if [[ "${provider_label}" != "${expected_provider_nvr}" ]]; then
   echo "image label org.nwarila.fips.provider-nvr mismatch: ${provider_label}" >&2
   exit 1
 fi
@@ -179,4 +207,4 @@ echo "proof: libcrypto.so.3 present"
 echo "proof: legacy provider, fipsmodule.cnf, and openssl CLI absent from the runtime"
 echo "proof: OPENSSL_CONF and OPENSSL_MODULES image ENV are set"
 echo "proof: fips-status.json matches image architecture ${image_arch} with oe_validated=${expected_oe_validated}"
-echo "proof: FIPS OCI labels match CMVP, module version, and provider NVR pins"
+echo "proof: FIPS OCI labels match per-arch CMVP OE scope, module version, and provider NVR pins"

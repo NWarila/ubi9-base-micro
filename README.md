@@ -53,14 +53,17 @@ The publish workflow runs only on `push` to `main` or `v*` tags, building the
 digest, attaching rpmdb-derived SBOMs and image-control evidence, and invoking
 the SLSA L3 container provenance generator.
 
-The runtime uses the Red Hat Enterprise Linux 9 OpenSSL FIPS Provider, CMVP
-#4857, `fips.so` version `3.0.7-395c1a240fbfffd8`, in approved mode through
-`/etc/pki/tls/openssl-fips.cnf` and `OPENSSL_CONF`/`OPENSSL_MODULES`. This is a
-module-scoped and approved-mode-scoped statement: it is not a host, OS,
-container, or application FIPS validation claim. The platform host remains
-non-FIPS. The amd64 image is in #4857's validated OE scope; the arm64 image is
-approved-mode configured and self-test passing but explicitly not a
-CMVP-validated configuration on that architecture. See `docs/fips.md`.
+The runtime uses the Red Hat Enterprise Linux 9 OpenSSL FIPS Provider in
+approved mode through `/etc/pki/tls/openssl-fips.cnf` and
+`OPENSSL_CONF`/`OPENSSL_MODULES`. The amd64 image keeps the CMVP #4857
+`openssl-fips-provider-so-3.0.7-8.el9` baseline with `fips.so` version
+`3.0.7-395c1a240fbfffd8`. The arm64 image uses
+`openssl-fips-provider-so-3.0.7-11.el9_8` with `fips.so` version
+`3.0.7-cda111b5812c30d4`, approved-mode configured and self-test passing but
+explicitly not a CMVP-validated configuration on that architecture. These are
+module-scoped and approved-mode-scoped statements, not host, OS, container, or
+application FIPS validation claims. The platform host remains non-FIPS. See
+`docs/fips.md`.
 
 The authoritative SBOM evidence is Syft rpmdb-derived SPDX and CycloneDX,
 attested per published platform child digest. BuildKit SBOM output is disabled
