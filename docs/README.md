@@ -6,7 +6,8 @@ close to the image scaffold.
 | Area | Path | Purpose |
 | --- | --- | --- |
 | Acceptance | [`acceptance.md`](acceptance.md) | Copied base-image Definition of Done with this repository's namespace note |
-| FIPS | [`fips.md`](fips.md) | OpenSSL #4857 FIPS-provider ledger, family CMVP context, out-of-scope certificates, approved-mode mechanism, per-architecture validation scope, and non-FIPS-host scope |
+| FIPS | [`fips.md`](fips.md) | OpenSSL FIPS-provider ledger, family CMVP context, out-of-scope certificates, approved-mode mechanism, per-architecture validation scope, and non-FIPS-host scope |
+| Technical Debt | [`TECH-DEBT.md`](TECH-DEBT.md) | Tracked repository debt for provider z-stream availability and future revalidation decisions |
 | Footprint | [`footprint.md`](footprint.md) | Runtime footprint measurement contract, STEP024 H2 rationale, and current amd64 evidence |
 | Reproducibility | [`reproducibility.md`](reproducibility.md) | F3 byte-for-byte harness, deterministic epoch, RPM lockfiles, refresh loop, and build-failing hard gate |
 | OpenVEX | [`vex.md`](vex.md) | CODEOWNERS-gated VEX authoring flow for the default-deny unfixed HIGH/CRITICAL gate |

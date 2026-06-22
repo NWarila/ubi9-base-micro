@@ -24,8 +24,10 @@ env:
   GRYPE_VERSION: "0.87.0"
   UBI_MINIMAL_IMAGE: registry.access.redhat.com/ubi9/ubi-minimal@sha256:ae09ecc3d754bc1726cbda3e2599cc7839e09fe1cc547ce173cf669b645be3cc
   UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:b498b3ea26111ab4b81d65139f2ebd2ef9a2abb7a4588b7fdcc54889f95e9caa
-  OPENSSL_FIPS_MODULE_VERSION: "3.0.7-395c1a240fbfffd8"
-  OPENSSL_FIPS_PROVIDER_NEVRA: "openssl-fips-provider-so-3.0.7-8.el9"
+  OPENSSL_FIPS_MODULE_VERSION_AMD64: "3.0.7-395c1a240fbfffd8"
+  OPENSSL_FIPS_PROVIDER_NEVRA_AMD64: "openssl-fips-provider-so-3.0.7-8.el9"
+  OPENSSL_FIPS_MODULE_VERSION_ARM64: "3.0.7-cda111b5812c30d4"
+  OPENSSL_FIPS_PROVIDER_NEVRA_ARM64: "openssl-fips-provider-so-3.0.7-11.el9_8"
   SOURCE_DATE_EPOCH: "1704067200"
   OCI_CREATED: "2024-01-01T00:00:00Z"
   NIST_800_190_PREDICATE_TYPE: "https://nwarila.dev/attestations/nist-sp-800-190-image/v1"
@@ -150,14 +152,20 @@ jobs:
             --build-arg "UBI_MINIMAL_IMAGE=${UBI_MINIMAL_IMAGE}" \
             --build-arg "UBI_MICRO_IMAGE=${UBI_MICRO_IMAGE}" \
             --build-arg "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
-            --build-arg "OPENSSL_FIPS_MODULE_VERSION=${OPENSSL_FIPS_MODULE_VERSION}" \
-            --build-arg "OPENSSL_FIPS_PROVIDER_NEVRA=${OPENSSL_FIPS_PROVIDER_NEVRA}" \
+            --build-arg "OPENSSL_FIPS_MODULE_VERSION_AMD64=${OPENSSL_FIPS_MODULE_VERSION_AMD64}" \
+            --build-arg "OPENSSL_FIPS_PROVIDER_NEVRA_AMD64=${OPENSSL_FIPS_PROVIDER_NEVRA_AMD64}" \
+            --build-arg "OPENSSL_FIPS_MODULE_VERSION_ARM64=${OPENSSL_FIPS_MODULE_VERSION_ARM64}" \
+            --build-arg "OPENSSL_FIPS_PROVIDER_NEVRA_ARM64=${OPENSSL_FIPS_PROVIDER_NEVRA_ARM64}" \
             --build-arg "OCI_CREATED=${oci_created}" \
             --build-arg "OCI_REVISION=${GITHUB_SHA}" \
             --build-arg "OCI_SOURCE=https://github.com/${GITHUB_REPOSITORY}" \
             --build-arg "OCI_VERSION=${oci_version}" \
             --annotation "manifest[linux/amd64]:org.nwarila.fips.cmvp.oe-validated=true" \
+            --annotation "manifest[linux/amd64]:org.nwarila.fips.module-version=${OPENSSL_FIPS_MODULE_VERSION_AMD64}" \
+            --annotation "manifest[linux/amd64]:org.nwarila.fips.provider-nvr=${OPENSSL_FIPS_PROVIDER_NEVRA_AMD64}" \
             --annotation "manifest[linux/arm64]:org.nwarila.fips.cmvp.oe-validated=false" \
+            --annotation "manifest[linux/arm64]:org.nwarila.fips.module-version=${OPENSSL_FIPS_MODULE_VERSION_ARM64}" \
+            --annotation "manifest[linux/arm64]:org.nwarila.fips.provider-nvr=${OPENSSL_FIPS_PROVIDER_NEVRA_ARM64}" \
             --provenance=mode=max \
             --sbom=false \
             --metadata-file dist/image-metadata.json \

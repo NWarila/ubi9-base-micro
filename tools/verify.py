@@ -30,6 +30,10 @@ SUPPLY_CHAIN_WORKFLOWS = [
     ".github/workflows/scorecard.yml",
     ".github/workflows/zizmor.yml",
 ]
+OPENSSL_FIPS_MODULE_VERSION_AMD64 = "3.0.7-395c1a240fbfffd8"
+OPENSSL_FIPS_PROVIDER_NEVRA_AMD64 = "openssl-fips-provider-so-3.0.7-8.el9"
+OPENSSL_FIPS_MODULE_VERSION_ARM64 = "3.0.7-cda111b5812c30d4"
+OPENSSL_FIPS_PROVIDER_NEVRA_ARM64 = "openssl-fips-provider-so-3.0.7-11.el9_8"
 COMMUNITY_PROFILE_FILES = [
     "CHANGELOG.md",
     "CODE_OF_CONDUCT.md",
@@ -193,6 +197,7 @@ def check_required_files() -> None:
         "docs/decision-records/README.md",
         "docs/acceptance.md",
         "docs/fips.md",
+        "docs/TECH-DEBT.md",
         "docs/nist-800-190.md",
         "docs/footprint.md",
         "docs/reproducibility.md",
@@ -430,12 +435,18 @@ def check_dockerfile() -> None:
         "ARG UBI_MINIMAL_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal@sha256:",
         "ARG UBI_MICRO_IMAGE=registry.access.redhat.com/ubi9/ubi-micro@sha256:",
         "ARG TARGETARCH",
-        "ARG OPENSSL_FIPS_MODULE_VERSION=3.0.7-395c1a240fbfffd8",
-        "ARG OPENSSL_FIPS_PROVIDER_NEVRA=openssl-fips-provider-so-3.0.7-8.el9",
+        f"ARG OPENSSL_FIPS_MODULE_VERSION_AMD64={OPENSSL_FIPS_MODULE_VERSION_AMD64}",
+        f"ARG OPENSSL_FIPS_PROVIDER_NEVRA_AMD64={OPENSSL_FIPS_PROVIDER_NEVRA_AMD64}",
+        f"ARG OPENSSL_FIPS_MODULE_VERSION_ARM64={OPENSSL_FIPS_MODULE_VERSION_ARM64}",
+        f"ARG OPENSSL_FIPS_PROVIDER_NEVRA_ARM64={OPENSSL_FIPS_PROVIDER_NEVRA_ARM64}",
         "ARG SOURCE_DATE_EPOCH=1704067200",
         "amd64) rpm_arch=\"x86_64\"",
         "arm64) rpm_arch=\"aarch64\"",
-        "expected_provider_nevra=\"${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}\"",
+        "openssl_fips_provider_nevra=\"${OPENSSL_FIPS_PROVIDER_NEVRA_AMD64}\"",
+        "openssl_fips_provider_nevra=\"${OPENSSL_FIPS_PROVIDER_NEVRA_ARM64}\"",
+        "fips_provider_nvr=\"${openssl_fips_provider_nevra#openssl-fips-provider-so-}\"",
+        "openssl \"openssl-fips-provider-${fips_provider_nvr}\" \"${openssl_fips_provider_nevra}\" crypto-policies",
+        "expected_provider_nevra=\"${openssl_fips_provider_nevra}.${rpm_arch}\"",
         "COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/",
         "COPY tools/assert-rpm-lock-hashes.sh /tmp/assert-rpm-lock-hashes.sh",
         "locked_packages=\"\"",
@@ -444,7 +455,10 @@ def check_dockerfile() -> None:
         "find /rootfs -xdev -exec touch -h -d \"@${SOURCE_DATE_EPOCH}\" {} +",
         "microdnf install -y --installroot=/rootfs",
         "--nodocs --setopt=install_weak_deps=0",
-        "FROM ${UBI_MICRO_IMAGE} AS runtime",
+        "FROM ${UBI_MICRO_IMAGE} AS runtime-common",
+        "FROM runtime-common AS runtime-amd64",
+        "FROM runtime-common AS runtime-arm64",
+        "FROM runtime-${TARGETARCH} AS runtime",
         "FROM ${UBI_MICRO_IMAGE} AS dev",
         "COPY --from=rpm-rootfs /rootfs/ /",
         "COPY --from=dev-rootfs /rootfs/ /",
@@ -459,7 +473,10 @@ def check_dockerfile() -> None:
         "org.nwarila.fips.cmvp",
         "org.nwarila.fips.module-version",
         "org.nwarila.fips.provider-nvr",
+        "org.nwarila.fips.cmvp.oe-validated",
         "/etc/nwarila/fips-status.json",
+        "provider_nvr",
+        "provider_nevra",
         "oe_validated=false",
         "NOT in CMVP #4857's validated or vendor-affirmed list",
         "/fips-proof/provider.nevra",
@@ -493,6 +510,12 @@ def check_dockerfile() -> None:
     for line in from_lines:
         if "${UBI_" in line:
             continue
+        if line in {
+            "FROM runtime-common AS runtime-amd64",
+            "FROM runtime-common AS runtime-arm64",
+            "FROM runtime-${TARGETARCH} AS runtime",
+        }:
+            continue
         require("@sha256:" in line, f"Dockerfile FROM must be digest-pinned: {line}")
 
     forbidden = [
@@ -501,6 +524,8 @@ def check_dockerfile() -> None:
         "ghcr.io/nwarila-" + "platform",
         "fips" + "install",
         "OPENSSL_FIPS_PROVIDER_NEVRA=openssl-fips-provider-so-3.0.7-8.el9.x86_64",
+        "ARG OPENSSL_FIPS_MODULE_VERSION=",
+        "ARG OPENSSL_FIPS_PROVIDER_NEVRA=",
     ]
     present = [marker for marker in forbidden if marker in text]
     require(not present, "Dockerfile contains forbidden marker(s): " + ", ".join(present))
@@ -848,8 +873,12 @@ def check_publish_workflow() -> None:
         "--sbom=false",
         "--metadata-file dist/image-metadata.json",
         "--output \"type=registry,rewrite-timestamp=true\"",
-        "OPENSSL_FIPS_MODULE_VERSION",
-        "OPENSSL_FIPS_PROVIDER_NEVRA",
+        "OPENSSL_FIPS_MODULE_VERSION_AMD64",
+        "OPENSSL_FIPS_PROVIDER_NEVRA_AMD64",
+        "OPENSSL_FIPS_MODULE_VERSION_ARM64",
+        "OPENSSL_FIPS_PROVIDER_NEVRA_ARM64",
+        "manifest[linux/amd64]:org.nwarila.fips.module-version",
+        "manifest[linux/arm64]:org.nwarila.fips.provider-nvr",
         "SOURCE_DATE_EPOCH: \"1704067200\"",
         "OCI_CREATED: \"2024-01-01T00:00:00Z\"",
         "SYFT_VERSION: \"1.45.1\"",
@@ -1042,6 +1071,10 @@ def check_rpm_locks() -> None:
         "zlib",
     }
     expected_arch = {"amd64": "x86_64", "arm64": "aarch64"}
+    expected_provider = {
+        "amd64": f"{OPENSSL_FIPS_PROVIDER_NEVRA_AMD64}.x86_64",
+        "arm64": f"{OPENSSL_FIPS_PROVIDER_NEVRA_ARM64}.aarch64",
+    }
     for platform_arch, rpm_arch in expected_arch.items():
         relative_path = f"rpm-lock/runtime.{platform_arch}.txt"
         rows = []
@@ -1068,6 +1101,7 @@ def check_rpm_locks() -> None:
         packages = [row[0] for row in rows]
         require(len(packages) == len(set(packages)), f"{relative_path}: duplicate package rows")
         require(len(packages) == 38, f"{relative_path}: expected 38 transaction RPMs, got {len(packages)}")
+        require(expected_provider[platform_arch] in packages, f"{relative_path}: missing pinned provider {expected_provider[platform_arch]}")
         final_names = {name for _, final_rpmdb, name in rows if final_rpmdb == "yes"}
         require(final_names == required_final, f"{relative_path}: final rpmdb set mismatch: {sorted(final_names)}")
 
@@ -1125,8 +1159,14 @@ def check_fips_script() -> None:
         "libcrypto.so.3",
         "legacy.so",
         "etc/nwarila/fips-status.json",
+        "amd64 fips-status.json changed from the main byte-identity baseline",
         "oe_validated",
         "org.nwarila.fips.provider-nvr",
+        "org.nwarila.fips.cmvp.oe-validated",
+        OPENSSL_FIPS_MODULE_VERSION_AMD64,
+        OPENSSL_FIPS_PROVIDER_NEVRA_AMD64,
+        OPENSSL_FIPS_MODULE_VERSION_ARM64,
+        OPENSSL_FIPS_PROVIDER_NEVRA_ARM64,
     ]:
         require(marker in text, f"FIPS script missing marker: {marker}")
 
@@ -1351,12 +1391,16 @@ def check_docs() -> None:
     require("Byte-for-byte reproducible (HARD gate)" in acceptance, "acceptance.md must carry hard F3 wording")
     require("explicitly retracted" not in acceptance, "acceptance.md must not preserve the old F3 retract escape")
     require("#4857" in fips, "docs/fips.md must record the OpenSSL CMVP #4857 ledger")
-    require("3.0.7-395c1a240fbfffd8" in fips, "docs/fips.md must record the validated OpenSSL provider version")
+    require(OPENSSL_FIPS_MODULE_VERSION_AMD64 in fips, "docs/fips.md must record the validated OpenSSL provider version")
+    require(OPENSSL_FIPS_MODULE_VERSION_ARM64 in fips, "docs/fips.md must record the arm64 OpenSSL provider version")
+    require(OPENSSL_FIPS_PROVIDER_NEVRA_AMD64 in fips, "docs/fips.md must record the amd64 provider NVR")
+    require(OPENSSL_FIPS_PROVIDER_NEVRA_ARM64 in fips, "docs/fips.md must record the arm64 provider NVR")
     require("approved mode" in fips, "docs/fips.md must scope the OpenSSL claim to approved mode")
     require("fips_enabled" in fips and "= 0" in fips, "docs/fips.md must state the non-FIPS-host caveat")
     require("Per-architecture validation scope" in fips, "docs/fips.md must describe per-architecture validation scope")
     require("TD-3" in fips, "docs/fips.md must reference TD-3")
     require("oe_validated" in fips, "docs/fips.md must document fips-status.json oe_validated")
+    require("provider_nvr" in fips, "docs/fips.md must document fips-status.json provider_nvr")
     require(
         "this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list" in fips
         and "this is NOT a CMVP-validated configuration on this architecture" in fips,
@@ -1413,6 +1457,7 @@ def check_docs() -> None:
     ]:
         require(marker in fips, f"docs/fips.md missing G2/G2a/G3 marker: {marker}")
     require("tailored RHEL9 STIG ARF gate" in readme and "docs/stig.md" in readme, "README.md must describe current STIG gate scope")
+    require("TECH-DEBT.md" in docs_index, "docs README must index technical debt")
     require("reference/verify.md" in docs_index, "docs README must index verify contract")
     require("decision-records/" in docs_index, "docs README must index decision records")
     require("nist-800-190.md" in docs_index, "docs README must index NIST 800-190 evidence")
