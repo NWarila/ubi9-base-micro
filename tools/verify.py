@@ -29,11 +29,16 @@ SHFMT_HOOK_REV = "v3.13.1-1"
 RUFF_HOOK_REV = "v0.15.18"
 MYPY_HOOK_REV = "v2.1.0"
 YAMLLINT_HOOK_REV = "v1.38.0"
+MARKDOWNLINT_HOOK_REV = "v0.22.1"
 HADOLINT_HOOK_REV = "v2.14.0"
 HADOLINT_IMAGE_DIGEST = "sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e"
 ACTIONLINT_HOOK_REV = "v1.7.12"
+ACTIONLINT_REVIEWDOG_ACTION_SHA = "6fb7acc99f4a1008869fa8a0f09cfca740837d9d"
+ACTIONLINT_REVIEWDOG_ACTION_TAG = "v1.72.0"
+ACTIONLINT_REVIEWDOG_TOOL_VERSION = "1.7.12"
 LINT_CONFIG_FILES = [
     ".hadolint.yaml",
+    ".markdownlint-cli2.jsonc",
     ".pre-commit-config.yaml",
     ".shellcheckrc",
     ".yamllint",
@@ -610,6 +615,10 @@ def check_workflow() -> None:
     nightly = read(".github/workflows/nightly.yaml")
     refresh = read(".github/workflows/rpm-lock-refresh.yaml")
     gate_runner = read("tools/run-test-gates.sh")
+    reviewdog_actionlint_marker = (
+        f"reviewdog/action-actionlint@{ACTIONLINT_REVIEWDOG_ACTION_SHA} # "
+        f"{ACTIONLINT_REVIEWDOG_ACTION_TAG}; bundles actionlint {ACTIONLINT_REVIEWDOG_TOOL_VERSION}"
+    )
 
     for source, source_text in [
         ("build workflow", build),
@@ -805,6 +814,8 @@ def check_workflow() -> None:
     check_uses_pinned(build, "build workflow")
     check_uses_pinned(nightly, "nightly workflow")
     check_uses_pinned(refresh, "RPM lock refresh workflow")
+    require(reviewdog_actionlint_marker in build, "build workflow must document the bundled actionlint 1.7.12 pin")
+    require(reviewdog_actionlint_marker in nightly, "nightly workflow must document the bundled actionlint 1.7.12 pin")
 
 
 
@@ -1253,6 +1264,8 @@ def check_rpm_locks() -> None:
 
         final_names = {row["name"] for row in rows if row["final_rpmdb"] == "yes"}
         require(final_names == required_final, f"{relative_path}: final rpmdb set mismatch: {sorted(final_names)}")
+
+
 def check_scanner_install_scripts() -> None:
     trivy = read("tools/install-trivy.sh")
     for marker in [
@@ -1546,7 +1559,9 @@ def check_docs() -> None:
     require("Byte-for-byte reproducible (HARD gate)" in acceptance, "acceptance.md must carry hard F3 wording")
     require("explicitly retracted" not in acceptance, "acceptance.md must not preserve the old F3 retract escape")
     require("#4857" in fips, "docs/fips.md must record the OpenSSL CMVP #4857 ledger")
-    require(OPENSSL_FIPS_MODULE_VERSION_AMD64 in fips, "docs/fips.md must record the validated OpenSSL provider version")
+    require(
+        OPENSSL_FIPS_MODULE_VERSION_AMD64 in fips, "docs/fips.md must record the validated OpenSSL provider version"
+    )
     require(OPENSSL_FIPS_MODULE_VERSION_ARM64 in fips, "docs/fips.md must record the arm64 OpenSSL provider version")
     require(OPENSSL_FIPS_PROVIDER_NEVRA_AMD64 in fips, "docs/fips.md must record the amd64 provider NVR")
     require(OPENSSL_FIPS_PROVIDER_NEVRA_ARM64 in fips, "docs/fips.md must record the arm64 provider NVR")
@@ -1801,6 +1816,10 @@ def check_lint_setup() -> None:
         f"rev: {YAMLLINT_HOOK_REV}",
         "id: yamllint",
         "args: [--strict, -c, .yamllint]",
+        "repo: https://github.com/DavidAnson/markdownlint-cli2",
+        f"rev: {MARKDOWNLINT_HOOK_REV}",
+        "id: markdownlint-cli2",
+        "files: ^.*\\.md$",
         "repo: https://github.com/hadolint/hadolint",
         f"rev: {HADOLINT_HOOK_REV}",
         "id: hadolint-docker",

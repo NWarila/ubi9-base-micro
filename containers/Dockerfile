@@ -574,6 +574,8 @@ LABEL org.nwarila.fips.cmvp="4857" \
       org.nwarila.fips.provider-nvr="${OPENSSL_FIPS_PROVIDER_NEVRA}"
 
 ARG TARGETARCH
+# TARGETARCH selects the per-architecture runtime stage defined above.
+# hadolint ignore=DL3006,DL3026
 FROM runtime-${TARGETARCH} AS runtime
 
 # UBI build-arg defaults are registry-qualified, digest-pinned, and verified by tools/verify.py.

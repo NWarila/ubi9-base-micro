@@ -1,7 +1,8 @@
 # Repository Namespace Note
 
 This repository publishes under `ghcr.io/nwarila/ubi9-base-micro`. Any copied acceptance-spec references to `ghcr.io/nwarila-platform/*` are superseded for this repository by the own-account namespace above.
-# `ubi9-base` — Definition of Done (Phase-1 Acceptance Spec)
+
+## `ubi9-base` — Definition of Done (Phase-1 Acceptance Spec)
 
 > **Status:** the formal, objective acceptance gate for the platform's first repo, `ubi9-base`.
 > **Enforced two ways:** (1) **in-CI** — the publish workflow fails the build if a gating criterion is unmet; (2) **independent post-publish audit** — from a clean, unauthenticated machine, every published image is pulled and verified. A criterion is "done" only when *both* pass.
@@ -9,9 +10,11 @@ This repository publishes under `ghcr.io/nwarila/ubi9-base-micro`. Any copied ac
 > This file ships into the repo (e.g. `docs/acceptance.md`) so CI and the audit enforce the same spec.
 
 ## The one-line DoD
+
 > An unrelated person, on a clean machine, can **anonymously pull all 8 images by digest** and have **`cosign` + `slsa-verifier` + every attestation check pass against the exact signer identity**; CI's **hardening + per-variant STIG-ARF + dual-scanner CVE + OpenVEX-default-deny** gates are green; the **FIPS/CMVP evidence is recorded truthfully** (proven or honestly scoped); **nightly rebuild is proven**; and **each variant meets-or-beats its Canonical rock on security while landing within its documented footprint target** — shipping STIG ARF + CMVP FIPS + SLSA L3 that rocks don't.
 
 ## Scope — the 8 images
+
 **Topology (validated 2026-06-17): POLYREPO** — **four repos** (`ubi9-base-micro` root + `ubi9-base-python`/`-node`/`-java`, each `FROM ubi9-base-micro@digest`) publish **4 runtime variants** + **4 `-dev` siblings** to `ghcr.io/nwarila-platform/*`. **This DoD applies per-repo:** the `ubi9-base-micro` DoD is the full A–H below; each variant repo inherits A–H and adds (a) its `FROM ubi9-base-micro@digest` pin is the *current* micro digest, (b) its own incremental signed STIG ARF + 800-190, (c) its CMVP delta (python rides #4857 / node OpenSSL-linkage-or-VOID / java FIPS = Keycloak-leaf), (d) its own exact per-repo signer identity. The **family-coherence gate (A5)** binds them. Per the topology decision, the variant tables below describe the 4 variants regardless of repo:
 
 | Runtime variant | `-dev` sibling | Runtime serves |
@@ -24,11 +27,13 @@ This repository publishes under `ghcr.io/nwarila/ubi9-base-micro`. Any copied ac
 **Applicability:** Sections **B** (distroless hardening) and **H** (footprint ceilings) apply to the **4 runtime variants only** — the `-dev` siblings legitimately carry a shell + toolchain. The **supply-chain evidence in C** (sign/SBOM/scan/attest) applies to **all 8 images** (a poisoned builder is a supply-chain risk too); `-dev` images need not be distroless or hit a footprint ceiling.
 
 ## Responsibility boundary (governs the whole spec)
+
 The platform owns the **hardened base floor**: the standard runtime (full CPython / Node / headless JRE), minimized only by **standard RPM hygiene** (`install_weak_deps=0`, `--nodocs`, locale/man + binary strip, shell removed, builder discarded), **rpmdb preserved**. There is **no Chisel-equivalent** (Chisel can't run on RPM anyway). **Any app-specific minimization — `jlink`/`jdeps` for Java, stdlib pruning for Python — is the leaf/user's job** in their own Dockerfile. The footprint delta this leaves vs a fully-sliced/`jlink`'d rock is **by design**, never a base failure.
 
 ---
 
 ## A. Artifacts exist & are correctly shaped
+
 - **A1.** All **8 images** publish to `ghcr.io/nwarila-platform/*` and are addressable by digest. *(check: `docker buildx imagetools inspect <img>@<digest>`)*
 - **A2.** Each image is **multi-arch** (`linux/amd64` + `linux/arm64`) — the digest resolves to an OCI index with both platforms.
 - **A3.** Runtime versions assert: `base-python`→Python 3.12.x, `base-node`→Node 22.x, `base-java`→OpenJDK 21.x. *(check: run the runtime with `--version`)*
@@ -36,6 +41,7 @@ The platform owns the **hardened base floor**: the standard runtime (full CPytho
 - **A5. Family coherence (polyrepo gate):** each variant repo's `FROM ubi9-base-micro@sha256:…` equals the **current published `ubi9-base-micro` digest**. A coherence check fails the build / flags drift if a variant lags micro (this is how the polyrepo family stays coherent without monorepo co-location).
 
 ## B. Runtime hardening — **runtime variants only** (gating)
+
 - **B1. No shell:** `/bin/sh`, `/bin/bash`, busybox, etc. do not resolve. *(check: `docker run --rm --entrypoint /bin/sh <img>@<digest>` exits non-zero / not-found)*
 - **B2. No package manager:** no `dnf`/`microdnf`/`rpm`/`apt`/`dpkg` executable; the builder stage is discarded.
 - **B3. Non-root:** image config `User` = `65532` (non-zero); never `0:0`.
@@ -44,6 +50,7 @@ The platform owns the **hardened base floor**: the standard runtime (full CPytho
 - **B6.** The repo's `tests/hardening.sh` runs B1–B5 as a **build-failing gate**.
 
 ## C. Supply-chain evidence — **all 8 images**, **per image** (gating)
+
 - **C1. cosign keyless signature** present; verifies with an **exact** `--certificate-identity` = the **SLSA generator workflow ref** + `--certificate-oidc-issuer=https://token.actions.githubusercontent.com`. A wildcard/regex identity is a **FAIL**.
 - **C2. SLSA L3 provenance** present; `slsa-verifier` confirms `builderID` = the **trusted `slsa-github-generator`** (proves L3, not L2 `attest-build-provenance`).
 - **C3. SBOM** (SPDX **and** CycloneDX), **generated from the rpmdb**, attached as an attestation, and enumerating real packages. *(check: `cosign download sbom <img>@<digest> | grep <a known RHEL rpm>` succeeds; a near-empty SBOM is a FAIL)*
@@ -57,10 +64,12 @@ The platform owns the **hardened base floor**: the standard runtime (full CPytho
 - **C8.** All attestations are **cosign keyless DSSE, logged in Rekor**.
 
 ## D. A consumer can verify it (gating, post-publish)
+
 - **D1.** From a **clean machine with no auth**, anonymous `docker pull <runtime>@<digest>` succeeds for every runtime variant (public GHCR).
 - **D2.** The full chain passes **anonymously**: `cosign verify` (C1) + `slsa-verifier verify-image` (C2) + `cosign verify-attestation` for each predicate type (sbom / vuln / stig-arf / 800-190 / openvex) — all success against the exact signer identity. (`gh attestation verify` is intentionally NOT in the contract: it verifies GitHub-native Artifact Attestations, not the cosign OCI attestation `generator_container_slsa3.yml` writes — see PLAN STEP006 rev. b.)
 
 ## E. Build integrity & discipline (gating)
+
 - **E1. Signed builds ran on GitHub-hosted ephemeral runners** via the trusted generator (confirmed by the provenance `builderID`); not self-hosted.
 - **E2. One self-owned workflow** in the repo; **no `uses:` into any NWarila-owned/internal shared reusable-workflow repo** (copy-and-own). **Exception:** the external **SLSA trusted-builder generator** reusable required by E1 — that trusted, audited, L3-built reusable IS the provenance mechanism, not an internal-coupling smell.
 - **E3.** Every `uses:` is a **40-char commit SHA**; `actionlint` is clean. **Exception (owner-ratified 2026-06-18; named MANDATE §6 exception — TECH-DEBT TD-1):** SLSA trusted reusable workflows (e.g. `generator_container_slsa3.yml`) are pinned by semantic-version **tag** `@vX.Y.Z` (upstream mandates a tag ref) + a CI **tag→SHA integrity guard** asserting the tag resolves to the audited commit; the EXACT `--certificate-identity` is the tag ref.
@@ -68,17 +77,20 @@ The platform owns the **hardened base floor**: the standard runtime (full CPytho
 - **E5.** The UBI `FROM` lines are **digest-pinned** (`@sha256:`) with Renovate annotations.
 
 ## F. Operational (gating)
+
 - **F1. Nightly + on-CVE rebuild** workflow exists and has run **green** at least once.
 - **F2.** The repo is wired into the **shared Renovate preset** (base-digest bump cascades downstream; the SLSA signer-identity ref pin rides the cascade).
 - **F3. Byte-for-byte reproducible (HARD gate):** a rebuild-from-identical-inputs check produces a byte-identical exported rootfs per architecture (`linux/amd64` and `linux/arm64`) and is enforced as a build-failing CI gate with `tools/assert-reproducible.py --assert-byte-identical`. The rpmdb remains present and valid; differences in `/var/lib/rpm/rpmdb.sqlite` are failures, not ignored or normalized away. Runtime RPM lockfiles enforce exact NEVRA plus `%{SHA256HEADER}` and `%{SIGMD5}` for every locked package so a same-NEVRA byte rebuild fails closed.
 
 ## G. Evidence honesty & docs (gating — the showcase bar)
+
 - **G1.** README/docs make the **4-variant set + the per-image evidence obvious** (transparency relocates to the repo), and **document the responsibility boundary** (base = standard hardened floor; leaf owns `jlink`/stdlib trimming).
 - **G2. CMVP module ledger committed** (real, verified): **RHEL 9 OpenSSL FIPS Provider #4857 ACTIVE** (corrects the earlier #4754) backing OpenSSL/C, Python `ssl`, and Node; **Go Cryptographic Module v1.0.0 #5247 ACTIVE** for Go-static; **BC-FJA v2.0.0 #4743 ACTIVE** for Java/Keycloak; **Node = no own cert, FIPS via the linked OpenSSL #4857** (contingent on C7b). Full spec → [FIPS-IMPLEMENTATION.md](FIPS-IMPLEMENTATION.md).
 - **G2a. Out-of-scope certs flagged** (never cite unless that exact version ships): RHEL 9.0 OpenSSL #4746; BC-FJA 2.1.0 interim #4943; Go module v1.26.0 (Pending Review). **Owner decision (Keycloak leaf):** ship BC-FIPS **2.0.0** (ACTIVE #4743) or accept Keycloak-26-default **2.1.x** (interim #4943).
 - **G3. FIPS claims scoped honestly:** the published claim is **module-scoped + approved-mode-scoped, never OS/host/container-scoped** ("containers use FIPS-validated modules in approved mode," not "FIPS-compliant system"). **`base-python` is explicitly bounded to TLS/OpenSSL-routed crypto** — hashlib built-ins (md5/sha1/sha2/sha3/blake2) bypass the provider, so "Python in FIPS mode" is never claimed (app-code algorithm discipline required). The non-FIPS-host limitation is stated verbatim. Publish the exact statement from [FIPS-IMPLEMENTATION.md](FIPS-IMPLEMENTATION.md).
 
 ## H. Rockcraft parity — footprint targets + the parity verdict (gating where noted)
+
 *Security parity is already enforced by B + C (we match-or-beat the rock's distroless posture and exceed it on scanner-truthfulness, RHSA/OVAL lineage, SLSA L3, STIG ARF, CMVP FIPS). Section H adds the **footprint** ceilings + the parity bookkeeping. Full rationale + measurement protocol: [ROCKCRAFT-PARITY.md](ROCKCRAFT-PARITY.md).*
 
 - **H1. Measurement protocol (mandatory):** same-runtime / same-date, **single-arch amd64**, compressed (registry-layer sum) **and** uncompressed (unpacked rootfs) stated separately — never subtract one unit from the other; never use a vendor "vs full distro" headline as the denominator. Scanner run is **native** (no manifest-bridge shim).
@@ -91,11 +103,13 @@ The platform owns the **hardened base floor**: the standard runtime (full CPytho
 ---
 
 ## Dependency caveats (true before this DoD can be hit)
+
 - **Phase-0 prerequisites must exist** for C/D/E: the **public GHCR namespace**, the **SLSA `generator_container_slsa3` wired** into the hosted build path, and the **GitHub-hosted runner path**. `ubi9-base` cannot reach its DoD before these.
 - **FIPS residuals #1–#3 RESOLVED (2026-06-17):** #1 Go module = **#5247 ACTIVE**; #2 Node FIPS = **in**, via linked OpenSSL #4857 (contingent on the C7b linkage gate); #3 Talos kernel FIPS = **no** (non-FIPS host; module-scoped container claim only). **Remaining build-time confirmations** (don't block the design): pin the exact `openssl-libs` NEVRA whose `fips.so` == the #4857-validated `3.0.7-395c1a240fbfffd8`; the **BC-FIPS 2.0.0 vs 2.1.0** Keycloak choice (G2a); Go toolchain **1.24/1.25, not 1.26**; and confirm linux/amd64+arm64 are within #5247's tested OEs (the A2 multi-arch requirement).
 - **`-dev` images** are signed/SBOM'd/scanned/attested (C) but exempt from B and H (they are builders, not shipped runtimes).
 
 ## Acceptance command sketch (independent audit, anonymous)
+
 ```sh
 D=ghcr.io/nwarila-platform/base-micro@sha256:...          # repeat per runtime variant
 GEN='https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/vX.Y.Z'
