@@ -20,8 +20,12 @@ dockerfile_arg_default() {
 
 source_date_epoch="${SOURCE_DATE_EPOCH:-$(dockerfile_arg_default SOURCE_DATE_EPOCH)}"
 ubi_minimal_image="${UBI_MINIMAL_IMAGE:-$(dockerfile_arg_default UBI_MINIMAL_IMAGE)}"
-openssl_fips_provider_nevra_amd64="${OPENSSL_FIPS_PROVIDER_NEVRA_AMD64:-$(dockerfile_arg_default OPENSSL_FIPS_PROVIDER_NEVRA_AMD64)}"
-openssl_fips_provider_nevra_arm64="${OPENSSL_FIPS_PROVIDER_NEVRA_ARM64:-$(dockerfile_arg_default OPENSSL_FIPS_PROVIDER_NEVRA_ARM64)}"
+openssl_fips_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA:-$(dockerfile_arg_default OPENSSL_FIPS_PROVIDER_NEVRA)}"
+openssl_fips_provider_rpm_base_url="${OPENSSL_FIPS_PROVIDER_RPM_BASE_URL:-$(dockerfile_arg_default OPENSSL_FIPS_PROVIDER_RPM_BASE_URL)}"
+openssl_fips_provider_rpm_sha256_x86_64="${OPENSSL_FIPS_PROVIDER_RPM_SHA256_X86_64:-$(dockerfile_arg_default OPENSSL_FIPS_PROVIDER_RPM_SHA256_X86_64)}"
+openssl_fips_provider_rpm_sha256_aarch64="${OPENSSL_FIPS_PROVIDER_RPM_SHA256_AARCH64:-$(dockerfile_arg_default OPENSSL_FIPS_PROVIDER_RPM_SHA256_AARCH64)}"
+openssl_fips_provider_so_rpm_sha256_x86_64="${OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64:-$(dockerfile_arg_default OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64)}"
+openssl_fips_provider_so_rpm_sha256_aarch64="${OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64:-$(dockerfile_arg_default OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64)}"
 dnf_repos="${DNF_REPOS:-}"
 
 validate_arch() {
@@ -62,18 +66,25 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG TARGETARCH
 ARG DNF_REPOS=""
-ARG OPENSSL_FIPS_PROVIDER_NEVRA_AMD64
-ARG OPENSSL_FIPS_PROVIDER_NEVRA_ARM64
+ARG OPENSSL_FIPS_PROVIDER_NEVRA
+ARG OPENSSL_FIPS_PROVIDER_RPM_BASE_URL
+ARG OPENSSL_FIPS_PROVIDER_RPM_SHA256_X86_64
+ARG OPENSSL_FIPS_PROVIDER_RPM_SHA256_AARCH64
+ARG OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64
+ARG OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64
 ARG SOURCE_DATE_EPOCH
+
+COPY fetch-openssl-fips-provider-rpms.sh /usr/local/bin/fetch-openssl-fips-provider-rpms.sh
 
 RUN <<'CAPTURE'
 set -euo pipefail
 
 case "${TARGETARCH}" in
-  amd64) rpm_arch="x86_64"; openssl_fips_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA_AMD64}" ;;
-  arm64) rpm_arch="aarch64"; openssl_fips_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA_ARM64}" ;;
+  amd64) rpm_arch="x86_64" ;;
+  arm64) rpm_arch="aarch64" ;;
   *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;;
 esac
+openssl_fips_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA}"
 fips_provider_nvr="${openssl_fips_provider_nevra#openssl-fips-provider-so-}"
 if [[ "${fips_provider_nvr}" == "${openssl_fips_provider_nevra}" ]]; then
   echo "invalid FIPS provider NEVRA pin: ${openssl_fips_provider_nevra}" >&2
@@ -89,8 +100,6 @@ runtime_package_specs=(
   glibc-common
   glibc-minimal-langpack
   libgcc
-  "openssl-fips-provider-${fips_provider_nvr}"
-  "${openssl_fips_provider_nevra}"
   openssl-libs
   redhat-release
   setup
@@ -120,7 +129,14 @@ if [[ -n "${DNF_REPOS}" ]]; then
   dnf_repo_args=(--disablerepo='*' "--enablerepo=${DNF_REPOS}")
 fi
 
-mkdir -p /rootfs /out
+mkdir -p /rootfs /out /tmp/fips-provider-rpms
+OPENSSL_FIPS_PROVIDER_NEVRA="${OPENSSL_FIPS_PROVIDER_NEVRA}" \
+OPENSSL_FIPS_PROVIDER_RPM_BASE_URL="${OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}" \
+OPENSSL_FIPS_PROVIDER_RPM_SHA256_X86_64="${OPENSSL_FIPS_PROVIDER_RPM_SHA256_X86_64}" \
+OPENSSL_FIPS_PROVIDER_RPM_SHA256_AARCH64="${OPENSSL_FIPS_PROVIDER_RPM_SHA256_AARCH64}" \
+OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64="${OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64}" \
+OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64="${OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64}" \
+  bash /usr/local/bin/fetch-openssl-fips-provider-rpms.sh --targetarch "${TARGETARCH}" --dest /tmp/fips-provider-rpms
 microdnf install -y --installroot=/rootfs --releasever=9 \
   --config=/etc/dnf/dnf.conf --noplugins \
   --setopt=reposdir=/etc/yum.repos.d \
@@ -132,6 +148,9 @@ microdnf install -y --installroot=/rootfs --releasever=9 \
 microdnf clean all
 rm -rf /rootfs/var/cache/* /var/cache/microdnf-installroot \
   /rootfs/var/log/dnf.log /rootfs/var/log/dnf.librepo.log /rootfs/var/log/hawkey.log
+rpm --root=/rootfs -Uvh --oldpackage --replacepkgs \
+  "/tmp/fips-provider-rpms/openssl-fips-provider-${fips_provider_nvr}.${rpm_arch}.rpm" \
+  "/tmp/fips-provider-rpms/${openssl_fips_provider_nevra}.${rpm_arch}.rpm"
 
 rpm --root=/rootfs -qa \
   --qf '%{NEVRA}|%{NAME}|%{EPOCHNUM}|%{VERSION}|%{RELEASE}|%{ARCH}|%{SHA256HEADER}|%{SIGMD5}\n' \
@@ -250,6 +269,7 @@ done
   printf '# arch: %s\n' "${TARGETARCH}"
   printf '# source_date_epoch: %s\n' "${SOURCE_DATE_EPOCH}"
   printf '# columns: package|final_rpmdb|name|epoch|version|release|arch|sha256_header|sigmd5\n'
+  cat /tmp/fips-provider-rpms/direct-rpms.lock
   awk -F'|' '
     NR == FNR {
       final[$0] = 1
@@ -279,13 +299,26 @@ validate_lockfile() {
   local platform_arch="$2"
   local rpm_arch
   rpm_arch="$(arch_to_rpm_arch "${platform_arch}")"
-  local expected_provider_nvr
+  local expected_provider_nvr="${openssl_fips_provider_nevra}"
+  local fips_provider_nvr="${expected_provider_nvr#openssl-fips-provider-so-}"
+  local expected_provider_package_nevra="openssl-fips-provider-${fips_provider_nvr}.${rpm_arch}"
+  local expected_provider_nevra="${expected_provider_nvr}.${rpm_arch}"
+  local expected_provider_sha expected_provider_so_sha rpm_basearch
   case "${platform_arch}" in
-    amd64) expected_provider_nvr="${openssl_fips_provider_nevra_amd64}" ;;
-    arm64) expected_provider_nvr="${openssl_fips_provider_nevra_arm64}" ;;
+    amd64)
+      rpm_basearch="x86_64"
+      expected_provider_sha="${openssl_fips_provider_rpm_sha256_x86_64}"
+      expected_provider_so_sha="${openssl_fips_provider_so_rpm_sha256_x86_64}"
+      ;;
+    arm64)
+      rpm_basearch="aarch64"
+      expected_provider_sha="${openssl_fips_provider_rpm_sha256_aarch64}"
+      expected_provider_so_sha="${openssl_fips_provider_so_rpm_sha256_aarch64}"
+      ;;
     *) return 2 ;;
   esac
-  local expected_provider_nevra="${expected_provider_nvr}.${rpm_arch}"
+  local expected_provider_url="${openssl_fips_provider_rpm_base_url%/}/${rpm_basearch}/baseos/os/Packages/o/${expected_provider_package_nevra}.rpm"
+  local expected_provider_so_url="${openssl_fips_provider_rpm_base_url%/}/${rpm_basearch}/baseos/os/Packages/o/${expected_provider_nevra}.rpm"
 
   [[ -s "${path}" ]] || {
     echo "RPM lockfile missing or empty: ${path}" >&2
@@ -329,6 +362,38 @@ validate_lockfile() {
   )
   local final_seen=" "
   local provider_pin_seen=0
+  local provider_package_direct_seen=0
+  local provider_so_direct_seen=0
+  local line direct_payload direct_package direct_url direct_sha direct_extra
+
+  while IFS= read -r line; do
+    case "${line}" in
+      "# direct_rpm: "*)
+        direct_payload="${line#\# direct_rpm: }"
+        IFS='|' read -r direct_package direct_url direct_sha direct_extra <<< "${direct_payload}"
+        if [[ -n "${direct_extra:-}" || -z "${direct_package}" || -z "${direct_url}" || -z "${direct_sha}" ]]; then
+          echo "${path}: invalid direct RPM entry: ${line}" >&2
+          return 1
+        fi
+        if [[ "${direct_package}|${direct_url}|${direct_sha}" == "${expected_provider_package_nevra}|${expected_provider_url}|${expected_provider_sha}" ]]; then
+          provider_package_direct_seen=1
+        elif [[ "${direct_package}|${direct_url}|${direct_sha}" == "${expected_provider_nevra}|${expected_provider_so_url}|${expected_provider_so_sha}" ]]; then
+          provider_so_direct_seen=1
+        else
+          echo "${path}: unexpected direct RPM entry: ${line}" >&2
+          return 1
+        fi
+        ;;
+    esac
+  done < "${path}"
+  [[ "${provider_package_direct_seen}" -eq 1 ]] || {
+    echo "${path}: missing direct RPM source pin for ${expected_provider_package_nevra}" >&2
+    return 1
+  }
+  [[ "${provider_so_direct_seen}" -eq 1 ]] || {
+    echo "${path}: missing direct RPM source pin for ${expected_provider_nevra}" >&2
+    return 1
+  }
 
   while IFS='|' read -r package final_rpmdb name epoch version release arch sha256_header sigmd5 extra; do
     case "${package}" in
@@ -414,6 +479,7 @@ generate_one() {
   trap 'rm -rf "${tmpdir:-}"' RETURN
 
   write_capture_dockerfile "${tmpdir}/Dockerfile"
+  cp "${repo_root}/tools/fetch-openssl-fips-provider-rpms.sh" "${tmpdir}/fetch-openssl-fips-provider-rpms.sh"
   mkdir -p "${tmpdir}/out"
 
   docker buildx build \
@@ -423,8 +489,12 @@ generate_one() {
     --build-arg "UBI_MINIMAL_IMAGE=${ubi_minimal_image}" \
     --build-arg "SOURCE_DATE_EPOCH=${source_date_epoch}" \
     --build-arg "DNF_REPOS=${dnf_repos}" \
-    --build-arg "OPENSSL_FIPS_PROVIDER_NEVRA_AMD64=${openssl_fips_provider_nevra_amd64}" \
-    --build-arg "OPENSSL_FIPS_PROVIDER_NEVRA_ARM64=${openssl_fips_provider_nevra_arm64}" \
+    --build-arg "OPENSSL_FIPS_PROVIDER_NEVRA=${openssl_fips_provider_nevra}" \
+    --build-arg "OPENSSL_FIPS_PROVIDER_RPM_BASE_URL=${openssl_fips_provider_rpm_base_url}" \
+    --build-arg "OPENSSL_FIPS_PROVIDER_RPM_SHA256_X86_64=${openssl_fips_provider_rpm_sha256_x86_64}" \
+    --build-arg "OPENSSL_FIPS_PROVIDER_RPM_SHA256_AARCH64=${openssl_fips_provider_rpm_sha256_aarch64}" \
+    --build-arg "OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64=${openssl_fips_provider_so_rpm_sha256_x86_64}" \
+    --build-arg "OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64=${openssl_fips_provider_so_rpm_sha256_aarch64}" \
     --output "type=local,dest=${tmpdir}/out" \
     "${tmpdir}"
 
@@ -467,7 +537,8 @@ run_self_test() {
   validate_lockfile "${repo_root}/rpm-lock/runtime.arm64.txt" arm64
 
   cp "${repo_root}/rpm-lock/runtime.amd64.txt" "${tmpdir}/bad.txt"
-  sed -i '4s/|no|/|maybe|/' "${tmpdir}/bad.txt"
+  awk 'BEGIN { done=0 } /^#/ { print; next } done == 0 { sub(/\|no\|/, "|maybe|"); done=1 } { print }' "${tmpdir}/bad.txt" > "${tmpdir}/bad.next"
+  mv "${tmpdir}/bad.next" "${tmpdir}/bad.txt"
   if validate_lockfile "${tmpdir}/bad.txt" amd64 >"${tmpdir}/bad.out" 2>&1; then
     echo "self-test invalid final_rpmdb unexpectedly passed" >&2
     return 1

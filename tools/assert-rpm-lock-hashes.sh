@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: assert-rpm-lock-hashes.sh --root ROOTFS --lockfile LOCKFILE
+usage: assert-rpm-lock-hashes.sh --root ROOTFS --lockfile LOCKFILE [--direct-rpm-dir DIR]
        assert-rpm-lock-hashes.sh --self-test
 EOF
 }
@@ -11,20 +11,58 @@ EOF
 verify_lock_hashes() {
   local rootfs="$1"
   local lockfile="$2"
+  local direct_rpm_dir="${3:-}"
   local count=0
-  local package final_rpmdb name epoch version release arch sha256_header sigmd5
+  local package final_rpmdb name epoch version release arch sha256_header sigmd5 extra
   local actual actual_sha256_header actual_sigmd5
+  declare -A direct_rpm_sha=()
+  declare -A direct_rpm_url=()
+  declare -A direct_rpm_row_seen=()
 
   [[ -s "${lockfile}" ]] || {
     echo "RPM lockfile missing or empty: ${lockfile}" >&2
     return 1
   }
 
-  while IFS='|' read -r package final_rpmdb name epoch version release arch sha256_header sigmd5; do
-    case "${package}" in
-      ""|\#*) continue ;;
+  while IFS= read -r line; do
+    case "${line}" in
+      "# direct_rpm: "*)
+        local direct_payload="${line#\# direct_rpm: }"
+        local direct_package direct_url direct_sha direct_extra
+        IFS='|' read -r direct_package direct_url direct_sha direct_extra <<< "${direct_payload}"
+        if [[ -n "${direct_extra:-}" || -z "${direct_package}" || -z "${direct_url}" || -z "${direct_sha}" ]]; then
+          echo "invalid direct RPM lock entry: ${line}" >&2
+          return 1
+        fi
+        [[ "${direct_url}" == https://cdn-ubi.redhat.com/* ]] || {
+          echo "direct RPM source must be the Red Hat UBI CDN for ${direct_package}: ${direct_url}" >&2
+          return 1
+        }
+        [[ "${direct_sha}" =~ ^[0-9a-f]{64}$ ]] || {
+          echo "invalid direct RPM sha256 for ${direct_package}: ${direct_sha}" >&2
+          return 1
+        }
+        direct_rpm_sha["${direct_package}"]="${direct_sha}"
+        direct_rpm_url["${direct_package}"]="${direct_url}"
+        continue
+        ;;
+      "" | \#*)
+        continue
+        ;;
     esac
 
+    IFS='|' read -r package final_rpmdb name epoch version release arch sha256_header sigmd5 extra <<< "${line}"
+
+    if [[ -n "${extra:-}" ]]; then
+      echo "too many columns for ${package}" >&2
+      return 1
+    fi
+    for field in "${package}" "${final_rpmdb}" "${name}" "${epoch}" "${version}" "${release}" "${arch}" "${sha256_header}" "${sigmd5}"; do
+      [[ -n "${field}" ]] || {
+        echo "empty field in lock row ${package}" >&2
+        return 1
+      }
+    done
     [[ "${sha256_header}" =~ ^[0-9a-f]{64}$ ]] || {
       echo "invalid locked SHA256HEADER for ${package}: ${sha256_header}" >&2
       return 1
@@ -53,6 +91,9 @@ verify_lock_hashes() {
       echo "SIGMD5 mismatch for ${package}: expected ${sigmd5}, got ${actual_sigmd5}" >&2
       return 1
     fi
+    if [[ -n "${direct_rpm_sha[${package}]+set}" ]]; then
+      direct_rpm_row_seen["${package}"]=1
+    fi
     count=$((count + 1))
   done < "${lockfile}"
 
@@ -61,7 +102,40 @@ verify_lock_hashes() {
     return 1
   }
 
+  local direct_package
+  for direct_package in "${!direct_rpm_sha[@]}"; do
+    [[ -n "${direct_rpm_row_seen[${direct_package}]+set}" ]] || {
+      echo "direct RPM lock entry has no matching package row: ${direct_package}" >&2
+      return 1
+    }
+    if [[ -n "${direct_rpm_dir}" ]]; then
+      local direct_url="${direct_rpm_url[${direct_package}]}"
+      local filename="${direct_url##*/}"
+      local direct_path="${direct_rpm_dir%/}/${filename}"
+      local actual_direct_sha
+      local sig_output
+      [[ -s "${direct_path}" ]] || {
+        echo "direct RPM file missing or empty: ${direct_path}" >&2
+        return 1
+      }
+      actual_direct_sha="$(sha256sum "${direct_path}" | awk '{print $1}')"
+      if [[ "${actual_direct_sha}" != "${direct_rpm_sha[${direct_package}]}" ]]; then
+        echo "direct RPM sha256 mismatch for ${direct_package}: expected ${direct_rpm_sha[${direct_package}]}, got ${actual_direct_sha}" >&2
+        return 1
+      fi
+      sig_output="$(rpm -K "${direct_path}")"
+      printf '%s\n' "${sig_output}"
+      if [[ "${sig_output}" != *"digests signatures OK"* ]]; then
+        echo "direct RPM GPG verification failed for ${direct_package}" >&2
+        return 1
+      fi
+    fi
+  done
+
   echo "runtime RPM content hashes verified with %{SHA256HEADER}/%{SIGMD5}: ${count} packages"
+  if [[ "${#direct_rpm_sha[@]}" -gt 0 ]]; then
+    echo "direct RPM source pins verified from lockfile: ${#direct_rpm_sha[@]} packages"
+  fi
 }
 
 run_self_test() {
@@ -90,11 +164,13 @@ EOF
 
   cat > "${tmpdir}/lock.good" <<EOF
 # columns: package|final_rpmdb|name|epoch|version|release|arch|sha256_header|sigmd5
+# direct_rpm: foo-1-1.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/o/foo-1-1.x86_64.rpm|${sha_a}
 foo-1-1.x86_64|yes|foo|0|1|1|x86_64|${sha_a}|${sig_a}
 bar-1-1.noarch|yes|bar|0|1|1|noarch|${sha_b}|${sig_b}
 EOF
   PATH="${tmpdir}/bin:${PATH}" verify_lock_hashes "/fake-root" "${tmpdir}/lock.good" > "${tmpdir}/good.out"
   grep -Fq "2 packages" "${tmpdir}/good.out"
+  grep -Fq "direct RPM source pins verified" "${tmpdir}/good.out"
 
   cat > "${tmpdir}/lock.bad" <<EOF
 # columns: package|final_rpmdb|name|epoch|version|release|arch|sha256_header|sigmd5
@@ -106,12 +182,23 @@ EOF
   fi
   grep -Fq "SHA256HEADER mismatch for foo-1-1.x86_64" "${tmpdir}/bad.out"
 
-  echo "RPM lock hash assertion self-test: ok (synthetic SHA256HEADER mismatch failed closed)"
+  cat > "${tmpdir}/lock.missing-direct-row" <<EOF
+# direct_rpm: missing-1-1.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/o/missing-1-1.x86_64.rpm|${sha_a}
+foo-1-1.x86_64|yes|foo|0|1|1|x86_64|${sha_a}|${sig_a}
+EOF
+  if PATH="${tmpdir}/bin:${PATH}" verify_lock_hashes "/fake-root" "${tmpdir}/lock.missing-direct-row" > "${tmpdir}/missing.out" 2>&1; then
+    echo "self-test missing direct row unexpectedly passed" >&2
+    return 1
+  fi
+  grep -Fq "direct RPM lock entry has no matching package row" "${tmpdir}/missing.out"
+
+  echo "RPM lock hash assertion self-test: ok (synthetic SHA256HEADER and direct RPM failures failed closed)"
 }
 
 main() {
   local rootfs=""
   local lockfile=""
+  local direct_rpm_dir=""
 
   if [[ "${1:-}" == "--self-test" ]]; then
     run_self_test
@@ -126,6 +213,10 @@ main() {
         ;;
       --lockfile)
         lockfile="${2:-}"
+        shift 2
+        ;;
+      --direct-rpm-dir)
+        direct_rpm_dir="${2:-}"
         shift 2
         ;;
       -h|--help)
@@ -144,7 +235,7 @@ main() {
     return 2
   fi
 
-  verify_lock_hashes "${rootfs}" "${lockfile}"
+  verify_lock_hashes "${rootfs}" "${lockfile}" "${direct_rpm_dir}"
 }
 
 main "$@"

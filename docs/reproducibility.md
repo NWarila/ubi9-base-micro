@@ -38,7 +38,11 @@ Determinism controls:
   the QEMU/binfmt emulator used for the cross-architecture `linux/arm64` build
   path on GitHub-hosted amd64 runners.
 - Runtime RPM inputs are locked by per-architecture transaction files in
-  `rpm-lock/`.
+  `rpm-lock/`. The OpenSSL FIPS provider `-8.el9` RPMs are directly URL-sourced
+  from the Red Hat UBI CDN because current repository metadata has purged them;
+  each lockfile records `# direct_rpm:` URL and SHA-256 comments, and the build
+  verifies Red Hat RPM signatures plus those SHA-256 pins before installing the
+  local files.
 - Every locked RPM is verified immediately after install with
   `rpm --root=/rootfs -q --qf '%{SHA256HEADER}|%{SIGMD5}\n' <locked-nevra>`.
   `SHA256HEADER` is the rpmdb-exposed tag that matches the lockfile

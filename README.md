@@ -55,12 +55,14 @@ the SLSA L3 container provenance generator.
 
 The runtime uses the Red Hat Enterprise Linux 9 OpenSSL FIPS Provider in
 approved mode through `/etc/pki/tls/openssl-fips.cnf` and
-`OPENSSL_CONF`/`OPENSSL_MODULES`. The amd64 image keeps the CMVP #4857
-`openssl-fips-provider-so-3.0.7-8.el9` baseline with `fips.so` version
-`3.0.7-395c1a240fbfffd8`. The arm64 image uses
-`openssl-fips-provider-so-3.0.7-11.el9_8` with `fips.so` version
-`3.0.7-cda111b5812c30d4`, approved-mode configured and self-test passing but
-explicitly not a CMVP-validated configuration on that architecture. These are
+`OPENSSL_CONF`/`OPENSSL_MODULES`. Both amd64 and arm64 hold
+`openssl-fips-provider-so-3.0.7-8.el9` with `fips.so` version
+`3.0.7-395c1a240fbfffd8`; the provider RPMs are fetched from Red Hat UBI CDN
+direct URLs, verified with Red Hat RPM signatures and pinned SHA-256 values, and
+installed locally to preserve rpm ownership. The amd64 image is the CMVP #4857
+validated approved-mode configuration. The arm64 image ships the same module and
+passes approved-mode self-tests, but it is explicitly not a CMVP-validated
+configuration on that architecture because #4857 lists no arm64 OE. These are
 module-scoped and approved-mode-scoped statements, not host, OS, container, or
 application FIPS validation claims. The platform host remains non-FIPS. See
 `docs/fips.md`.
