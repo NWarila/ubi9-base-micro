@@ -494,7 +494,10 @@ def check_dockerfile() -> None:
         "ARG SOURCE_DATE_EPOCH=1704067200",
         'amd64) rpm_arch="x86_64"',
         'arm64) rpm_arch="aarch64"',
-        'bash /tmp/fetch-runtime-rpms.sh --targetarch "${TARGETARCH}" --lockfile "${runtime_lockfile}" --dest /tmp/runtime-rpms',
+        (
+            'bash /tmp/fetch-runtime-rpms.sh --targetarch "${TARGETARCH}" '
+            '--lockfile "${runtime_lockfile}" --dest /tmp/runtime-rpms'
+        ),
         "rpm -Uvh --oldpackage --replacepkgs",
         'expected_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}"',
         "COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/",
@@ -1179,12 +1182,10 @@ def check_rpm_locks() -> None:
         expected_provider_package = f"openssl-fips-provider-{fips_provider_nvr}.{rpm_arch}"
         expected_provider_so_package = f"{OPENSSL_FIPS_PROVIDER_NEVRA}.{rpm_arch}"
         expected_provider_url = (
-            f"{OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}/{rpm_arch}/baseos/os/Packages/o/"
-            f"{expected_provider_package}.rpm"
+            f"{OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}/{rpm_arch}/baseos/os/Packages/o/{expected_provider_package}.rpm"
         )
         expected_provider_so_url = (
-            f"{OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}/{rpm_arch}/baseos/os/Packages/o/"
-            f"{expected_provider_so_package}.rpm"
+            f"{OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}/{rpm_arch}/baseos/os/Packages/o/{expected_provider_so_package}.rpm"
         )
         direct_pins: dict[str, tuple[str, str]] = {}
         rows: list[dict[str, str]] = []
@@ -1243,13 +1244,19 @@ def check_rpm_locks() -> None:
         require(len(packages) == len(set(packages)), f"{relative_path}: duplicate package rows")
         require(len(packages) == 38, f"{relative_path}: expected 38 transaction RPMs, got {len(packages)}")
         require(set(direct_pins) == set(packages), f"{relative_path}: direct RPM pin set must match package rows")
-        require(expected_provider[platform_arch] in packages, f"{relative_path}: missing pinned provider {expected_provider[platform_arch]}")
+        require(
+            expected_provider[platform_arch] in packages,
+            f"{relative_path}: missing pinned provider {expected_provider[platform_arch]}",
+        )
 
         for row in rows:
             package = row["package"]
             url, rpm_sha256 = direct_pins[package]
             expected_filename = f"{row['name']}-{row['version']}-{row['release']}.{row['arch']}.rpm"
-            require(url.endswith(f"/{expected_filename}"), f"{relative_path}: direct RPM URL filename mismatch for {package}")
+            require(
+                url.endswith(f"/{expected_filename}"),
+                f"{relative_path}: direct RPM URL filename mismatch for {package}",
+            )
             if package == expected_provider_package:
                 require(
                     (url, rpm_sha256) == (expected_provider_url, provider_sha),
