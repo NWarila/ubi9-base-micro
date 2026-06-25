@@ -1,6 +1,8 @@
 # arch: amd64
 # source_date_epoch: 1704067200
 # columns: package|final_rpmdb|name|epoch|version|release|arch|sha256_header|sigmd5
+# direct_rpm: openssl-fips-provider-3.0.7-8.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/o/openssl-fips-provider-3.0.7-8.el9.x86_64.rpm|bbf25303def8e1270675531c47bdad432f6ad8ef4c327556ae65bd6abaf8edb5
+# direct_rpm: openssl-fips-provider-so-3.0.7-8.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/o/openssl-fips-provider-so-3.0.7-8.el9.x86_64.rpm|ab48d98504fae6f8636de027a1ee06d21d5e9c27b7beb247017a6fe55567c5e9
 alternatives-1.24-2.el9.x86_64|no|alternatives|0|1.24|2.el9|x86_64|daca973219d8d197c440902f994b852d4125bd6c5bc7e0c766326e7f4b9482e9|5b3d3bc965c4bd15327e54554779cf34
 basesystem-11-13.el9.noarch|yes|basesystem|0|11|13.el9|noarch|01a59a06e36f02ce2d63c3ec66655bcf6c484e308f106d2ade807009f4b9215d|16605e0013938a5e21ffdf777cfa86ce
 bash-5.1.8-9.el9.x86_64|no|bash|0|5.1.8|9.el9|x86_64|b8f0eef3902e37be3f0a12862b09e50f0b0fd069abc4a432a2352fc49fc03363|57e93b1739cc3512f9f29dcaa8a38055

@@ -9,41 +9,43 @@
 The image publishes both `linux/amd64` and `linux/arm64`. The RHEL OpenSSL FIPS
 Provider can be configured and self-test passing on both architectures, but CMVP
 certificate #4857 does not list an aarch64 or arm64 operational environment.
-The current UBI arm64 repository no longer serves the #4857 amd64 baseline
-provider build (`openssl-fips-provider-so-3.0.7-8.el9`), while amd64 still does.
-Claiming identical validation scope or provider version across both manifests
-would overstate the evidence.
+Current UBI repository metadata has purged `openssl-fips-provider-so-3.0.7-8.el9`
+for both RPM architectures, but Red Hat still serves the signed `-8.el9` RPMs by
+direct CDN URL. Moving arm64 to a newer z-stream would keep approved mode but
+would no longer ship the only module version validated by #4857.
 
 ## Decision
 
 The repository publishes both architectures with the same approved-mode OpenSSL
-configuration and build-time provider gates, but with per-architecture provider
-pins. The amd64 image holds `openssl-fips-provider-so-3.0.7-8.el9` and module
-version `3.0.7-395c1a240fbfffd8`, documented and labeled as within #4857's
-validated operational-environment scope. The arm64 image pins
-`openssl-fips-provider-so-3.0.7-11.el9_8` and module version
-`3.0.7-cda111b5812c30d4`, documented and labeled as approved-mode configured and
-self-test passing, but not a CMVP-validated configuration for that architecture.
+configuration and build-time provider gates, and both architectures hold
+`openssl-fips-provider-so-3.0.7-8.el9` with module version
+`3.0.7-395c1a240fbfffd8`. The Dockerfile and RPM lock generator fetch the
+provider metapackage and `-so` RPMs from Red Hat UBI CDN direct URLs, verify the
+Red Hat RPM signature and pinned SHA-256 for each architecture, and install the
+local RPMs so rpm ownership remains truthful.
 
 The image carries `/etc/nwarila/fips-status.json`, and the publish workflow adds
 per-platform `org.nwarila.fips.cmvp.oe-validated`,
 `org.nwarila.fips.module-version`, and `org.nwarila.fips.provider-nvr`
 annotations. The status file records the architecture boundary with
-`oe_validated` on both architectures. The arm64 status file also records
-`provider_nvr` and `provider_nevra`; the amd64 status file keeps the
-main-compatible JSON shape so the amd64 rootfs remains byte-for-byte identical
-with the validated baseline.
+`oe_validated`, `provider_nvr`, and `provider_nevra` on both architectures.
+
+amd64 is documented and labeled as within #4857's validated
+operational-environment scope. arm64 is documented and labeled as the same module
+and provider NVR, approved-mode configured and self-test passing, but not a
+CMVP-validated configuration for that architecture.
 
 ## Consequences
 
 - Multi-arch consumers get one coherent image family without a false arm64 FIPS
   validation claim.
-- Documentation, labels, annotations, and runtime status artifacts must stay
-  aligned with the per-arch provider pins.
+- Documentation, labels, annotations, runtime status artifacts, and RPM locks
+  must stay aligned with the single provider/module pin.
 - Future CMVP coverage changes can upgrade the arm64 scope only after primary
   evidence supports it.
-- A future purge of amd64 `openssl-fips-provider-so-3.0.7-8.el9.x86_64` forces a
-  separate amd64 z-stream coverage decision before that pin can move.
+- A future Red Hat CDN 404, SHA-256 mismatch, or GPG verification failure for the
+  direct `-8.el9` RPMs forces a provider bump plus amd64 revalidation decision;
+  the image must not silently substitute a rebuild or newer z-stream.
 
 ## References
 

@@ -127,11 +127,11 @@ case "${image_arch}" in
     expected_disclaimer="CMVP #4857-validated approved-mode configuration."
     ;;
   arm64)
-    expected_module="3.0.7-cda111b5812c30d4"
-    expected_provider_nvr="openssl-fips-provider-so-3.0.7-11.el9_8"
+    expected_module="3.0.7-395c1a240fbfffd8"
+    expected_provider_nvr="openssl-fips-provider-so-3.0.7-8.el9"
     expected_provider_nevra="${expected_provider_nvr}.aarch64"
     expected_oe_validated=false
-    expected_disclaimer="The Red Hat OpenSSL FIPS provider is present, approved-mode-configured, and self-test-passing, but this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list - this is NOT a CMVP-validated configuration on this architecture."
+    expected_disclaimer="The Red Hat OpenSSL FIPS provider (module #4857, v3.0.7-395c1a240fbfffd8) is present, approved-mode-configured, and self-test-passing, but this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list - this is NOT a CMVP-validated configuration on this architecture."
     ;;
   *)
     echo "unsupported image architecture for FIPS status assertion: ${image_arch}" >&2
@@ -146,20 +146,10 @@ status_needles=(
   '"oe_validated": '"${expected_oe_validated}"
   "${expected_disclaimer}"
 )
-if [[ "${image_arch}" == "arm64" ]]; then
-  status_needles+=(
-    '"provider_nvr": "'"${expected_provider_nvr}"'"'
-    '"provider_nevra": "'"${expected_provider_nevra}"'"'
-  )
-else
-  for legacy_absent in '"provider_nvr":' '"provider_nevra":'; do
-    if grep -Fq "${legacy_absent}" "${status_file}"; then
-      echo "amd64 fips-status.json changed from the main byte-identity baseline: ${legacy_absent}" >&2
-      cat "${status_file}" >&2
-      exit 1
-    fi
-  done
-fi
+status_needles+=(
+  '"provider_nvr": "'"${expected_provider_nvr}"'"'
+  '"provider_nevra": "'"${expected_provider_nevra}"'"'
+)
 
 for needle in "${status_needles[@]}"; do
   if ! grep -Fq "${needle}" "${status_file}"; then

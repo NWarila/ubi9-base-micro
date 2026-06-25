@@ -5,5 +5,6 @@
 !containers/fips/openssl.cnf
 !tools/
 !tools/assert-rpm-lock-hashes.sh
+!tools/fetch-openssl-fips-provider-rpms.sh
 !rpm-lock/
 !rpm-lock/*.txt

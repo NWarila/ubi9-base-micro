@@ -1,6 +1,8 @@
 # arch: arm64
 # source_date_epoch: 1704067200
 # columns: package|final_rpmdb|name|epoch|version|release|arch|sha256_header|sigmd5
+# direct_rpm: openssl-fips-provider-3.0.7-8.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/o/openssl-fips-provider-3.0.7-8.el9.aarch64.rpm|0cfe7b281ae2ca3cb0ceaa1a0b84f8c087c4ac16662ebb9c19b5681cf39f99a9
+# direct_rpm: openssl-fips-provider-so-3.0.7-8.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/o/openssl-fips-provider-so-3.0.7-8.el9.aarch64.rpm|18c77b9b37e7abf0e8cf1dac4b3de770efe895547bdcab8aea8d8d8592954947
 alternatives-1.24-2.el9.aarch64|no|alternatives|0|1.24|2.el9|aarch64|b33a0e174b7f418c49b466d19e622925864e7e763501cbe7abcb8d896f519373|a244047cda0c96f2c1d8eb28a64ff4f8
 basesystem-11-13.el9.noarch|yes|basesystem|0|11|13.el9|noarch|01a59a06e36f02ce2d63c3ec66655bcf6c484e308f106d2ade807009f4b9215d|16605e0013938a5e21ffdf777cfa86ce
 bash-5.1.8-9.el9.aarch64|no|bash|0|5.1.8|9.el9|aarch64|996ce808b6eb731274148030b26301f50975c0daaa48762c7c45f4530f8b7f5f|261c46470d2574cd4e5b8ca47be757a0
@@ -26,8 +28,8 @@ libsigsegv-2.13-4.el9.aarch64|no|libsigsegv|0|2.13|4.el9|aarch64|3bfb5bd2aa23f46
 libtasn1-4.16.0-9.el9.aarch64|no|libtasn1|0|4.16.0|9.el9|aarch64|5fb03d8a30f3d56f6e52136b7c536d5cb5bab468792bcd029b922e91599ed719|a90f887649a5b85f3a174a901f3d1d3b
 ncurses-base-6.2-12.20210508.el9.noarch|no|ncurses-base|0|6.2|12.20210508.el9|noarch|f117dc1c35f5bb8145babd36700bf0fc0ec0d20e14cbb0175bcfa919d0347d2b|6a2b37ae1ba184e60cff0acbd72a1eae
 ncurses-libs-6.2-12.20210508.el9.aarch64|no|ncurses-libs|0|6.2|12.20210508.el9|aarch64|25f48673dbde40c26484abd6908d772906d0abe7f33788d6162e40555ebafea0|52ad50b5c1cdafe307f12aab17811583
-openssl-fips-provider-3.0.7-11.el9_8.aarch64|yes|openssl-fips-provider|0|3.0.7|11.el9_8|aarch64|e38f3745ff56f623acc35a010e53e64fc781c7bca9901ce193f9d034bcacf3aa|8d938c4b65e35bb1be154d69b02f55cb
-openssl-fips-provider-so-3.0.7-11.el9_8.aarch64|yes|openssl-fips-provider-so|0|3.0.7|11.el9_8|aarch64|84ae73cfed81a9483992fe21e56f314a2a7ac14827a0ed117d2e867aae7c274d|6768c4297f4a72df979a5846e7ba9689
+openssl-fips-provider-3.0.7-8.el9.aarch64|yes|openssl-fips-provider|0|3.0.7|8.el9|aarch64|be2ed40694dfea73b4c0542a65c812c40edcd3b398a9305747b8980d7040bcec|0173567143b5eb53df9d87748f181a71
+openssl-fips-provider-so-3.0.7-8.el9.aarch64|yes|openssl-fips-provider-so|0|3.0.7|8.el9|aarch64|93387b3c841e3c601275d58176f009eefdb01551e5d951d48be3a55b856e0449|52e52ea8cc9d2471f61b31892c7abfec
 openssl-libs-1:3.5.5-4.el9_8.aarch64|yes|openssl-libs|1|3.5.5|4.el9_8|aarch64|71c8528aef095e6b7f6ee866c11e1e99b7d9c6803c78b943c79a3d548cc9ee08|59fa7bdc9a0ab99a11903b869b9eea5b
 p11-kit-0.26.2-1.el9.aarch64|no|p11-kit|0|0.26.2|1.el9|aarch64|a4919d5bac1bca412ec244d8331e41347c5a8a199e805e0fcfebe6cc71654c1e|70a71a7eb2d8ee3d00e21cc9846143a9
 p11-kit-trust-0.26.2-1.el9.aarch64|no|p11-kit-trust|0|0.26.2|1.el9|aarch64|6984b907cc9d9864aeaa90792477f035d5d050bef03900118c7e4628d48776fc|7894d22fb815348da1070517054358d9

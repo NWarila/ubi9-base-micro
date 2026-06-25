@@ -30,10 +30,17 @@ SUPPLY_CHAIN_WORKFLOWS = [
     ".github/workflows/scorecard.yml",
     ".github/workflows/zizmor.yml",
 ]
-OPENSSL_FIPS_MODULE_VERSION_AMD64 = "3.0.7-395c1a240fbfffd8"
-OPENSSL_FIPS_PROVIDER_NEVRA_AMD64 = "openssl-fips-provider-so-3.0.7-8.el9"
-OPENSSL_FIPS_MODULE_VERSION_ARM64 = "3.0.7-cda111b5812c30d4"
-OPENSSL_FIPS_PROVIDER_NEVRA_ARM64 = "openssl-fips-provider-so-3.0.7-11.el9_8"
+OPENSSL_FIPS_MODULE_VERSION = "3.0.7-395c1a240fbfffd8"
+OPENSSL_FIPS_PROVIDER_NEVRA = "openssl-fips-provider-so-3.0.7-8.el9"
+OPENSSL_FIPS_PROVIDER_RPM_BASE_URL = "https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9"
+OPENSSL_FIPS_PROVIDER_RPM_SHA256_AMD64 = "bbf25303def8e1270675531c47bdad432f6ad8ef4c327556ae65bd6abaf8edb5"
+OPENSSL_FIPS_PROVIDER_RPM_SHA256_ARM64 = "0cfe7b281ae2ca3cb0ceaa1a0b84f8c087c4ac16662ebb9c19b5681cf39f99a9"
+OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AMD64 = "ab48d98504fae6f8636de027a1ee06d21d5e9c27b7beb247017a6fe55567c5e9"
+OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_ARM64 = "18c77b9b37e7abf0e8cf1dac4b3de770efe895547bdcab8aea8d8d8592954947"
+OPENSSL_FIPS_MODULE_VERSION_AMD64 = OPENSSL_FIPS_MODULE_VERSION
+OPENSSL_FIPS_PROVIDER_NEVRA_AMD64 = OPENSSL_FIPS_PROVIDER_NEVRA
+OPENSSL_FIPS_MODULE_VERSION_ARM64 = OPENSSL_FIPS_MODULE_VERSION
+OPENSSL_FIPS_PROVIDER_NEVRA_ARM64 = OPENSSL_FIPS_PROVIDER_NEVRA
 COMMUNITY_PROFILE_FILES = [
     "CHANGELOG.md",
     "CODE_OF_CONDUCT.md",
@@ -236,6 +243,11 @@ def check_required_files() -> None:
         "vex/README.md",
     ]:
         require((ROOT / relative_path).is_file(), f"missing required file: {relative_path}")
+    dockerignore = read(".dockerignore")
+    require(
+        "!tools/fetch-openssl-fips-provider-rpms.sh" in dockerignore,
+        ".dockerignore must allowlist direct FIPS provider fetch helper",
+    )
     for relative_path, _ in REPO_ADRS:
         require((ROOT / relative_path).is_file(), f"missing required ADR: {relative_path}")
 
@@ -435,23 +447,27 @@ def check_dockerfile() -> None:
         "ARG UBI_MINIMAL_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal@sha256:",
         "ARG UBI_MICRO_IMAGE=registry.access.redhat.com/ubi9/ubi-micro@sha256:",
         "ARG TARGETARCH",
-        f"ARG OPENSSL_FIPS_MODULE_VERSION_AMD64={OPENSSL_FIPS_MODULE_VERSION_AMD64}",
-        f"ARG OPENSSL_FIPS_PROVIDER_NEVRA_AMD64={OPENSSL_FIPS_PROVIDER_NEVRA_AMD64}",
-        f"ARG OPENSSL_FIPS_MODULE_VERSION_ARM64={OPENSSL_FIPS_MODULE_VERSION_ARM64}",
-        f"ARG OPENSSL_FIPS_PROVIDER_NEVRA_ARM64={OPENSSL_FIPS_PROVIDER_NEVRA_ARM64}",
+        f"ARG OPENSSL_FIPS_MODULE_VERSION={OPENSSL_FIPS_MODULE_VERSION}",
+        f"ARG OPENSSL_FIPS_PROVIDER_NEVRA={OPENSSL_FIPS_PROVIDER_NEVRA}",
+        f"ARG OPENSSL_FIPS_PROVIDER_RPM_BASE_URL={OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}",
+        f"ARG OPENSSL_FIPS_PROVIDER_RPM_SHA256_X86_64={OPENSSL_FIPS_PROVIDER_RPM_SHA256_AMD64}",
+        f"ARG OPENSSL_FIPS_PROVIDER_RPM_SHA256_AARCH64={OPENSSL_FIPS_PROVIDER_RPM_SHA256_ARM64}",
+        f"ARG OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64={OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AMD64}",
+        f"ARG OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64={OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_ARM64}",
         "ARG SOURCE_DATE_EPOCH=1704067200",
         "amd64) rpm_arch=\"x86_64\"",
         "arm64) rpm_arch=\"aarch64\"",
-        "openssl_fips_provider_nevra=\"${OPENSSL_FIPS_PROVIDER_NEVRA_AMD64}\"",
-        "openssl_fips_provider_nevra=\"${OPENSSL_FIPS_PROVIDER_NEVRA_ARM64}\"",
-        "fips_provider_nvr=\"${openssl_fips_provider_nevra#openssl-fips-provider-so-}\"",
-        "openssl \"openssl-fips-provider-${fips_provider_nvr}\" \"${openssl_fips_provider_nevra}\" crypto-policies",
-        "expected_provider_nevra=\"${openssl_fips_provider_nevra}.${rpm_arch}\"",
+        "OPENSSL_FIPS_PROVIDER_NEVRA=\"${OPENSSL_FIPS_PROVIDER_NEVRA}\"",
+        "bash /tmp/fetch-openssl-fips-provider-rpms.sh --targetarch \"${TARGETARCH}\" --dest /tmp/fips-provider-rpms",
+        "rpm -Uvh --oldpackage --replacepkgs",
+        "expected_provider_nevra=\"${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}\"",
         "COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/",
         "COPY tools/assert-rpm-lock-hashes.sh /tmp/assert-rpm-lock-hashes.sh",
+        "COPY tools/fetch-openssl-fips-provider-rpms.sh /tmp/fetch-openssl-fips-provider-rpms.sh",
         "locked_packages=\"\"",
         "final runtime RPM lock floor verified",
         "bash /tmp/assert-rpm-lock-hashes.sh --root /rootfs --lockfile",
+        "--direct-rpm-dir /tmp/fips-provider-rpms",
         "find /rootfs -xdev -exec touch -h -d \"@${SOURCE_DATE_EPOCH}\" {} +",
         "microdnf install -y --installroot=/rootfs",
         "--nodocs --setopt=install_weak_deps=0",
@@ -524,8 +540,12 @@ def check_dockerfile() -> None:
         "ghcr.io/nwarila-" + "platform",
         "fips" + "install",
         "OPENSSL_FIPS_PROVIDER_NEVRA=openssl-fips-provider-so-3.0.7-8.el9.x86_64",
-        "ARG OPENSSL_FIPS_MODULE_VERSION=",
-        "ARG OPENSSL_FIPS_PROVIDER_NEVRA=",
+        "OPENSSL_FIPS_MODULE_VERSION_AMD64",
+        "OPENSSL_FIPS_PROVIDER_NEVRA_AMD64",
+        "OPENSSL_FIPS_MODULE_VERSION_ARM64",
+        "OPENSSL_FIPS_PROVIDER_NEVRA_ARM64",
+        "openssl-fips-provider-so-3.0.7-11.el9_8",
+        "3.0.7-cda111b5812c30d4",
     ]
     present = [marker for marker in forbidden if marker in text]
     require(not present, "Dockerfile contains forbidden marker(s): " + ", ".join(present))
@@ -737,6 +757,7 @@ def check_workflow() -> None:
     check_uses_pinned(refresh, "RPM lock refresh workflow")
 
 
+
 def check_supply_chain_workflows() -> None:
     gitignore = read(".gitignore")
     for relative_path in [".github/zizmor.yml", *SUPPLY_CHAIN_WORKFLOWS]:
@@ -873,11 +894,15 @@ def check_publish_workflow() -> None:
         "--sbom=false",
         "--metadata-file dist/image-metadata.json",
         "--output \"type=registry,rewrite-timestamp=true\"",
-        "OPENSSL_FIPS_MODULE_VERSION_AMD64",
-        "OPENSSL_FIPS_PROVIDER_NEVRA_AMD64",
-        "OPENSSL_FIPS_MODULE_VERSION_ARM64",
-        "OPENSSL_FIPS_PROVIDER_NEVRA_ARM64",
+        "OPENSSL_FIPS_MODULE_VERSION",
+        "OPENSSL_FIPS_PROVIDER_NEVRA",
+        "OPENSSL_FIPS_PROVIDER_RPM_SHA256_X86_64",
+        "OPENSSL_FIPS_PROVIDER_RPM_SHA256_AARCH64",
+        "OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64",
+        "OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64",
         "manifest[linux/amd64]:org.nwarila.fips.module-version",
+        "manifest[linux/amd64]:org.nwarila.fips.provider-nvr",
+        "manifest[linux/arm64]:org.nwarila.fips.module-version",
         "manifest[linux/arm64]:org.nwarila.fips.provider-nvr",
         "SOURCE_DATE_EPOCH: \"1704067200\"",
         "OCI_CREATED: \"2024-01-01T00:00:00Z\"",
@@ -1075,10 +1100,25 @@ def check_rpm_locks() -> None:
         "amd64": f"{OPENSSL_FIPS_PROVIDER_NEVRA_AMD64}.x86_64",
         "arm64": f"{OPENSSL_FIPS_PROVIDER_NEVRA_ARM64}.aarch64",
     }
+    expected_direct_sha = {
+        "amd64": (OPENSSL_FIPS_PROVIDER_RPM_SHA256_AMD64, OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AMD64),
+        "arm64": (OPENSSL_FIPS_PROVIDER_RPM_SHA256_ARM64, OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_ARM64),
+    }
+    fips_provider_nvr = OPENSSL_FIPS_PROVIDER_NEVRA[len("openssl-fips-provider-so-"):]
     for platform_arch, rpm_arch in expected_arch.items():
         relative_path = f"rpm-lock/runtime.{platform_arch}.txt"
         rows = []
-        for raw in read(relative_path).splitlines():
+        lock_text = read(relative_path)
+        provider_sha, provider_so_sha = expected_direct_sha[platform_arch]
+        expected_provider_package = f"openssl-fips-provider-{fips_provider_nvr}.{rpm_arch}"
+        expected_provider_so_package = f"{OPENSSL_FIPS_PROVIDER_NEVRA}.{rpm_arch}"
+        expected_direct = {
+            f"# direct_rpm: {expected_provider_package}|{OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}/{rpm_arch}/baseos/os/Packages/o/{expected_provider_package}.rpm|{provider_sha}",
+            f"# direct_rpm: {expected_provider_so_package}|{OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}/{rpm_arch}/baseos/os/Packages/o/{expected_provider_so_package}.rpm|{provider_so_sha}",
+        }
+        actual_direct = {raw for raw in lock_text.splitlines() if raw.startswith("# direct_rpm: ")}
+        require(actual_direct == expected_direct, f"{relative_path}: direct RPM source pins mismatch")
+        for raw in lock_text.splitlines():
             if not raw or raw.startswith("#"):
                 continue
             parts = raw.split("|")
@@ -1159,7 +1199,6 @@ def check_fips_script() -> None:
         "libcrypto.so.3",
         "legacy.so",
         "etc/nwarila/fips-status.json",
-        "amd64 fips-status.json changed from the main byte-identity baseline",
         "oe_validated",
         "org.nwarila.fips.provider-nvr",
         "org.nwarila.fips.cmvp.oe-validated",
