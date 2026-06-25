@@ -13,12 +13,11 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_USES = re.compile(r"uses:\s+([^@\s]+)@([^\s#]+)")
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
-SLSA_GENERATOR = "slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml"
-SLSA_GENERATOR_TAG = "v2.1.0"
 SLSA_GENERATOR_SHA = "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a"
 HARDEN_RUNNER = "step-security/harden-runner"
 HARDEN_RUNNER_SHA = "9af89fc71515a100421586dfdb3dc9c984fbf411"
@@ -57,17 +56,11 @@ SUPPLY_CHAIN_WORKFLOWS = [
     ".github/workflows/scorecard.yml",
     ".github/workflows/zizmor.yml",
 ]
-OPENSSL_FIPS_MODULE_VERSION = "3.0.7-395c1a240fbfffd8"
-OPENSSL_FIPS_PROVIDER_NEVRA = "openssl-fips-provider-so-3.0.7-8.el9"
 OPENSSL_FIPS_PROVIDER_RPM_BASE_URL = "https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9"
 OPENSSL_FIPS_PROVIDER_RPM_SHA256_AMD64 = "bbf25303def8e1270675531c47bdad432f6ad8ef4c327556ae65bd6abaf8edb5"
 OPENSSL_FIPS_PROVIDER_RPM_SHA256_ARM64 = "0cfe7b281ae2ca3cb0ceaa1a0b84f8c087c4ac16662ebb9c19b5681cf39f99a9"
 OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AMD64 = "ab48d98504fae6f8636de027a1ee06d21d5e9c27b7beb247017a6fe55567c5e9"
 OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_ARM64 = "18c77b9b37e7abf0e8cf1dac4b3de770efe895547bdcab8aea8d8d8592954947"
-OPENSSL_FIPS_MODULE_VERSION_AMD64 = OPENSSL_FIPS_MODULE_VERSION
-OPENSSL_FIPS_PROVIDER_NEVRA_AMD64 = OPENSSL_FIPS_PROVIDER_NEVRA
-OPENSSL_FIPS_MODULE_VERSION_ARM64 = OPENSSL_FIPS_MODULE_VERSION
-OPENSSL_FIPS_PROVIDER_NEVRA_ARM64 = OPENSSL_FIPS_PROVIDER_NEVRA
 COMMUNITY_PROFILE_FILES = [
     "CHANGELOG.md",
     "CODE_OF_CONDUCT.md",
@@ -128,6 +121,10 @@ REPO_ADRS = [
         "docs/decision-records/repo/0012-source-runtime-rpms-from-direct-cdn.md",
         "Source Runtime RPMs From Pinned Direct CDN Blobs",
     ),
+    (
+        "docs/decision-records/repo/0013-externalize-image-contract-manifest.md",
+        "Externalize The Image Contract Manifest",
+    ),
 ]
 
 
@@ -146,12 +143,286 @@ def read(relative_path: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def load_json_object(relative_path: str) -> dict[str, Any]:
+    try:
+        loaded = json.loads(read(relative_path))
+    except json.JSONDecodeError as exc:
+        raise VerifyError(f"{relative_path} is not valid JSON: {exc}") from exc
+    require(isinstance(loaded, dict), f"{relative_path} must contain a JSON object")
+    return cast(dict[str, Any], loaded)
+
+
+def json_type_matches(value: Any, schema_type: str) -> bool:
+    if schema_type == "object":
+        return isinstance(value, dict)
+    if schema_type == "array":
+        return isinstance(value, list)
+    if schema_type == "string":
+        return isinstance(value, str)
+    if schema_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if schema_type == "boolean":
+        return isinstance(value, bool)
+    return False
+
+
+def validate_json_schema(instance: Any, schema: dict[str, Any], path: str = "$") -> None:
+    schema_type = schema.get("type")
+    if schema_type is not None:
+        require(isinstance(schema_type, str), f"{path}: schema type must be a string")
+        require(json_type_matches(instance, schema_type), f"{path} must be JSON type {schema_type}")
+
+    if "const" in schema:
+        require(instance == schema["const"], f"{path} must equal schema const")
+
+    enum_values = schema.get("enum")
+    if enum_values is not None:
+        require(isinstance(enum_values, list), f"{path}: schema enum must be an array")
+        require(instance in enum_values, f"{path} must be one of {enum_values}")
+
+    pattern = schema.get("pattern")
+    if pattern is not None:
+        require(isinstance(pattern, str), f"{path}: schema pattern must be a string")
+        require(isinstance(instance, str), f"{path} must be a string for pattern validation")
+        require(re.fullmatch(pattern, instance) is not None, f"{path} does not match pattern {pattern}")
+
+    minimum = schema.get("minimum")
+    if minimum is not None:
+        require(isinstance(minimum, int) and not isinstance(minimum, bool), f"{path}: schema minimum must be integer")
+        require(isinstance(instance, int) and not isinstance(instance, bool), f"{path} must be integer for minimum")
+        require(instance >= minimum, f"{path} must be >= {minimum}")
+
+    if isinstance(instance, list):
+        min_items = schema.get("minItems")
+        if min_items is not None:
+            require(isinstance(min_items, int) and not isinstance(min_items, bool), f"{path}: minItems must be integer")
+            require(len(instance) >= min_items, f"{path} must contain at least {min_items} item(s)")
+        if schema.get("uniqueItems") is True:
+            seen: set[str] = set()
+            for item in instance:
+                marker = json.dumps(item, sort_keys=True, separators=(",", ":"))
+                require(marker not in seen, f"{path} must contain unique items")
+                seen.add(marker)
+        items_schema = schema.get("items")
+        if items_schema is not None:
+            require(isinstance(items_schema, dict), f"{path}: items schema must be an object")
+            for index, item in enumerate(instance):
+                validate_json_schema(item, cast(dict[str, Any], items_schema), f"{path}[{index}]")
+
+    if isinstance(instance, dict):
+        required = schema.get("required", [])
+        require(
+            isinstance(required, list) and all(isinstance(item, str) for item in required),
+            f"{path}: required must be an array of strings",
+        )
+        for key in required:
+            require(key in instance, f"{path} missing required property {key}")
+
+        properties = schema.get("properties", {})
+        require(isinstance(properties, dict), f"{path}: schema properties must be an object")
+        additional = schema.get("additionalProperties", True)
+        for key, value in instance.items():
+            child_path = f"{path}.{key}"
+            if key in properties:
+                child_schema = properties[key]
+                require(isinstance(child_schema, dict), f"{child_path}: property schema must be an object")
+                validate_json_schema(value, cast(dict[str, Any], child_schema), child_path)
+            elif additional is False:
+                raise VerifyError(f"{child_path} is not allowed by schema")
+            elif isinstance(additional, dict):
+                validate_json_schema(value, cast(dict[str, Any], additional), child_path)
+            else:
+                require(additional is True, f"{path}: additionalProperties must be boolean or schema")
+
+
+def value_at(root: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    value: Any = root
+    path = "$"
+    for key in keys:
+        require(isinstance(value, dict), f"{path} must be an object")
+        require(key in value, f"{path} missing required property {key}")
+        value = value[key]
+        path = f"{path}.{key}"
+    return value
+
+
+def object_at(root: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
+    value = value_at(root, keys)
+    require(isinstance(value, dict), f"$.{'.'.join(keys)} must be an object")
+    return cast(dict[str, Any], value)
+
+
+def string_at(root: dict[str, Any], keys: tuple[str, ...]) -> str:
+    value = value_at(root, keys)
+    require(isinstance(value, str), f"$.{'.'.join(keys)} must be a string")
+    return cast(str, value)
+
+
+def int_at(root: dict[str, Any], keys: tuple[str, ...]) -> int:
+    value = value_at(root, keys)
+    require(isinstance(value, int) and not isinstance(value, bool), f"$.{'.'.join(keys)} must be an integer")
+    return cast(int, value)
+
+
+def bool_at(root: dict[str, Any], keys: tuple[str, ...]) -> bool:
+    value = value_at(root, keys)
+    require(isinstance(value, bool), f"$.{'.'.join(keys)} must be a boolean")
+    return cast(bool, value)
+
+
+def string_list_at(root: dict[str, Any], keys: tuple[str, ...]) -> list[str]:
+    value = value_at(root, keys)
+    require(
+        isinstance(value, list) and all(isinstance(item, str) for item in value),
+        f"$.{'.'.join(keys)} must be an array of strings",
+    )
+    return cast(list[str], value)
+
+
+def validate_image_contract_invariants(manifest: dict[str, Any]) -> None:
+    architectures = string_list_at(manifest, ("architectures",))
+    require(len(architectures) == len(set(architectures)), "image contract architectures must be unique")
+    fips_arches = object_at(manifest, ("fips", "architectures"))
+    require(set(fips_arches) == set(architectures), "image contract FIPS architectures must match architectures")
+    require(
+        string_at(manifest, ("fips", "provider_nevra")).startswith("openssl-fips-provider-so-"),
+        "image contract FIPS provider must name openssl-fips-provider-so",
+    )
+    for arch in architectures:
+        arch_contract = object_at(manifest, ("fips", "architectures", arch))
+        require(
+            re.fullmatch(r"[0-9a-f]{64}", string_at(arch_contract, ("fips_so_sha256",))) is not None,
+            f"image contract fips.so sha256 for {arch} must be 64 hex characters",
+        )
+    require(string_list_at(manifest, ("runtime", "package_floor")), "runtime package floor must not be empty")
+    require(int_at(manifest, ("runtime", "footprint_limit_bytes")) > 0, "footprint limit must be positive")
+    require(
+        "<ref>" in string_at(manifest, ("provenance", "cosign", "certificate_identity")),
+        "cosign identity must carry <ref>",
+    )
+    builder_id = string_at(manifest, ("provenance", "slsa", "builder_id"))
+    require(
+        builder_id.startswith("https://github.com/") and "@refs/tags/" in builder_id,
+        "SLSA builder ID must be an exact GitHub workflow tag identity",
+    )
+
+
+def load_image_contract() -> dict[str, Any]:
+    schema = load_json_object("contracts/image-manifest.schema.json")
+    manifest = load_json_object("contracts/image-manifest.json")
+    validate_json_schema(manifest, schema)
+    validate_image_contract_invariants(manifest)
+    return manifest
+
+
+IMAGE_CONTRACT = load_image_contract()
+
+
+def image_architectures() -> list[str]:
+    return string_list_at(IMAGE_CONTRACT, ("architectures",))
+
+
+def fips_module_version() -> str:
+    return string_at(IMAGE_CONTRACT, ("fips", "module_version"))
+
+
+def fips_provider_nevra() -> str:
+    return string_at(IMAGE_CONTRACT, ("fips", "provider_nevra"))
+
+
+def fips_cmvp() -> str:
+    return string_at(IMAGE_CONTRACT, ("fips", "cmvp"))
+
+
+def fips_arch_contract(arch: str) -> dict[str, Any]:
+    return object_at(IMAGE_CONTRACT, ("fips", "architectures", arch))
+
+
+def fips_rpm_arch(arch: str) -> str:
+    return string_at(fips_arch_contract(arch), ("rpm_arch",))
+
+
+def fips_so_sha256(arch: str) -> str:
+    return string_at(fips_arch_contract(arch), ("fips_so_sha256",))
+
+
+def fips_oe_validated(arch: str) -> bool:
+    return bool_at(fips_arch_contract(arch), ("oe_validated",))
+
+
+def fips_disclaimer(arch: str) -> str:
+    return string_at(fips_arch_contract(arch), ("disclaimer",))
+
+
+def fips_provider_nevra_for_arch(arch: str) -> str:
+    return f"{fips_provider_nevra()}.{fips_rpm_arch(arch)}"
+
+
+def fips_expected_status(arch: str) -> dict[str, object]:
+    return {
+        "arch": arch,
+        "module": fips_module_version(),
+        "provider_nvr": fips_provider_nevra(),
+        "provider_nevra": fips_provider_nevra_for_arch(arch),
+        "cmvp": f"#{fips_cmvp()}",
+        "oe_validated": fips_oe_validated(arch),
+        "disclaimer": fips_disclaimer(arch),
+    }
+
+
+def runtime_package_floor() -> set[str]:
+    return set(string_list_at(IMAGE_CONTRACT, ("runtime", "package_floor")))
+
+
+def footprint_limit_bytes() -> int:
+    return int_at(IMAGE_CONTRACT, ("runtime", "footprint_limit_bytes"))
+
+
+def cosign_certificate_identity() -> str:
+    return string_at(IMAGE_CONTRACT, ("provenance", "cosign", "certificate_identity"))
+
+
+def cosign_workflow_certificate_identity() -> str:
+    identity = cosign_certificate_identity()
+    github_prefix = "https://github.com/"
+    workflow_index = identity.index("/.github/")
+    return github_prefix + "${{ github.repository }}" + identity[workflow_index:].replace("<ref>", "${{ github.ref }}")
+
+
+def cosign_oidc_issuer() -> str:
+    return string_at(IMAGE_CONTRACT, ("provenance", "cosign", "oidc_issuer"))
+
+
+def slsa_builder_id() -> str:
+    return string_at(IMAGE_CONTRACT, ("provenance", "slsa", "builder_id"))
+
+
+def slsa_attestation_type() -> str:
+    return string_at(IMAGE_CONTRACT, ("provenance", "slsa", "attestation_type"))
+
+
+def slsa_generator_action() -> str:
+    builder = slsa_builder_id()
+    prefix = "https://github.com/"
+    action, _ = builder.removeprefix(prefix).split("@refs/tags/", 1)
+    return action
+
+
+def slsa_generator_tag() -> str:
+    _, tag = slsa_builder_id().split("@refs/tags/", 1)
+    return tag
+
+
+def predicate_type(name: str) -> str:
+    return string_at(IMAGE_CONTRACT, ("provenance", "attestation_predicate_types", name))
+
+
 def check_uses_pinned(text: str, source: str) -> None:
     uses = WORKFLOW_USES.findall(text)
     require(uses, f"{source} should pin external actions explicitly")
     bad_refs: list[str] = []
     for action, ref in uses:
-        if action == SLSA_GENERATOR and ref == SLSA_GENERATOR_TAG:
+        if action == slsa_generator_action() and ref == slsa_generator_tag():
             continue
         if not SHA40.fullmatch(ref):
             bad_refs.append(f"{action}@{ref}")
@@ -235,6 +506,11 @@ def check_required_files() -> None:
         "VERSION",
         "containers/Dockerfile",
         "containers/fips/openssl.cnf",
+        "contracts/image-manifest.schema.json",
+        "contracts/image-manifest.json",
+        "contracts/examples/README.md",
+        "contracts/examples/fips-status.amd64.json",
+        "contracts/examples/fips-status.arm64.json",
         "rpm-lock/runtime.amd64.txt",
         "rpm-lock/runtime.arm64.txt",
         "docs/README.md",
@@ -298,6 +574,29 @@ def check_required_files() -> None:
     )
     for relative_path, _ in REPO_ADRS:
         require((ROOT / relative_path).is_file(), f"missing required ADR: {relative_path}")
+
+
+def check_image_contract_files() -> None:
+    gitignore = read(".gitignore")
+    for relative_path in [
+        "contracts/",
+        "contracts/*.json",
+        "contracts/examples/",
+        "contracts/examples/*.json",
+        "contracts/examples/*.md",
+    ]:
+        require(f"!/{relative_path}" in gitignore, f".gitignore must allowlist contract path: {relative_path}")
+
+    footprint = read("tools/assert-footprint.py")
+    mib = footprint_limit_bytes() // (1024 * 1024)
+    require(
+        footprint_limit_bytes() == mib * 1024 * 1024 and f"DEFAULT_LIMIT_BYTES = {mib} * 1024 * 1024" in footprint,
+        "footprint helper default limit must match the image manifest",
+    )
+
+    for arch in image_architectures():
+        example = load_json_object(f"contracts/examples/fips-status.{arch}.json")
+        require(example == fips_expected_status(arch), f"contract FIPS status example for {arch} must match manifest")
 
 
 def check_community_profile() -> None:
@@ -499,13 +798,15 @@ def check_dockerfile() -> None:
         "ARG UBI_MINIMAL_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal@sha256:",
         "ARG UBI_MICRO_IMAGE=registry.access.redhat.com/ubi9/ubi-micro@sha256:",
         "ARG TARGETARCH",
-        f"ARG OPENSSL_FIPS_MODULE_VERSION={OPENSSL_FIPS_MODULE_VERSION}",
-        f"ARG OPENSSL_FIPS_PROVIDER_NEVRA={OPENSSL_FIPS_PROVIDER_NEVRA}",
+        f"ARG OPENSSL_FIPS_MODULE_VERSION={fips_module_version()}",
+        f"ARG OPENSSL_FIPS_PROVIDER_NEVRA={fips_provider_nevra()}",
         f"ARG OPENSSL_FIPS_PROVIDER_RPM_BASE_URL={OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}",
         f"ARG OPENSSL_FIPS_PROVIDER_RPM_SHA256_X86_64={OPENSSL_FIPS_PROVIDER_RPM_SHA256_AMD64}",
         f"ARG OPENSSL_FIPS_PROVIDER_RPM_SHA256_AARCH64={OPENSSL_FIPS_PROVIDER_RPM_SHA256_ARM64}",
         f"ARG OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64={OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AMD64}",
         f"ARG OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64={OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_ARM64}",
+        f"ARG OPENSSL_FIPS_SO_SHA256_AMD64={fips_so_sha256('amd64')}",
+        f"ARG OPENSSL_FIPS_SO_SHA256_ARM64={fips_so_sha256('arm64')}",
         "ARG SOURCE_DATE_EPOCH=1704067200",
         'amd64) rpm_arch="x86_64"',
         'arm64) rpm_arch="aarch64"',
@@ -546,15 +847,16 @@ def check_dockerfile() -> None:
         "OPENSSL_MODULES",
         "OPENSSL_CONF",
         "ossl-modules",
-        "org.nwarila.fips.cmvp",
+        f'org.nwarila.fips.cmvp="{fips_cmvp()}"',
+        f'"cmvp": "#{fips_cmvp()}"',
         "org.nwarila.fips.module-version",
         "org.nwarila.fips.provider-nvr",
         "org.nwarila.fips.cmvp.oe-validated",
         "/etc/nwarila/fips-status.json",
         "provider_nvr",
         "provider_nevra",
-        "oe_validated=false",
-        "NOT in CMVP #4857's validated or vendor-affirmed list",
+        f"oe_validated={str(fips_oe_validated('arm64')).lower()}",
+        fips_disclaimer("arm64"),
         "/fips-proof/provider.nevra",
         "/fips-proof/expected-provider.nevra",
         "/fips-proof/libs.nevra",
@@ -977,7 +1279,8 @@ def check_publish_workflow() -> None:
         "--metadata-file dist/image-metadata.json",
         '--output "type=registry,rewrite-timestamp=true"',
         "OPENSSL_FIPS_MODULE_VERSION",
-        "OPENSSL_FIPS_PROVIDER_NEVRA",
+        f'OPENSSL_FIPS_MODULE_VERSION: "{fips_module_version()}"',
+        f'OPENSSL_FIPS_PROVIDER_NEVRA: "{fips_provider_nevra()}"',
         "OPENSSL_FIPS_PROVIDER_RPM_SHA256_X86_64",
         "OPENSSL_FIPS_PROVIDER_RPM_SHA256_AARCH64",
         "OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64",
@@ -993,8 +1296,8 @@ def check_publish_workflow() -> None:
         'GRYPE_VERSION: "0.87.0"',
         "tools/build-stig-datastream.sh",
         "tools/run-stig-arf.sh",
-        'NIST_800_190_PREDICATE_TYPE: "https://nwarila.dev/attestations/nist-sp-800-190-image/v1"',
-        'STIG_ARF_PREDICATE_TYPE: "https://nwarila.dev/attestations/stig-arf/v1"',
+        f'NIST_800_190_PREDICATE_TYPE: "{predicate_type("nist_800_190")}"',
+        f'STIG_ARF_PREDICATE_TYPE: "{predicate_type("stig_arf")}"',
         "sudo podman login ghcr.io",
         "Run tailored STIG ARF gates",
         "tools/install-syft.sh",
@@ -1020,11 +1323,11 @@ def check_publish_workflow() -> None:
         "--format json",
         '--file "${grype_json}"',
         "tools/assert-vex.py",
-        "cosign attest --type spdxjson",
-        "cosign attest --type cyclonedx",
-        "cosign verify-attestation --type spdxjson",
-        "cosign attest --type openvex",
-        "cosign verify-attestation --type openvex",
+        f"cosign attest --type {predicate_type('spdx')}",
+        f"cosign attest --type {predicate_type('cyclonedx')}",
+        f"cosign verify-attestation --type {predicate_type('spdx')}",
+        f"cosign attest --type {predicate_type('openvex')}",
+        f"cosign verify-attestation --type {predicate_type('openvex')}",
         "Run runtime rootfs secret gates",
         "tools/assert-no-rootfs-secrets.py",
         "Generate NIST SP 800-190 image-control predicates",
@@ -1043,27 +1346,28 @@ def check_publish_workflow() -> None:
         "DSSE envelope(s)",
         "EXPECTED_BUILDER_ID",
         "tools/assert-slsa-builder-id.py",
-        "cosign verify-attestation --type slsaprovenance",
+        f"cosign verify-attestation --type {slsa_attestation_type()}",
         "STIG ARF",
         "OpenSCAP",
         'assert_attestation_tlog "SLSA provenance index"',
-        "cosign verify-attestation --type spdxjson",
+        f"cosign verify-attestation --type {predicate_type('spdx')}",
         'assert_attestation_tlog "SPDX SBOM ${arch}"',
-        "cosign verify-attestation --type cyclonedx",
+        f"cosign verify-attestation --type {predicate_type('cyclonedx')}",
         'assert_attestation_tlog "CycloneDX SBOM ${arch}"',
         'assert_attestation_tlog "NIST 800-190 image ${arch}"',
         'assert_attestation_tlog "STIG ARF ${arch}"',
         'assert_attestation_tlog "OpenVEX ${arch}"',
         'COSIGN_YES: "true"',
-        SLSA_GENERATOR + "@" + SLSA_GENERATOR_TAG,
+        slsa_generator_action() + "@" + slsa_generator_tag(),
         SLSA_GENERATOR_SHA,
         'gh api "repos/slsa-framework/slsa-github-generator/git/ref/tags/${SLSA_GENERATOR_TAG}"',
         "cosign sign --recursive",
         "cosign verify",
-        "https://github.com/${{ github.repository }}/.github/workflows/publish-image.yaml@${{ github.ref }}",
-        '--certificate-oidc-issuer "https://token.actions.githubusercontent.com"',
-        "manifest[linux/amd64]:org.nwarila.fips.cmvp.oe-validated=true",
-        "manifest[linux/arm64]:org.nwarila.fips.cmvp.oe-validated=false",
+        cosign_workflow_certificate_identity(),
+        f'--certificate-oidc-issuer "{cosign_oidc_issuer()}"',
+        f"manifest[linux/amd64]:org.nwarila.fips.cmvp.oe-validated={str(fips_oe_validated('amd64')).lower()}",
+        f"manifest[linux/arm64]:org.nwarila.fips.cmvp.oe-validated={str(fips_oe_validated('arm64')).lower()}",
+        f'EXPECTED_BUILDER_ID: "{slsa_builder_id()}"',
     ]
     missing = [marker for marker in required if marker not in text]
     require(not missing, "publish workflow missing required marker(s): " + ", ".join(missing))
@@ -1090,9 +1394,9 @@ def check_publish_workflow() -> None:
     require(not present, "publish workflow contains forbidden marker(s): " + ", ".join(present))
 
     uses = WORKFLOW_USES.findall(text)
-    generator_uses = [(action, ref) for action, ref in uses if action == SLSA_GENERATOR]
+    generator_uses = [(action, ref) for action, ref in uses if action == slsa_generator_action()]
     require(
-        generator_uses == [(SLSA_GENERATOR, SLSA_GENERATOR_TAG)],
+        generator_uses == [(slsa_generator_action(), slsa_generator_tag())],
         "publish workflow must use exactly one SLSA generator tag pin",
     )
     check_uses_pinned(text, "publish workflow")
@@ -1163,39 +1467,20 @@ def check_sbom_assertion_script() -> None:
 
 
 def check_rpm_locks() -> None:
-    required_final = {
-        "basesystem",
-        "ca-certificates",
-        "crypto-policies",
-        "filesystem",
-        "glibc",
-        "glibc-common",
-        "glibc-minimal-langpack",
-        "libgcc",
-        "openssl-fips-provider",
-        "openssl-fips-provider-so",
-        "openssl-libs",
-        "redhat-release",
-        "setup",
-        "tzdata",
-        "zlib",
-    }
-    expected_arch = {"amd64": "x86_64", "arm64": "aarch64"}
-    expected_provider = {
-        "amd64": f"{OPENSSL_FIPS_PROVIDER_NEVRA_AMD64}.x86_64",
-        "arm64": f"{OPENSSL_FIPS_PROVIDER_NEVRA_ARM64}.aarch64",
-    }
+    required_final = runtime_package_floor()
+    expected_arch = {arch: fips_rpm_arch(arch) for arch in image_architectures()}
+    expected_provider = {arch: fips_provider_nevra_for_arch(arch) for arch in image_architectures()}
     expected_direct_sha = {
         "amd64": (OPENSSL_FIPS_PROVIDER_RPM_SHA256_AMD64, OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AMD64),
         "arm64": (OPENSSL_FIPS_PROVIDER_RPM_SHA256_ARM64, OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_ARM64),
     }
-    fips_provider_nvr = OPENSSL_FIPS_PROVIDER_NEVRA[len("openssl-fips-provider-so-") :]
+    fips_provider_nvr = fips_provider_nevra()[len("openssl-fips-provider-so-") :]
     for platform_arch, rpm_arch in expected_arch.items():
         relative_path = f"rpm-lock/runtime.{platform_arch}.txt"
         lock_text = read(relative_path)
         provider_sha, provider_so_sha = expected_direct_sha[platform_arch]
         expected_provider_package = f"openssl-fips-provider-{fips_provider_nvr}.{rpm_arch}"
-        expected_provider_so_package = f"{OPENSSL_FIPS_PROVIDER_NEVRA}.{rpm_arch}"
+        expected_provider_so_package = f"{fips_provider_nevra()}.{rpm_arch}"
         expected_provider_url = (
             f"{OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}/{rpm_arch}/baseos/os/Packages/o/{expected_provider_package}.rpm"
         )
@@ -1345,10 +1630,10 @@ def check_fips_script() -> None:
         "oe_validated",
         "org.nwarila.fips.provider-nvr",
         "org.nwarila.fips.cmvp.oe-validated",
-        OPENSSL_FIPS_MODULE_VERSION_AMD64,
-        OPENSSL_FIPS_PROVIDER_NEVRA_AMD64,
-        OPENSSL_FIPS_MODULE_VERSION_ARM64,
-        OPENSSL_FIPS_PROVIDER_NEVRA_ARM64,
+        fips_module_version(),
+        fips_provider_nevra(),
+        fips_disclaimer("amd64"),
+        fips_disclaimer("arm64"),
     ]:
         require(marker in text, f"FIPS script missing marker: {marker}")
 
@@ -1382,7 +1667,7 @@ def check_vex() -> None:
         "Trivy",
         "Grype",
         "CODEOWNERS",
-        "cosign attest --type openvex",
+        f"cosign attest --type {predicate_type('openvex')}",
     ]:
         require(marker in vex_readme, f"vex/README.md missing marker: {marker}")
 
@@ -1391,7 +1676,7 @@ def check_nist_800_190_scripts() -> None:
     generator = read("tools/generate-nist-800-190-predicate.py")
     for marker in [
         "PREDICATE_TYPE",
-        "https://nwarila.dev/attestations/nist-sp-800-190-image/v1",
+        predicate_type("nist_800_190"),
         "4.1.1",
         "4.1.2",
         "4.1.3",
@@ -1432,7 +1717,7 @@ def check_nist_800_190_scripts() -> None:
         "runDetails",
         "builder",
         "--builder-id",
-        "generator_container_slsa3.yml@refs/tags/v2.1.0",
+        slsa_builder_id().removeprefix("https://github.com/"),
         "--self-test",
     ]:
         require(marker in slsa, f"SLSA builderID helper missing marker: {marker}")
@@ -1531,7 +1816,7 @@ def check_decision_records() -> None:
     for number, (relative_path, title) in zip(expected_numbers, REPO_ADRS, strict=True):
         text = read(relative_path)
         require(text.startswith(f"# ADR-{number}: {title}\n"), f"{relative_path} has wrong ADR heading")
-        expected_date = "2026-06-25" if number == "0012" else "2026-06-21"
+        expected_date = "2026-06-25" if number in {"0012", "0013"} else "2026-06-21"
         for marker in [
             "- Status: Accepted",
             f"- Date: {expected_date}",
@@ -1547,18 +1832,19 @@ def check_decision_records() -> None:
     joined = "\n".join(read(path) for path, _ in REPO_ADRS)
     for marker in [
         "tools/assert-reproducible.py --assert-byte-identical",
-        "CMVP certificate #4857",
+        f"CMVP certificate #{fips_cmvp()}",
         "oe_validated",
         SLSA_GENERATOR_SHA,
         "tools/assert-no-phantom-packages.py",
         ".github/workflows/rpm-lock-refresh.yaml",
         "tools/assert-vex.py",
         "stig/rhel9-base-micro-tailoring.xml",
-        "https://nwarila.dev/attestations/nist-sp-800-190-image/v1",
+        predicate_type("nist_800_190"),
         "base-micro@sha256:<digest>",
         "runs-on: ubuntu-24.04",
         "fetch-runtime-rpms.sh",
         "cdn-ubi.redhat.com",
+        "contracts/image-manifest.json",
     ]:
         require(marker in joined, f"repo ADRs missing load-bearing marker: {marker}")
 
@@ -1592,6 +1878,11 @@ def check_docs() -> None:
         "docs/reference/verification-contract.md",
         "docs/reference/verify.md",
         "docs/tutorials/getting-started-build-and-verify.md",
+        "contracts/image-manifest.schema.json",
+        "contracts/image-manifest.json",
+        "contracts/examples/README.md",
+        "contracts/examples/fips-status.amd64.json",
+        "contracts/examples/fips-status.arm64.json",
     ]:
         require((ROOT / relative_path).is_file(), f"missing migrated or Diataxis docs file: {relative_path}")
 
@@ -1631,21 +1922,21 @@ def check_docs() -> None:
     require("Byte-for-byte reproducible (HARD gate)" in acceptance, "acceptance.md must carry hard F3 wording")
     require("explicitly retracted" not in acceptance, "acceptance.md must not preserve the old F3 retract escape")
     require("fipsinstall`-generated" not in acceptance, "acceptance.md must not preserve stale fipsinstall mechanism")
-    require("#4857" in fips, "docs/compliance/fips.md must record the OpenSSL CMVP #4857 ledger")
+    require(f"#{fips_cmvp()}" in fips, "docs/compliance/fips.md must record the OpenSSL CMVP ledger")
     require(
-        OPENSSL_FIPS_MODULE_VERSION_AMD64 in fips,
+        fips_module_version() in fips,
         "docs/compliance/fips.md must record the validated OpenSSL provider version",
     )
     require(
-        OPENSSL_FIPS_MODULE_VERSION_ARM64 in fips,
+        fips_module_version() in fips,
         "docs/compliance/fips.md must record the arm64 OpenSSL provider version",
     )
     require(
-        OPENSSL_FIPS_PROVIDER_NEVRA_AMD64 in fips,
+        fips_provider_nevra() in fips,
         "docs/compliance/fips.md must record the amd64 provider NVR",
     )
     require(
-        OPENSSL_FIPS_PROVIDER_NEVRA_ARM64 in fips,
+        fips_provider_nevra() in fips,
         "docs/compliance/fips.md must record the arm64 provider NVR",
     )
     require(
@@ -1664,8 +1955,7 @@ def check_docs() -> None:
     require("oe_validated" in fips, "docs/compliance/fips.md must document fips-status.json oe_validated")
     require("provider_nvr" in fips, "docs/compliance/fips.md must document fips-status.json provider_nvr")
     require(
-        "this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list" in fips
-        and "this is NOT a CMVP-validated configuration on this architecture" in fips,
+        fips_disclaimer("arm64") in fips,
         "docs/compliance/fips.md missing arm64 disclaimer",
     )
     require(
@@ -1673,7 +1963,8 @@ def check_docs() -> None:
         "docs/compliance/fips.md must cite tested OE architecture scope",
     )
     require(
-        "certificate/4857" in fips and "140sp4857.pdf" in fips, "docs/compliance/fips.md must cite NIST #4857 sources"
+        f"certificate/{fips_cmvp()}" in fips and f"140sp{fips_cmvp()}.pdf" in fips,
+        "docs/compliance/fips.md must cite NIST sources",
     )
 
     for marker in [
@@ -1702,7 +1993,7 @@ def check_docs() -> None:
         require(marker in readme, f"README.md missing G1 marker: {marker}")
 
     for marker in [
-        "#4857, FIPS 140-3 Level 1 | ACTIVE",
+        f"#{fips_cmvp()}, FIPS 140-3 Level 1 | ACTIVE",
         "base-micro` ships only the OpenSSL provider",
         "Go Cryptographic Module v1.0.0",
         "#5247 ACTIVE",
@@ -1748,7 +2039,7 @@ def check_docs() -> None:
     ]:
         require(marker in docs_index, f"docs README must index marker: {marker}")
     require(
-        "CODEOWNERS-gated" in vex_doc and "cosign attest --type openvex" in vex_doc,
+        "CODEOWNERS-gated" in vex_doc and f"cosign attest --type {predicate_type('openvex')}" in vex_doc,
         "docs/compliance/vex.md must describe VEX review and attestation flow",
     )
     for marker in [
@@ -1781,7 +2072,7 @@ def check_docs() -> None:
     )
 
     for marker in [
-        "25 * 1024 * 1024 bytes",
+        f"{footprint_limit_bytes() // (1024 * 1024)} * 1024 * 1024 bytes",
         "exported-rootfs-regular-file-bytes",
         "tools/assert-footprint.py",
         "tools/assert-no-phantom-packages.py",
@@ -1792,7 +2083,7 @@ def check_docs() -> None:
         require(marker in footprint_doc, f"docs/explanation/footprint.md missing marker: {marker}")
 
     for marker in [
-        "https://nwarila.dev/attestations/nist-sp-800-190-image/v1",
+        predicate_type("nist_800_190"),
         "NIST SP 800-190 section 4.1",
         "not CIS Docker",
         "4.1.1",
@@ -1808,7 +2099,7 @@ def check_docs() -> None:
     for marker in [
         "stig/rhel9-base-micro-tailoring.xml",
         "stig/tailoring-justifications.json",
-        "https://nwarila.dev/attestations/stig-arf/v1",
+        predicate_type("stig_arf"),
         "ComplianceAsCode/content",
         "mass-N/A guard",
         "CODEOWNERS-gated",
@@ -1820,11 +2111,11 @@ def check_docs() -> None:
 
     for marker in [
         'cosign verify "${IMAGE_REF}"',
-        "cosign verify-attestation --type spdxjson",
-        "cosign verify-attestation --type cyclonedx",
-        "cosign verify-attestation --type openvex",
-        "cosign verify-attestation --type https://nwarila.dev/attestations/nist-sp-800-190-image/v1",
-        "cosign verify-attestation --type https://nwarila.dev/attestations/stig-arf/v1",
+        f"cosign verify-attestation --type {predicate_type('spdx')}",
+        f"cosign verify-attestation --type {predicate_type('cyclonedx')}",
+        f"cosign verify-attestation --type {predicate_type('openvex')}",
+        f"cosign verify-attestation --type {predicate_type('nist_800_190')}",
+        f"cosign verify-attestation --type {predicate_type('stig_arf')}",
         "full attestation set is Rekor-logged",
         "tools/assert-cosign-rekor.py",
         "signature JSON",
@@ -1834,13 +2125,13 @@ def check_docs() -> None:
         "Trivy",
         "Grype",
         "OpenVEX default-deny",
-        "cosign verify-attestation --type slsaprovenance",
+        f"cosign verify-attestation --type {slsa_attestation_type()}",
         "STIG ARF",
         "OpenSCAP",
         "per-rule `idref` result",
         "rootfs identity assertion report",
         "slsa-verifier verify-image",
-        "generator_container_slsa3.yml@refs/tags/v2.1.0",
+        slsa_builder_id().removeprefix("https://github.com/"),
         "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a",
         "gh attestation verify` is not part of this contract",
         "BuildKit SBOM generation is disabled",
@@ -1870,11 +2161,11 @@ def check_docs() -> None:
 
     for marker in [
         "config-only approved-mode mechanism",
-        OPENSSL_FIPS_PROVIDER_NEVRA,
-        OPENSSL_FIPS_MODULE_VERSION,
+        fips_provider_nevra(),
+        fips_module_version(),
         "linux/amd64",
         "linux/arm64",
-        "CMVP #4857",
+        f"CMVP #{fips_cmvp()}",
         "not a CMVP-validated operational environment",
         "fips_enabled =",
     ]:
@@ -1882,7 +2173,7 @@ def check_docs() -> None:
 
     for marker in [
         "cosign verify",
-        "cosign verify-attestation --type spdxjson",
+        f"cosign verify-attestation --type {predicate_type('spdx')}",
         "slsa-verifier verify-image",
         "Do not substitute `gh attestation verify`",
     ]:
@@ -2055,6 +2346,7 @@ def check_no_attribution_residue() -> None:
 def main() -> int:
     checks = [
         check_required_files,
+        check_image_contract_files,
         check_community_profile,
         check_renovate_config,
         check_dockerfile,

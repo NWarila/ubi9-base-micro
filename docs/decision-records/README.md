@@ -22,3 +22,4 @@ canonical source.
 | [ADR-0010](repo/0010-base-image-polyrepo-topology.md) | Accepted | Keep the base-image family as polyrepos rooted at `ubi9-base-micro`. |
 | [ADR-0011](repo/0011-pin-github-hosted-runner-labels.md) | Accepted | Pin GitHub-hosted Ubuntu runner labels for workflow determinism. |
 | [ADR-0012](repo/0012-source-runtime-rpms-from-direct-cdn.md) | Accepted | Source runtime RPMs from pinned Red Hat UBI direct-CDN blobs. |
+| [ADR-0013](repo/0013-externalize-image-contract-manifest.md) | Accepted | Externalize the consumer-verifiable image contract to a schema-validated manifest. |

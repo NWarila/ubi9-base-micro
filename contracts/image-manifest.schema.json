@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nwarila.dev/contracts/ubi9-base-micro/image-manifest.schema.json",
+  "title": "ubi9-base-micro image manifest contract",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "image",
+    "architectures",
+    "fips",
+    "runtime",
+    "provenance"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "image": {
+      "type": "object",
+      "required": [
+        "name",
+        "repository"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "repository": {
+          "type": "string"
+        }
+      }
+    },
+    "architectures": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string"
+      }
+    },
+    "fips": {
+      "type": "object",
+      "required": [
+        "module_version",
+        "provider_nevra",
+        "cmvp",
+        "architectures"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "module_version": {
+          "type": "string"
+        },
+        "provider_nevra": {
+          "type": "string"
+        },
+        "cmvp": {
+          "type": "string"
+        },
+        "architectures": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "rpm_arch",
+              "fips_so_sha256",
+              "oe_validated",
+              "disclaimer"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "rpm_arch": {
+                "type": "string"
+              },
+              "fips_so_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "oe_validated": {
+                "type": "boolean"
+              },
+              "disclaimer": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": [
+        "package_floor",
+        "footprint_limit_bytes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "package_floor": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "footprint_limit_bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "cosign",
+        "slsa",
+        "attestation_predicate_types"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cosign": {
+          "type": "object",
+          "required": [
+            "certificate_identity",
+            "oidc_issuer"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "certificate_identity": {
+              "type": "string"
+            },
+            "oidc_issuer": {
+              "type": "string"
+            }
+          }
+        },
+        "slsa": {
+          "type": "object",
+          "required": [
+            "builder_id",
+            "attestation_type"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "builder_id": {
+              "type": "string"
+            },
+            "attestation_type": {
+              "type": "string"
+            }
+          }
+        },
+        "attestation_predicate_types": {
+          "type": "object",
+          "required": [
+            "spdx",
+            "cyclonedx",
+            "openvex",
+            "nist_800_190",
+            "stig_arf"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "spdx": {
+              "type": "string"
+            },
+            "cyclonedx": {
+              "type": "string"
+            },
+            "openvex": {
+              "type": "string"
+            },
+            "nist_800_190": {
+              "type": "string"
+            },
+            "stig_arf": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

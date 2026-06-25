@@ -1,0 +1,9 @@
+{
+  "arch": "arm64",
+  "module": "3.0.7-395c1a240fbfffd8",
+  "provider_nvr": "openssl-fips-provider-so-3.0.7-8.el9",
+  "provider_nevra": "openssl-fips-provider-so-3.0.7-8.el9.aarch64",
+  "cmvp": "#4857",
+  "oe_validated": false,
+  "disclaimer": "The Red Hat OpenSSL FIPS provider (module #4857, v3.0.7-395c1a240fbfffd8) is present, approved-mode-configured, and self-test-passing, but this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list - this is NOT a CMVP-validated configuration on this architecture."
+}

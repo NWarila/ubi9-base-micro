@@ -1,0 +1,67 @@
+{
+  "schema_version": "1.0.0",
+  "image": {
+    "name": "ubi9-base-micro",
+    "repository": "ghcr.io/nwarila/ubi9-base-micro"
+  },
+  "architectures": [
+    "amd64",
+    "arm64"
+  ],
+  "fips": {
+    "module_version": "3.0.7-395c1a240fbfffd8",
+    "provider_nevra": "openssl-fips-provider-so-3.0.7-8.el9",
+    "cmvp": "4857",
+    "architectures": {
+      "amd64": {
+        "rpm_arch": "x86_64",
+        "fips_so_sha256": "c197b6ddf74532f477bcb34e25b6e109491765d577b9fe1a4c4759239b6aae06",
+        "oe_validated": true,
+        "disclaimer": "CMVP #4857-validated approved-mode configuration."
+      },
+      "arm64": {
+        "rpm_arch": "aarch64",
+        "fips_so_sha256": "669910b59bca2c9a9cf5a33d3e63e6d94224d2e3b0fecd259cd235c9cf9c71cd",
+        "oe_validated": false,
+        "disclaimer": "The Red Hat OpenSSL FIPS provider (module #4857, v3.0.7-395c1a240fbfffd8) is present, approved-mode-configured, and self-test-passing, but this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list - this is NOT a CMVP-validated configuration on this architecture."
+      }
+    }
+  },
+  "runtime": {
+    "package_floor": [
+      "basesystem",
+      "ca-certificates",
+      "crypto-policies",
+      "filesystem",
+      "glibc",
+      "glibc-common",
+      "glibc-minimal-langpack",
+      "libgcc",
+      "openssl-fips-provider",
+      "openssl-fips-provider-so",
+      "openssl-libs",
+      "redhat-release",
+      "setup",
+      "tzdata",
+      "zlib"
+    ],
+    "footprint_limit_bytes": 26214400
+  },
+  "provenance": {
+    "cosign": {
+      "certificate_identity": "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@<ref>",
+      "oidc_issuer": "https://token.actions.githubusercontent.com"
+    },
+    "slsa": {
+      "builder_id": "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0",
+      "attestation_type": "slsaprovenance"
+    },
+    "attestation_predicate_types": {
+      "spdx": "spdxjson",
+      "cyclonedx": "cyclonedx",
+      "openvex": "openvex",
+      "nist_800_190": "https://nwarila.dev/attestations/nist-sp-800-190-image/v1",
+      "stig_arf": "https://nwarila.dev/attestations/stig-arf/v1"
+    }
+  }
+}

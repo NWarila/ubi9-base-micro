@@ -53,6 +53,12 @@
 !/containers/fips/
 !/containers/fips/openssl.cnf
 
+!/contracts/
+!/contracts/*.json
+!/contracts/examples/
+!/contracts/examples/*.json
+!/contracts/examples/*.md
+
 !/rpm-lock/
 !/rpm-lock/*.txt
 
