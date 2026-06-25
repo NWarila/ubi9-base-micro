@@ -6,7 +6,7 @@ Documentation for this repository follows the Diataxis framework.
 | --- | --- | --- |
 | Tutorials | [`tutorials/`](tutorials/) | Learning-oriented walkthroughs for building and verifying `base-micro` locally |
 | How-to | [`how-to/`](how-to/) | Task guides for verification, reproduction, RPM-lock refreshes, local gates, and downstream consumption |
-| Reference | [`reference/`](reference/) | Published verification contract, gate inventory, and contract summary |
+| Reference | [`reference/`](reference/) | Published verification contract, image manifest, gate inventory, and contract summary |
 | Explanation | [`explanation/`](explanation/) | Reproducibility, footprint, and FIPS mechanism rationale |
 | Compliance | [`compliance/`](compliance/) | Acceptance, FIPS, NIST SP 800-190, STIG, and OpenVEX evidence notes |
 | Decisions | [`decision-records/`](decision-records/) | Repository-scope ADRs for the image contract, evidence model, workflow host determinism, and base-family topology |
@@ -28,6 +28,8 @@ Documentation for this repository follows the Diataxis framework.
 - [`verify.md`](reference/verify.md) - published digest verification contract.
 - [`gates.md`](reference/gates.md) - what each local assertion and generation helper enforces.
 - [`verification-contract.md`](reference/verification-contract.md) - summary of PR, publish, and post-publish verification boundaries.
+- [`../../contracts/image-manifest.json`](../../contracts/image-manifest.json) - schema-validated image contract values consumers can verify.
+- [`../../contracts/examples/README.md`](../../contracts/examples/README.md) - worked example for checking a pulled digest against the manifest.
 
 ## Explanation
 

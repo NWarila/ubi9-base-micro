@@ -3,6 +3,17 @@
 `ubi9-base-micro` has three verification boundaries. Each boundary proves a
 different subset of the repository contract.
 
+The consumer-verifiable image contract is declared in
+[`../../contracts/image-manifest.json`](../../contracts/image-manifest.json) and
+validated by
+[`../../contracts/image-manifest.schema.json`](../../contracts/image-manifest.schema.json).
+The manifest is the source of truth for the supported architectures, FIPS module
+and provider values, per-arch `fips.so` digests, per-arch `oe_validated` scope,
+runtime package floor, footprint ceiling, Cosign identity, OIDC issuer, SLSA
+builder ID, and repository-generated attestation predicate types. A worked
+consumer check lives in
+[`../../contracts/examples/README.md`](../../contracts/examples/README.md).
+
 | Boundary | Runs on | Proves | Does not prove |
 | --- | --- | --- | --- |
 | Pull request | `pull_request` to `main` | Repository contract, lint, local build, hardening, FIPS artifact checks, SBOM and scanner gates, OpenVEX policy, NIST predicate validation, tailored STIG ARF, and byte-for-byte rootfs reproducibility. | Published signatures, published attestations, SLSA provenance over a pushed digest, Rekor roll-up, or anonymous GHCR pull. |
@@ -18,6 +29,11 @@ https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@
 https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0
 https://token.actions.githubusercontent.com
 ```
+
+The manifest field `runtime.package_floor` is the final rpmdb package-name
+floor. The direct RPM URLs and hashes that build that floor are repository
+governance inputs and remain checked by `tools/verify.py`, not duplicated in the
+consumer contract.
 
 `gh attestation verify` is intentionally outside this contract because this
 repository publishes Cosign OCI attestations, not GitHub-native Artifact
