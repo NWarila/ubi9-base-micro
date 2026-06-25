@@ -35,5 +35,5 @@ then fails closed unless the runtime provider NEVRA, `openssl-libs` NEVRA, and
 
 - NIST CMVP certificate #4857: <https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/4857>
 - NIST SP 800-218 SSDF: <https://csrc.nist.gov/pubs/sp/800/218/final>
-- Repository details: `docs/fips.md`, `containers/fips/openssl.cnf`,
+- Repository details: `docs/compliance/fips.md`, `containers/fips/openssl.cnf`,
   `tests/fips.sh`, `containers/Dockerfile`

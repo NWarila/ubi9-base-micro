@@ -35,5 +35,5 @@ The footprint gate measures exported-rootfs regular-file bytes and enforces the
 
 - OpenSSF Best Practices criteria: <https://www.bestpractices.dev/en/criteria/0>
 - NIST SP 800-190 Application Container Security Guide: <https://csrc.nist.gov/pubs/sp/800/190/final>
-- Repository details: `docs/footprint.md`, `tools/assert-footprint.py`,
+- Repository details: `docs/explanation/footprint.md`, `tools/assert-footprint.py`,
   `tools/assert-no-phantom-packages.py`, `containers/Dockerfile`

@@ -30,7 +30,7 @@ difference fails the build, but it is not sufficient by itself for a broad
 confirmation would strengthen the evidence without changing the current hard gate
 scope.
 
-Determinism controls:
+## Determinism Controls
 
 - `SOURCE_DATE_EPOCH=1704067200` is the committed timestamp input.
 - Buildx uses `rewrite-timestamp=true` on local, CI, and publish image exporters.
@@ -45,18 +45,19 @@ Determinism controls:
   installs the complete locked transaction with a raw rpm command
   (`rpm --root=/rootfs --initdb` then
   `rpm --root=/rootfs -Uvh --oldpackage --replacepkgs --excludedocs <paths>`) over
-  the fetched local RPM paths in lockfile (LC_ALL=C-sorted) order — no microdnf, no
-  install-time dependency resolution, and no repository metadata. Because
-  `rpm -Uvh` runs without `--nodeps`, an unsatisfied dependency aborts the build, so
-  the locked set must be a complete pre-resolved closure. The held OpenSSL FIPS
-  provider RPMs are part of the same fetched-local-RPM transaction.
+  the fetched local RPM paths in lockfile (LC_ALL=C-sorted) order - no microdnf,
+  no install-time dependency resolution, and no repository metadata. Because
+  `rpm -Uvh` runs without `--nodeps`, an unsatisfied dependency aborts the build,
+  so the locked set must be a complete pre-resolved closure. The held OpenSSL
+  FIPS provider RPMs are part of the same fetched-local-RPM transaction.
 - Every locked RPM is verified immediately after install with
   `rpm --root=/rootfs -q --qf '%{SHA256HEADER}|%{SIGMD5}\n' <locked-nevra>`.
   `SHA256HEADER` is the rpmdb-exposed tag that matches the lockfile
   `sha256_header` column; `SIGMD5` matches the `sigmd5` column. A mismatch fails
   the build before any strip step runs.
 - The Dockerfile verifies that the final runtime rpmdb still contains exactly
-  the 15-package scanner-visible floor after strip.
+  the 15-package scanner-visible floor after strip. The accepted raw-rpm rpmdb
+  serialization baseline is `33c07782`.
 - Generated rootfs files such as `/etc/nwarila/fips-status.json` use the same
   deterministic timestamp path.
 
@@ -64,15 +65,15 @@ The rpmdb remains present and valid because SBOM and scanner truthfulness depend
 on it. Differences in `/var/lib/rpm/rpmdb.sqlite` are gate failures; the rpmdb is
 not deleted, normalized away, or excluded from the rootfs comparison.
 
-## RPM lock refresh loop
+## RPM Lock Refresh Loop
 
 The lockfiles deliberately pin RPM NEVRAs and content hashes, so patched Red Hat
 RPMs are not absorbed automatically. The nightly sentinel detects when a pinned
 runtime RPM has a fixable CVE and turns the gate red. The weekly and manually
 runnable `.github/workflows/rpm-lock-refresh.yaml` workflow runs
 `tools/generate-rpm-lock.sh` for `linux/amd64` and `linux/arm64`; the generator
-uses the same microdnf installroot transaction shape as the Dockerfile and emits
-the `rpm-lock/runtime.<arch>.txt` format consumed by the build.
+uses current UBI metadata only during the intentional refresh, resolves direct CDN RPM URLs for every runtime row, and emits the
+`rpm-lock/runtime.<arch>.txt` format consumed by the build.
 
 A no-change refresh is expected to be byte-identical. Maintainers can reproduce
 that proof locally with `tools/generate-rpm-lock.sh --check`, which regenerates

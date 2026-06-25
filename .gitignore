@@ -51,8 +51,21 @@
 !/rpm-lock/*.txt
 
 !/docs/
+!/docs/README.md
+!/docs/TECH-DEBT.md
+!/docs/compliance/
+!/docs/compliance/*.md
+!/docs/decision-records/
+!/docs/decision-records/**/*.md
+!/docs/explanation/
+!/docs/explanation/*.md
+!/docs/how-to/
+!/docs/how-to/*.md
+!/docs/reference/
+!/docs/reference/*.md
+!/docs/tutorials/
+!/docs/tutorials/*.md
 !/docs/**/*.md
-
 !/vex/
 !/vex/.gitkeep
 !/vex/*.json

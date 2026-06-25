@@ -36,6 +36,6 @@ verify it with the exact repository workflow identity.
 
 - NIST SP 800-190 Application Container Security Guide: <https://csrc.nist.gov/pubs/sp/800/190/final>
 - NIST SP 800-218 SSDF: <https://csrc.nist.gov/pubs/sp/800/218/final>
-- Repository details: `docs/nist-800-190.md`,
+- Repository details: `docs/compliance/nist-800-190.md`,
   `tools/generate-nist-800-190-predicate.py`,
   `tools/assert-no-rootfs-secrets.py`
