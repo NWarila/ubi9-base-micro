@@ -233,16 +233,26 @@ def check_required_files() -> None:
         "rpm-lock/runtime.amd64.txt",
         "rpm-lock/runtime.arm64.txt",
         "docs/README.md",
-        "docs/decision-records/README.md",
-        "docs/acceptance.md",
-        "docs/fips.md",
         "docs/TECH-DEBT.md",
-        "docs/nist-800-190.md",
-        "docs/footprint.md",
-        "docs/reproducibility.md",
-        "docs/stig.md",
+        "docs/compliance/README.md",
+        "docs/compliance/acceptance.md",
+        "docs/compliance/fips.md",
+        "docs/compliance/nist-800-190.md",
+        "docs/compliance/stig.md",
+        "docs/compliance/vex.md",
+        "docs/decision-records/README.md",
+        "docs/explanation/footprint.md",
+        "docs/explanation/fips-mechanism.md",
+        "docs/explanation/reproducibility.md",
+        "docs/how-to/consume-base-micro-as-from-base.md",
+        "docs/how-to/refresh-the-rpm-lock.md",
+        "docs/how-to/reproduce-a-build-byte-for-byte.md",
+        "docs/how-to/run-a-gate-locally.md",
+        "docs/how-to/verify-a-published-image.md",
+        "docs/reference/gates.md",
+        "docs/reference/verification-contract.md",
         "docs/reference/verify.md",
-        "docs/vex.md",
+        "docs/tutorials/getting-started-build-and-verify.md",
         "tests/fips.sh",
         "tests/hardening.sh",
         "tools/build.sh",
@@ -1549,44 +1559,117 @@ def check_decision_records() -> None:
 
 
 def check_docs() -> None:
+    for relative_path in [
+        "docs/tutorials",
+        "docs/how-to",
+        "docs/reference",
+        "docs/explanation",
+        "docs/compliance",
+        "docs/decision-records",
+    ]:
+        require((ROOT / relative_path).is_dir(), f"missing Diataxis docs directory: {relative_path}")
+
+    for relative_path in [
+        "docs/compliance/acceptance.md",
+        "docs/compliance/fips.md",
+        "docs/compliance/nist-800-190.md",
+        "docs/compliance/stig.md",
+        "docs/compliance/vex.md",
+        "docs/explanation/footprint.md",
+        "docs/explanation/fips-mechanism.md",
+        "docs/explanation/reproducibility.md",
+        "docs/how-to/consume-base-micro-as-from-base.md",
+        "docs/how-to/refresh-the-rpm-lock.md",
+        "docs/how-to/reproduce-a-build-byte-for-byte.md",
+        "docs/how-to/run-a-gate-locally.md",
+        "docs/how-to/verify-a-published-image.md",
+        "docs/reference/gates.md",
+        "docs/reference/verification-contract.md",
+        "docs/reference/verify.md",
+        "docs/tutorials/getting-started-build-and-verify.md",
+    ]:
+        require((ROOT / relative_path).is_file(), f"missing migrated or Diataxis docs file: {relative_path}")
+
+    for relative_path in [
+        "docs/acceptance.md",
+        "docs/fips.md",
+        "docs/footprint.md",
+        "docs/nist-800-190.md",
+        "docs/reproducibility.md",
+        "docs/stig.md",
+        "docs/vex.md",
+    ]:
+        require(not (ROOT / relative_path).exists(), f"flat docs path must stay migrated: {relative_path}")
+
     readme = read("README.md")
-    acceptance = read("docs/acceptance.md")
-    fips = read("docs/fips.md")
+    acceptance = read("docs/compliance/acceptance.md")
+    fips = read("docs/compliance/fips.md")
     docs_index = read("docs/README.md")
     verify = read("docs/reference/verify.md")
-    vex_doc = read("docs/vex.md")
-    nist_doc = read("docs/nist-800-190.md")
-    footprint_doc = read("docs/footprint.md")
-    reproducibility_doc = read("docs/reproducibility.md")
-    stig_doc = read("docs/stig.md")
+    gates = read("docs/reference/gates.md")
+    verification_contract = read("docs/reference/verification-contract.md")
+    fips_mechanism = read("docs/explanation/fips-mechanism.md")
+    vex_doc = read("docs/compliance/vex.md")
+    nist_doc = read("docs/compliance/nist-800-190.md")
+    footprint_doc = read("docs/explanation/footprint.md")
+    reproducibility_doc = read("docs/explanation/reproducibility.md")
+    stig_doc = read("docs/compliance/stig.md")
+    verify_howto = read("docs/how-to/verify-a-published-image.md")
+    reproduce_howto = read("docs/how-to/reproduce-a-build-byte-for-byte.md")
+    refresh_howto = read("docs/how-to/refresh-the-rpm-lock.md")
+    gate_howto = read("docs/how-to/run-a-gate-locally.md")
+    consume_howto = read("docs/how-to/consume-base-micro-as-from-base.md")
+    tutorial = read("docs/tutorials/getting-started-build-and-verify.md")
     legacy_namespace = "ghcr.io/nwarila-" + "platform/*"
     require(legacy_namespace in acceptance, "acceptance copy should preserve source DoD text")
     require("superseded for this repository" in acceptance, "acceptance.md must flag the legacy platform namespace")
     require("Byte-for-byte reproducible (HARD gate)" in acceptance, "acceptance.md must carry hard F3 wording")
     require("explicitly retracted" not in acceptance, "acceptance.md must not preserve the old F3 retract escape")
-    require("#4857" in fips, "docs/fips.md must record the OpenSSL CMVP #4857 ledger")
+    require("fipsinstall`-generated" not in acceptance, "acceptance.md must not preserve stale fipsinstall mechanism")
+    require("#4857" in fips, "docs/compliance/fips.md must record the OpenSSL CMVP #4857 ledger")
     require(
-        OPENSSL_FIPS_MODULE_VERSION_AMD64 in fips, "docs/fips.md must record the validated OpenSSL provider version"
+        OPENSSL_FIPS_MODULE_VERSION_AMD64 in fips,
+        "docs/compliance/fips.md must record the validated OpenSSL provider version",
     )
-    require(OPENSSL_FIPS_MODULE_VERSION_ARM64 in fips, "docs/fips.md must record the arm64 OpenSSL provider version")
-    require(OPENSSL_FIPS_PROVIDER_NEVRA_AMD64 in fips, "docs/fips.md must record the amd64 provider NVR")
-    require(OPENSSL_FIPS_PROVIDER_NEVRA_ARM64 in fips, "docs/fips.md must record the arm64 provider NVR")
-    require("approved mode" in fips, "docs/fips.md must scope the OpenSSL claim to approved mode")
-    require("fips_enabled" in fips and "= 0" in fips, "docs/fips.md must state the non-FIPS-host caveat")
-    require("Per-architecture validation scope" in fips, "docs/fips.md must describe per-architecture validation scope")
-    require("TD-3" in fips, "docs/fips.md must reference TD-3")
-    require("oe_validated" in fips, "docs/fips.md must document fips-status.json oe_validated")
-    require("provider_nvr" in fips, "docs/fips.md must document fips-status.json provider_nvr")
+    require(
+        OPENSSL_FIPS_MODULE_VERSION_ARM64 in fips,
+        "docs/compliance/fips.md must record the arm64 OpenSSL provider version",
+    )
+    require(
+        OPENSSL_FIPS_PROVIDER_NEVRA_AMD64 in fips,
+        "docs/compliance/fips.md must record the amd64 provider NVR",
+    )
+    require(
+        OPENSSL_FIPS_PROVIDER_NEVRA_ARM64 in fips,
+        "docs/compliance/fips.md must record the arm64 provider NVR",
+    )
+    require(
+        "approved mode" in fips,
+        "docs/compliance/fips.md must scope the OpenSSL claim to approved mode",
+    )
+    require(
+        "fips_enabled" in fips and "= 0" in fips,
+        "docs/compliance/fips.md must state the non-FIPS-host caveat",
+    )
+    require(
+        "Per-architecture validation scope" in fips,
+        "docs/compliance/fips.md must describe per-architecture validation scope",
+    )
+    require("TD-3" in fips, "docs/compliance/fips.md must reference TD-3")
+    require("oe_validated" in fips, "docs/compliance/fips.md must document fips-status.json oe_validated")
+    require("provider_nvr" in fips, "docs/compliance/fips.md must document fips-status.json provider_nvr")
     require(
         "this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list" in fips
         and "this is NOT a CMVP-validated configuration on this architecture" in fips,
-        "docs/fips.md missing arm64 disclaimer",
+        "docs/compliance/fips.md missing arm64 disclaimer",
     )
     require(
         "x86_64" in fips and "IBM Z" in fips and "POWER" in fips and "aarch64" in fips,
-        "docs/fips.md must cite tested OE architecture scope",
+        "docs/compliance/fips.md must cite tested OE architecture scope",
     )
-    require("certificate/4857" in fips and "140sp4857.pdf" in fips, "docs/fips.md must cite NIST #4857 sources")
+    require(
+        "certificate/4857" in fips and "140sp4857.pdf" in fips, "docs/compliance/fips.md must cite NIST #4857 sources"
+    )
 
     for marker in [
         "Only `ubi9-base-micro` exists in",
@@ -1601,7 +1684,7 @@ def check_docs() -> None:
         "Grype fixable-CVE gates",
         "OpenVEX default-deny",
         "NIST SP 800-190 section 4.1 image evidence",
-        "tailored STIG ARF",
+        "tailored RHEL9 STIG ARF",
         "byte-for-byte reproducibility",
         "Rekor-logged",
         "Responsibility boundary",
@@ -1634,22 +1717,34 @@ def check_docs() -> None:
         "does not run `openssl fipsinstall`",
         "self-verifies when it loads",
     ]:
-        require(marker in fips, f"docs/fips.md missing G2/G2a/G3 marker: {marker}")
+        require(marker in fips, f"docs/compliance/fips.md missing G2/G2a/G3 marker: {marker}")
     require(
-        "tailored RHEL9 STIG ARF gate" in readme and "docs/stig.md" in readme,
+        "tailored RHEL9 STIG ARF gate" in readme and "docs/compliance/stig.md" in readme,
         "README.md must describe current STIG gate scope",
     )
-    require("TECH-DEBT.md" in docs_index, "docs README must index technical debt")
-    require("reference/verify.md" in docs_index, "docs README must index verify contract")
-    require("decision-records/" in docs_index, "docs README must index decision records")
-    require("nist-800-190.md" in docs_index, "docs README must index NIST 800-190 evidence")
-    require("footprint.md" in docs_index, "docs README must index footprint evidence")
-    require("reproducibility.md" in docs_index, "docs README must index reproducibility evidence")
-    require("stig.md" in docs_index, "docs README must index STIG evidence")
-    require("vex.md" in docs_index, "docs README must index VEX flow")
+    for marker in [
+        "tutorials/",
+        "how-to/",
+        "reference/",
+        "explanation/",
+        "compliance/",
+        "decision-records/",
+        "TECH-DEBT.md",
+        "reference/verify.md",
+        "reference/gates.md",
+        "reference/verification-contract.md",
+        "explanation/fips-mechanism.md",
+        "compliance/nist-800-190.md",
+        "explanation/footprint.md",
+        "explanation/reproducibility.md",
+        "compliance/stig.md",
+        "compliance/vex.md",
+        "build-failing hard gate",
+    ]:
+        require(marker in docs_index, f"docs README must index marker: {marker}")
     require(
         "CODEOWNERS-gated" in vex_doc and "cosign attest --type openvex" in vex_doc,
-        "docs/vex.md must describe VEX review and attestation flow",
+        "docs/compliance/vex.md must describe VEX review and attestation flow",
     )
     for marker in [
         "SOURCE_DATE_EPOCH=1704067200",
@@ -1666,15 +1761,18 @@ def check_docs() -> None:
         ".github/workflows/rpm-lock-refresh.yaml",
         "nightly sentinel detects",
         "Refresh runtime RPM lockfiles",
+        "direct CDN RPM URLs",
+        "rpm -Uvh",
+        "33c07782",
     ]:
-        require(marker in reproducibility_doc, f"docs/reproducibility.md missing marker: {marker}")
+        require(marker in reproducibility_doc, f"docs/explanation/reproducibility.md missing marker: {marker}")
+    require(
+        "same microdnf installroot" not in reproducibility_doc,
+        "reproducibility doc must not preserve pre-direct-CDN refresh wording",
+    )
     require(
         "report-mode scope" not in docs_index,
         "docs/README.md must not describe reproducibility as report-mode scope",
-    )
-    require(
-        "build-failing hard gate" in docs_index,
-        "docs/README.md must describe reproducibility as a build-failing hard gate",
     )
 
     for marker in [
@@ -1686,7 +1784,7 @@ def check_docs() -> None:
         "rpmdb",
         "STEP022/STEP023",
     ]:
-        require(marker in footprint_doc, f"docs/footprint.md missing marker: {marker}")
+        require(marker in footprint_doc, f"docs/explanation/footprint.md missing marker: {marker}")
 
     for marker in [
         "https://nwarila.dev/attestations/nist-sp-800-190-image/v1",
@@ -1700,7 +1798,7 @@ def check_docs() -> None:
         "tools/assert-no-rootfs-secrets.py",
         "not a claim of arbitrary antivirus detection",
     ]:
-        require(marker in nist_doc, f"docs/nist-800-190.md missing marker: {marker}")
+        require(marker in nist_doc, f"docs/compliance/nist-800-190.md missing marker: {marker}")
 
     for marker in [
         "stig/rhel9-base-micro-tailoring.xml",
@@ -1713,7 +1811,7 @@ def check_docs() -> None:
         "must-verify selected rule returning `notapplicable`",
         "every `rule-result` as `idref`",
     ]:
-        require(marker in stig_doc, f"docs/stig.md missing marker: {marker}")
+        require(marker in stig_doc, f"docs/compliance/stig.md missing marker: {marker}")
 
     for marker in [
         'cosign verify "${IMAGE_REF}"',
@@ -1745,6 +1843,64 @@ def check_docs() -> None:
         "P1.8",
     ]:
         require(marker in verify, f"docs/reference/verify.md missing marker: {marker}")
+
+    for marker in [
+        "tools/assert-reproducible.py",
+        "tools/assert-rpm-lock-hashes.sh",
+        "tools/assert-no-rootfs-secrets.py",
+        "tools/assert-stig-arf.py",
+        "tools/generate-stig-arf-predicate.py",
+        "fail-closed",
+    ]:
+        require(marker in gates, f"docs/reference/gates.md missing marker: {marker}")
+
+    for marker in [
+        "Pull request",
+        "Publish",
+        "Post-publish audit",
+        "slsa-verifier",
+        "gh attestation verify",
+    ]:
+        require(marker in verification_contract, f"docs/reference/verification-contract.md missing marker: {marker}")
+
+    for marker in [
+        "config-only approved-mode mechanism",
+        OPENSSL_FIPS_PROVIDER_NEVRA,
+        OPENSSL_FIPS_MODULE_VERSION,
+        "linux/amd64",
+        "linux/arm64",
+        "CMVP #4857",
+        "not a CMVP-validated operational environment",
+        "fips_enabled =",
+    ]:
+        require(marker in fips_mechanism, f"docs/explanation/fips-mechanism.md missing marker: {marker}")
+
+    for marker in [
+        "cosign verify",
+        "cosign verify-attestation --type spdxjson",
+        "slsa-verifier verify-image",
+        "Do not substitute `gh attestation verify`",
+    ]:
+        require(marker in verify_howto, f"verify how-to missing marker: {marker}")
+    require(
+        "--assert-byte-identical" in reproduce_howto and "linux/arm64" in reproduce_howto,
+        "reproduce how-to must cover both-arch byte identity",
+    )
+    require(
+        "tools/generate-rpm-lock.sh --check" in refresh_howto and "rpm -Uvh" in refresh_howto,
+        "RPM-lock how-to must cover controlled direct-RPM refresh",
+    )
+    require(
+        "python tools/verify.py" in gate_howto and "bash tools/run-test-gates.sh" in gate_howto,
+        "local gate how-to must cover verifier and full gate harness",
+    )
+    require(
+        "FROM ghcr.io/nwarila/ubi9-base-micro@sha256:<digest>" in consume_howto,
+        "FROM-base how-to must require digest pinning",
+    )
+    require(
+        "make build" in tutorial and "python tools/verify.py" in tutorial, "tutorial must walk through build and verify"
+    )
 
 
 def check_lint_setup() -> None:

@@ -38,5 +38,5 @@ emulator-relative to that pinned input.
 
 - Reproducible Builds documentation: <https://reproducible-builds.org/docs/>
 - SLSA security levels: <https://slsa.dev/spec/v1.0/levels>
-- Repository details: `docs/reproducibility.md`, `tools/assert-reproducible.py`,
+- Repository details: `docs/explanation/reproducibility.md`, `tools/assert-reproducible.py`,
   `rpm-lock/runtime.amd64.txt`, `rpm-lock/runtime.arm64.txt`

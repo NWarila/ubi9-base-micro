@@ -33,5 +33,5 @@ attestations with the repository workflow identity.
 - OpenVEX specification: <https://github.com/openvex/spec>
 - Trivy image command documentation: <https://trivy.dev/docs/latest/references/configuration/cli/trivy_image/>
 - Grype project: <https://github.com/anchore/grype>
-- Repository details: `docs/vex.md`, `vex/README.md`, `tools/assert-vex.py`,
+- Repository details: `docs/compliance/vex.md`, `vex/README.md`, `tools/assert-vex.py`,
   `.github/workflows/publish-image.yaml`

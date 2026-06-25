@@ -36,6 +36,6 @@ with exact repository workflow identity.
 
 - OpenSCAP documentation: <https://www.open-scap.org/resources/documentation/>
 - NIST SP 800-190 Application Container Security Guide: <https://csrc.nist.gov/pubs/sp/800/190/final>
-- Repository details: `docs/stig.md`, `stig/rhel9-base-micro-tailoring.xml`,
+- Repository details: `docs/compliance/stig.md`, `stig/rhel9-base-micro-tailoring.xml`,
   `stig/tailoring-justifications.json`, `tools/assert-stig-tailoring.py`,
   `tools/assert-stig-arf.py`

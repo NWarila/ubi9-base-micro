@@ -51,4 +51,4 @@ CMVP-validated configuration for that architecture.
 
 - NIST CMVP certificate #4857: <https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/4857>
 - NIST-hosted security policy for #4857: <https://csrc.nist.gov/CSRC/media/projects/cryptographic-module-validation-program/documents/security-policies/140sp4857.pdf>
-- Repository details: `docs/fips.md`, `tests/fips.sh`, `containers/Dockerfile`
+- Repository details: `docs/compliance/fips.md`, `tests/fips.sh`, `containers/Dockerfile`
