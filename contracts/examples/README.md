@@ -34,22 +34,23 @@ Pull by digest, export the runtime files, and compare `fips-status.json`,
 
 ```sh
 docker pull --platform "${PLATFORM}" "${IMAGE_REF}"
-container_id="$(docker create --platform "${PLATFORM}" "${IMAGE_REF}" /contract-export)"
+container_id="$(docker create --platform "${PLATFORM}" "${IMAGE_REF}")"
 mkdir -p contract-check/rootfs
 docker cp "${container_id}:/etc/nwarila/fips-status.json" contract-check/fips-status.json
-docker export "${container_id}" | tar --no-same-owner --no-same-permissions -x -C contract-check/rootfs
+docker export "${container_id}" -o contract-check/rootfs.tar
+tar --no-same-owner --no-same-permissions -xf contract-check/rootfs.tar -C contract-check/rootfs
 docker rm "${container_id}"
 ```
 
 ```sh
-python - "${MANIFEST}" "${ARCH}" contract-check/fips-status.json contract-check/rootfs <<'PY'
+python - "${MANIFEST}" "${ARCH}" contract-check/fips-status.json contract-check/rootfs contract-check/rootfs.tar <<'PY'
 import json
 import hashlib
-import os
 import sys
+import tarfile
 from pathlib import Path
 
-manifest_path, arch, status_path, rootfs_path = sys.argv[1:5]
+manifest_path, arch, status_path, rootfs_path, tar_path = sys.argv[1:6]
 manifest = json.load(open(manifest_path, encoding="utf-8"))
 status = json.load(open(status_path, encoding="utf-8"))
 rootfs = Path(rootfs_path)
@@ -74,11 +75,18 @@ if actual_sha != arch_contract["fips_so_sha256"]:
     raise SystemExit("fips.so sha256 does not match manifest")
 print("fips.so sha256=" + actual_sha)
 
-regular_file_bytes = sum(path.stat().st_size for path in rootfs.rglob("*") if path.is_file())
-if regular_file_bytes > manifest["runtime"]["footprint_limit_bytes"]:
+# Measure footprint from the export tar exactly as tools/assert-footprint.py does:
+# sum regular-file members once; hardlinks (islnk) and symlinks (issym) carry no payload.
+footprint_limit_bytes = manifest["runtime"]["footprint_limit_bytes"]
+regular_file_bytes = 0
+with tarfile.open(tar_path, "r|*") as archive:
+    for member in archive:
+        if member.isfile():
+            regular_file_bytes += member.size
+if regular_file_bytes > footprint_limit_bytes:
     raise SystemExit("footprint exceeds manifest limit")
 print("regular_file_bytes=" + str(regular_file_bytes))
-print("footprint_limit_bytes=" + str(manifest["runtime"]["footprint_limit_bytes"]))
+print("footprint_limit_bytes=" + str(footprint_limit_bytes))
 
 print("expected package floor=" + ",".join(manifest["runtime"]["package_floor"]))
 print("compare the rpmdb package names from a scanner or rpm-capable rootfs against that floor")
