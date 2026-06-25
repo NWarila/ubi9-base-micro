@@ -38,11 +38,18 @@ Determinism controls:
   the QEMU/binfmt emulator used for the cross-architecture `linux/arm64` build
   path on GitHub-hosted amd64 runners.
 - Runtime RPM inputs are locked by per-architecture transaction files in
-  `rpm-lock/`. The OpenSSL FIPS provider `-8.el9` RPMs are directly URL-sourced
-  from the Red Hat UBI CDN because current repository metadata has purged them;
-  each lockfile records `# direct_rpm:` URL and SHA-256 comments, and the build
-  verifies Red Hat RPM signatures plus those SHA-256 pins before installing the
-  local files.
+  `rpm-lock/`. Every lock row has a `# direct_rpm:` entry with a
+  `https://cdn-ubi.redhat.com/` URL and whole-RPM SHA-256. The build fetches
+  the complete runtime transaction from those pinned URLs with `curl -f`,
+  verifies Red Hat RPM signatures with `rpm -K`, verifies the whole-RPM SHA-256,
+  installs the complete locked transaction with a raw rpm command
+  (`rpm --root=/rootfs --initdb` then
+  `rpm --root=/rootfs -Uvh --oldpackage --replacepkgs --excludedocs <paths>`) over
+  the fetched local RPM paths in lockfile (LC_ALL=C-sorted) order — no microdnf, no
+  install-time dependency resolution, and no repository metadata. Because
+  `rpm -Uvh` runs without `--nodeps`, an unsatisfied dependency aborts the build, so
+  the locked set must be a complete pre-resolved closure. The held OpenSSL FIPS
+  provider RPMs are part of the same fetched-local-RPM transaction.
 - Every locked RPM is verified immediately after install with
   `rpm --root=/rootfs -q --qf '%{SHA256HEADER}|%{SIGMD5}\n' <locked-nevra>`.
   `SHA256HEADER` is the rpmdb-exposed tag that matches the lockfile
@@ -74,8 +81,15 @@ file drifts. When Red Hat has published patched RPMs, the refresh workflow opens
 a normal pull request titled `Refresh runtime RPM lockfiles`. That PR is not a
 publish path and is not auto-merged; the repository PR gates must pass first,
 including the fixable-CVE gates, both-architecture byte-for-byte reproducibility
-gates, and `%{SHA256HEADER}`/`%{SIGMD5}` RPM content-hash enforcement. Merging the
-gated PR re-establishes the reproducible floor at the new pins.
+gates, whole-RPM direct-CDN SHA-256 and `rpm -K` verification, and
+`%{SHA256HEADER}`/`%{SIGMD5}` RPM content-hash enforcement. Merging the gated PR
+re-establishes the reproducible floor at the new NEVRA, URL, and SHA-256 pins.
+
+The Red Hat UBI CDN blob lifetime is not guaranteed forever. A direct RPM 404,
+whole-RPM SHA mismatch, or signature failure is a hard failure: the nightly
+rebuild is the purge sentinel, and recovery requires an explicit vendor or
+controlled URL/NEVRA bump decision rather than metadata fallback or package
+substitution.
 
 F3 scope is the exported rootfs for each architecture. Published manifest
 digests, provenance metadata, and labels that intentionally vary outside the

@@ -35,25 +35,20 @@ ARG OPENSSL_FIPS_SO_SHA256_ARM64
 ARG SOURCE_DATE_EPOCH
 
 COPY containers/fips/openssl.cnf /tmp/openssl-fips.cnf
-COPY tools/fetch-openssl-fips-provider-rpms.sh /tmp/fetch-openssl-fips-provider-rpms.sh
+COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/
+COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh
 
 RUN set -eux; \
     export SOURCE_DATE_EPOCH; \
     case "${TARGETARCH}" in \
-      amd64) rpm_arch="x86_64"; expected_fips_so_sha256="${OPENSSL_FIPS_SO_SHA256_AMD64}" ;; \
-      arm64) rpm_arch="aarch64"; expected_fips_so_sha256="${OPENSSL_FIPS_SO_SHA256_ARM64}" ;; \
+      amd64) rpm_arch="x86_64"; runtime_lockfile="/tmp/rpm-lock/runtime.amd64.txt"; expected_fips_so_sha256="${OPENSSL_FIPS_SO_SHA256_AMD64}" ;; \
+      arm64) rpm_arch="aarch64"; runtime_lockfile="/tmp/rpm-lock/runtime.arm64.txt"; expected_fips_so_sha256="${OPENSSL_FIPS_SO_SHA256_ARM64}" ;; \
       *) echo "unsupported TARGETARCH for FIPS provider pin: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     fips_provider_nvr="${OPENSSL_FIPS_PROVIDER_NEVRA#openssl-fips-provider-so-}"; \
     test "${fips_provider_nvr}" != "${OPENSSL_FIPS_PROVIDER_NEVRA}" || { echo "invalid FIPS provider NEVRA pin: ${OPENSSL_FIPS_PROVIDER_NEVRA}" >&2; exit 1; }; \
-    mkdir -p /tmp/fips-provider-rpms; \
-    OPENSSL_FIPS_PROVIDER_NEVRA="${OPENSSL_FIPS_PROVIDER_NEVRA}" \
-    OPENSSL_FIPS_PROVIDER_RPM_BASE_URL="${OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}" \
-    OPENSSL_FIPS_PROVIDER_RPM_SHA256_X86_64="${OPENSSL_FIPS_PROVIDER_RPM_SHA256_X86_64}" \
-    OPENSSL_FIPS_PROVIDER_RPM_SHA256_AARCH64="${OPENSSL_FIPS_PROVIDER_RPM_SHA256_AARCH64}" \
-    OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64="${OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64}" \
-    OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64="${OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64}" \
-      bash /tmp/fetch-openssl-fips-provider-rpms.sh --targetarch "${TARGETARCH}" --dest /tmp/fips-provider-rpms; \
+    mkdir -p /tmp/runtime-rpms; \
+    bash /tmp/fetch-runtime-rpms.sh --targetarch "${TARGETARCH}" --lockfile "${runtime_lockfile}" --dest /tmp/runtime-rpms; \
     microdnf install -y --releasever=9 \
       --config=/etc/dnf/dnf.conf --noplugins \
       --setopt=reposdir=/etc/yum.repos.d \
@@ -62,8 +57,8 @@ RUN set -eux; \
       ${DNF_REPOS:+--disablerepo=* --enablerepo=${DNF_REPOS}} \
       openssl crypto-policies; \
     rpm -Uvh --oldpackage --replacepkgs \
-      "/tmp/fips-provider-rpms/openssl-fips-provider-${fips_provider_nvr}.${rpm_arch}.rpm" \
-      "/tmp/fips-provider-rpms/${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}.rpm"; \
+      "/tmp/runtime-rpms/openssl-fips-provider-${fips_provider_nvr}.${rpm_arch}.rpm" \
+      "/tmp/runtime-rpms/${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}.rpm"; \
     microdnf clean all; \
     provider_nevra="$(rpm -q --qf '%{NEVRA}\n' openssl-fips-provider-so)"; \
     libs_nevra="$(rpm -q --qf '%{NEVRA}\n' openssl-libs)"; \
@@ -137,10 +132,13 @@ ARG SOURCE_DATE_EPOCH
 
 COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/
 COPY tools/assert-rpm-lock-hashes.sh /tmp/assert-rpm-lock-hashes.sh
-COPY tools/fetch-openssl-fips-provider-rpms.sh /tmp/fetch-openssl-fips-provider-rpms.sh
+COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh
 
-# Assemble the runtime rootfs with microdnf --installroot so /var/lib/rpm
-# remains available to scanners. Only regenerable caches and logs are pruned.
+# Assemble the runtime rootfs with a raw rpm transaction (rpm --initdb + rpm -Uvh)
+# over the fetched, sha256+GPG-verified local RPM paths in lockfile (LC_ALL=C)
+# order -- no microdnf/metadata resolution; the lockfile is the complete
+# pre-resolved closure (rpm -Uvh without --nodeps aborts on any missing dep).
+# /var/lib/rpm is retained for scanners; only regenerable caches and logs are pruned.
 RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     --mount=from=fips-verify,source=/usr/bin/openssl,target=/tmp/fips-openssl,ro \
     --mount=from=fips-verify,source=/usr/lib64,target=/tmp/fips-lib64,ro \
@@ -153,42 +151,27 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     esac; \
     test -s "${runtime_lockfile}" || { echo "runtime RPM lockfile missing: ${runtime_lockfile}" >&2; exit 1; }; \
     locked_packages=""; \
+    locked_rpm_paths=""; \
     while IFS='|' read -r package final_rpmdb name epoch version release arch sha256_header sigmd5; do \
       case "${package}" in ""|\#*) continue ;; esac; \
       test -n "${final_rpmdb}" && test -n "${name}" && test -n "${epoch}" && test -n "${version}" && test -n "${release}" && test -n "${arch}" && test -n "${sha256_header}" && test -n "${sigmd5}"; \
       case "${arch}" in noarch|"${rpm_arch}") ;; *) echo "locked package ${package} has wrong arch ${arch} for ${TARGETARCH}" >&2; exit 1 ;; esac; \
       case "${final_rpmdb}" in yes|no) ;; *) echo "locked package ${package} has invalid final_rpmdb=${final_rpmdb}" >&2; exit 1 ;; esac; \
-      case "${name}" in openssl-fips-provider|openssl-fips-provider-so) continue ;; esac; \
       locked_packages="${locked_packages} ${package}"; \
+      locked_rpm_paths="${locked_rpm_paths} /tmp/runtime-rpms/${name}-${version}-${release}.${arch}.rpm"; \
     done < "${runtime_lockfile}"; \
     test -n "${locked_packages}" || { echo "runtime RPM lockfile yielded no packages" >&2; exit 1; }; \
+    test -n "${locked_rpm_paths}" || { echo "runtime RPM lockfile yielded no local RPM paths" >&2; exit 1; }; \
+    mkdir -p /tmp/runtime-rpms; \
+    bash /tmp/fetch-runtime-rpms.sh --targetarch "${TARGETARCH}" --lockfile "${runtime_lockfile}" --dest /tmp/runtime-rpms; \
     echo "installing locked runtime RPM transaction:${locked_packages}"; \
     mkdir -p /rootfs; \
-    microdnf install -y --installroot=/rootfs --releasever=9 \
-      --config=/etc/dnf/dnf.conf --noplugins \
-      --setopt=reposdir=/etc/yum.repos.d \
-      --setopt=varsdir=/etc/dnf/vars \
-      --setopt=cachedir=/var/cache/microdnf-installroot \
-      --nodocs --setopt=install_weak_deps=0 \
-      ${DNF_REPOS:+--disablerepo=* --enablerepo=${DNF_REPOS}} \
-      ${locked_packages}; \
+    rpm --root=/rootfs --initdb; \
+    rpm --root=/rootfs -Uvh --oldpackage --replacepkgs --excludedocs ${locked_rpm_paths}; \
     microdnf clean all; \
     rm -rf /rootfs/var/cache/* /var/cache/microdnf-installroot \
       /rootfs/var/log/dnf.log /rootfs/var/log/dnf.librepo.log /rootfs/var/log/hawkey.log; \
-    mkdir -p /tmp/fips-provider-rpms; \
-    OPENSSL_FIPS_PROVIDER_NEVRA="${OPENSSL_FIPS_PROVIDER_NEVRA}" \
-    OPENSSL_FIPS_PROVIDER_RPM_BASE_URL="${OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}" \
-    OPENSSL_FIPS_PROVIDER_RPM_SHA256_X86_64="${OPENSSL_FIPS_PROVIDER_RPM_SHA256_X86_64}" \
-    OPENSSL_FIPS_PROVIDER_RPM_SHA256_AARCH64="${OPENSSL_FIPS_PROVIDER_RPM_SHA256_AARCH64}" \
-    OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64="${OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64}" \
-    OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64="${OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64}" \
-      bash /tmp/fetch-openssl-fips-provider-rpms.sh --targetarch "${TARGETARCH}" --dest /tmp/fips-provider-rpms; \
-    fips_provider_nvr="${OPENSSL_FIPS_PROVIDER_NEVRA#openssl-fips-provider-so-}"; \
-    test "${fips_provider_nvr}" != "${OPENSSL_FIPS_PROVIDER_NEVRA}" || { echo "invalid FIPS provider NEVRA pin: ${OPENSSL_FIPS_PROVIDER_NEVRA}" >&2; exit 1; }; \
-    rpm --root=/rootfs -Uvh --oldpackage --replacepkgs \
-      "/tmp/fips-provider-rpms/openssl-fips-provider-${fips_provider_nvr}.${rpm_arch}.rpm" \
-      "/tmp/fips-provider-rpms/${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}.rpm"; \
-    bash /tmp/assert-rpm-lock-hashes.sh --root /rootfs --lockfile "${runtime_lockfile}" --direct-rpm-dir /tmp/fips-provider-rpms; \
+    bash /tmp/assert-rpm-lock-hashes.sh --root /rootfs --lockfile "${runtime_lockfile}" --direct-rpm-dir /tmp/runtime-rpms; \
     if rpm --root=/rootfs -q bash >/dev/null 2>&1; then \
       rpm --root=/rootfs -e --nodeps --noscripts bash; \
     fi; \
@@ -416,7 +399,7 @@ ARG SOURCE_DATE_EPOCH
 RUN set -eux; \
     export SOURCE_DATE_EPOCH; \
     test -n "${DEV_PACKAGES}" || { echo "DEV_PACKAGES must be set" >&2; exit 1; }; \
-    mkdir -p /rootfs; \
+    mkdir -p /rootfs /tmp/no-repos; \
     microdnf install -y --installroot=/rootfs --releasever=9 \
       --config=/etc/dnf/dnf.conf --noplugins \
       --setopt=reposdir=/etc/yum.repos.d \
