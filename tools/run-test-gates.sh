@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+# Purpose: Top-level gate pipeline — install scanners + STIG datastream, build images, then run hardening/FIPS tests,
+# footprint, STIG ARF, SBOM gen+assertions, phantom-package check, Trivy/Grype + VEX, rootfs secret scan, and NIST
+# 800-190 predicate gen/validate.
+# Role: workflow
+# Python-convertible: partial — thin linear orchestration; all substance is in the called .py/.sh gates, conversion
+# mainly relocates the call list.
+# Micro-container candidate: yes — this is the gate workflow to collapse into pinned gate micro-container(s), dropping
+# the install-on-runner preamble.
+# Relocate: no — workflow/gate driver, not a build-process artifact script.
+
 set -euo pipefail
 
 runtime_image="${RUNTIME_IMAGE:-ghcr.io/nwarila/ubi9-base-micro:base-micro}"

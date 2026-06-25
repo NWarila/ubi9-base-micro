@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Purpose: Default-deny OpenVEX gate over unfixed HIGH/CRITICAL Trivy+Grype findings
+# Role: gate
+# Micro-container candidate: yes - pure-stdlib, scanner-JSON-in/exit-out, has --self-test
+
 """Default-deny OpenVEX gate for unfixed HIGH/CRITICAL findings."""
 
 from __future__ import annotations

@@ -1,4 +1,9 @@
 # syntax=docker/dockerfile:1.7
+# Purpose: Multi-stage hardened build for ubi9-base-micro: FIPS-provider proof, shell-free runtime rootfs from the
+# pinned RPM lockfile, and distroless ubi-micro runtime + dev images.
+# Role: container-build
+# Relocate: no (Dockerfile stays; extract the inline RUN shell into containers/scripts/ helpers)
+# NOTE: header must follow the `# syntax=` directive line (line 1 must remain the parser directive).
 
 ARG BUILDKIT_SBOM_SCAN_CONTEXT=true
 

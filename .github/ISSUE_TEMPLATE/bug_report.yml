@@ -1,3 +1,8 @@
+# Purpose: GitHub issue form for reproducible bug reports.
+# Role: governance
+# Micro-container candidate: no (issue form, not gate logic)
+# Note: comment must precede the top-level `name:` key (GitHub parses the YAML body).
+
 name: Bug Report
 description: Report a reproducible problem in this repository
 title: "[Bug]: "

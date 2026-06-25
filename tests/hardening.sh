@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# Purpose: Export the runtime image rootfs and assert the hardening baseline (no shell, no dnf/microdnf/rpm/yum, user
+# 65532:65532, populated rpmdb enumerable by Syft, populated RHEL CA bundle).
+# Role: test
+# Python-convertible: yes — already embeds a Python Syft-JSON parser; the awk filesystem scans + assertion loops fold
+# into one Python gate.
+# Micro-container candidate: yes — runtime hardening gate; run the assertions inside a pinned gate image.
+# Relocate: no — runtime verification, not a build-process script.
+
 set -euo pipefail
 
 usage() {

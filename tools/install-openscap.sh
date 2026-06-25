@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# Purpose: Provision the OpenSCAP CI toolchain on a Linux runner via apt-get (oscap/oscap-podman, podman, rpm,
+# cmake/ninja, python3-jinja2/yaml, xsltproc) and smoke-check the key binaries.
+# Role: tooling
+# Python-convertible: no — thin apt-get provisioning glue with a command -v smoke check.
+# Micro-container candidate: no — runner provisioning, not gate logic.
+# Relocate: no — provisions the CI host, not a build-process script.
+
 set -euo pipefail
 
 kernel_name="$(uname -s)"

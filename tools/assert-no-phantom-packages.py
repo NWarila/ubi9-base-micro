@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# Purpose: Assert rpmdb packages and runtime .so/ELF files have honest rootfs ownership (no phantoms/orphans)
+# Role: gate
+# Micro-container candidate: partial - needs rpm CLI baked in (good fit for a pinned gate-container); --image form
+# also needs docker
+
 """Assert rpmdb packages and runtime binary files stay honestly owned.
 
 The package pass uses `rpm -ql --dump --dbpath /var/lib/rpm` as the

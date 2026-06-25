@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Purpose: Generate the STIG ARF attestation predicate summary (ARF hash + tailoring metadata)
+# Role: tooling
+# Micro-container candidate: yes - pure-stdlib, deterministic JSON out, has --self-test
+
 """Generate a STIG ARF attestation predicate summary."""
 
 from __future__ import annotations

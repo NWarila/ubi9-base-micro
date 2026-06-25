@@ -1,3 +1,9 @@
+# Purpose: Nightly cron sentinel — re-runs the verify + both-arch reproducibility + build/hardening gates against
+# current upstream UBI/RPM state to catch drift.
+# Role: gate
+# Micro-container candidate: partial — keep cron/matrix glue; share the same pinned gate micro-container as build.yaml
+# (removes the copy-paste of its jobs).
+
 name: Nightly base micro sentinel
 
 on:

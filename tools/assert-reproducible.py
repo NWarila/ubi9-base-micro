@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Purpose: Build twice and diff exported runtime rootfs bytes to prove reproducibility
+# Role: gate
+# Micro-container candidate: no - orchestrates a full double-build (docker/build.sh), not a thin file-in gate
+
 """Build twice and compare exported runtime rootfs bytes."""
 
 from __future__ import annotations

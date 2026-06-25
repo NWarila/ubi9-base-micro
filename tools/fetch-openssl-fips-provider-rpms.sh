@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# Purpose: Fetch the pinned OpenSSL FIPS provider RPMs (provider + -so NEVRA) for the target arch from the Red Hat UBI
+# CDN, verify each sha256 + rpm -K signature, and write a direct-rpms.lock manifest.
+# Role: container-build
+# Python-convertible: partial — fetch/verify glue, but per-arch NEVRA/sha branching would share cleanly with
+# fetch-runtime-rpms in Python; runs in-container against rpm so not a strong yes.
+# Relocate: yes — build-process fetch script (also COPYed into the capture Dockerfile); move under
+# containers/scripts/.
+
 set -euo pipefail
 
 usage() {

@@ -1,3 +1,9 @@
+# Purpose: OpenSSL approved-mode config — activates only fips+base providers, default_properties=fips=yes, no default
+# provider; shipped as the runtime image's OPENSSL_CONF.
+# Role: config
+# NOTE: OpenSSL conf accepts '#' comments; keep the header above `config_diagnostics = 1` so the [default] section
+# parses unchanged.
+
 config_diagnostics = 1
 openssl_conf = openssl_init
 

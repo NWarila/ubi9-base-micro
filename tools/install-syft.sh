@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# Purpose: Download the pinned Syft release for the host OS/arch, verify it against the published checksums, extract
+# the binary into dist/tools/, and print its version.
+# Role: tooling
+# Python-convertible: no — thin uname/curl/sha256sum/extract installer glue.
+# Micro-container candidate: no — CI tool installer.
+# Relocate: no — host/CI scanner installer, not a build-process script.
+
 set -euo pipefail
 
 version="${SYFT_VERSION:-1.45.1}"

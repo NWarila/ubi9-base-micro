@@ -1,3 +1,8 @@
+# Purpose: CodeQL static analysis of the Python tools/ on PR/push/weekly cron (security-extended, build-mode none).
+# Role: gate
+# Micro-container candidate: no — first-party codeql-action + code-scanning backend; intrinsic GitHub-Actions
+# integration.
+
 name: CodeQL
 
 on:

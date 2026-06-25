@@ -1,3 +1,8 @@
+# Purpose: Developer convenience targets (build/test/verify/clean) dispatching to tools/build.sh, tests/hardening.sh,
+# and tools/verify.py.
+# Role: tooling
+# NOTE: Make uses '#' comments; place the header above the `.PHONY` line — it does not affect targets.
+
 .PHONY: build test verify clean
 
 IMAGE_REPOSITORY ?= ghcr.io/nwarila/ubi9-base-micro

@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Purpose: Fail closed on tailored OpenSCAP STIG ARF results at/above the chosen severity
+# Role: gate
+# Micro-container candidate: yes - pure-stdlib (xml/json), ARF-in/exit-out, has --self-test
+
 """Fail closed on tailored OpenSCAP ARF results."""
 
 from __future__ import annotations

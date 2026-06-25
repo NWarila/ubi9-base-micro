@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# Purpose: Repository contract checks (pinned SHAs/tags, FIPS RPM digests, required files/ADRs) for ubi9-base-micro
+# Role: governance
+# Micro-container candidate: no - repo-tree-coupled contract verifier (run via `make verify`), validates the repo, not
+# an image
+
 """Repository contract checks for ubi9-base-micro."""
 
 from __future__ import annotations

@@ -1,3 +1,7 @@
+# Purpose: Force LF EOL per file type and export-ignore dotfiles from archives.
+# Role: config
+# Micro-container candidate: no (VCS attributes, not gate logic)
+
 * text=auto eol=lf
 
 *.json       text eol=lf

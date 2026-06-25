@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# Purpose: Download the pinned Trivy release for the host OS/arch (Trivy Linux/windows + 64bit/ARM64 asset naming),
+# verify it against the published checksums, extract into dist/tools/, and print its version.
+# Role: tooling
+# Python-convertible: no — thin uname/curl/sha256sum/extract installer glue.
+# Micro-container candidate: no — CI tool installer.
+# Relocate: no — host/CI scanner installer, not a build-process script.
+
 set -euo pipefail
 
 version="${TRIVY_VERSION:-0.71.0}"

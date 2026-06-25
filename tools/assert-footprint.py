@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Purpose: Assert exported runtime rootfs stays within the H2 byte ceiling (default 25 MiB)
+# Role: gate
+# Micro-container candidate: partial - --tar form is clean; --image form shells to docker
+
 """Assert the exported runtime rootfs stays within the H2 footprint ceiling."""
 
 from __future__ import annotations

@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# Purpose: Parse a runtime RPM lockfile, validate its direct_rpm CDN pins + package rows
+# (host/sha256/columns/arch/orphans), download each pinned RPM, verify sha256 + rpm -K GPG, and write a
+# direct-rpms.lock manifest (fails closed).
+# Role: container-build
+# Python-convertible: yes — lockfile parser + cross-validation duplicates assert-rpm-lock-hashes.sh; consolidate the
+# lock grammar in Python (curl/sha256sum/rpm -K stay glue).
+# Relocate: yes — build-process fetch script; move under containers/scripts/.
+
 set -euo pipefail
 
 usage() {

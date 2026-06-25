@@ -1,3 +1,7 @@
+# Purpose: PR/push lint gate — installs pinned pre-commit and runs all hooks with --show-diff-on-failure.
+# Role: gate
+# Micro-container candidate: yes — install+run pre-commit fits cleanly behind one pinned micro-container action.
+
 name: Lint
 
 on:

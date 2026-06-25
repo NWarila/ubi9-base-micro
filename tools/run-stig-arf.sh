@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# Purpose: Run the image-scoped RHEL9 STIG gate — assert the tailoring, oscap-podman xccdf eval to ARF+HTML, export
+# the rootfs, then chain assert-rootfs-identity / assert-stig-arf (fail-closed) / generate-stig-arf-predicate.
+# Role: gate
+# Python-convertible: partial — orchestrator; every assertion/predicate already lives in assert-stig-*.py, only
+# oscap-podman invocation + exit-code/trap handling are shell.
+# Micro-container candidate: yes — STIG ARF gate; pin the oscap/podman toolchain + ARF parse in a micro-container.
+# Relocate: no — verification gate, not a build-process script.
+
 set -euo pipefail
 
 usage() {

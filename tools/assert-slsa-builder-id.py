@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Purpose: Assert verified SLSA provenance uses the expected builder ID
+# Role: gate
+# Micro-container candidate: yes - pure-stdlib, attestation-in/exit-out, has --self-test
+
 """Assert verified SLSA provenance uses the expected builder ID."""
 
 from __future__ import annotations

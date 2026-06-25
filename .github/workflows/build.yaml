@@ -1,3 +1,9 @@
+# Purpose: PR/push/tag CI — actionlint, repo-contract + shell-syntax self-tests, both-arch byte-identical
+# reproducibility gate, and the full test-only hardening gate set.
+# Role: gate
+# Micro-container candidate: partial — keep triggers/matrix/runner-harden as workflow glue; move the
+# verify/reproducibility/hardening gate logic into a pinned micro-container action.
+
 name: Build base micro
 
 on:

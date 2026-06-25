@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Purpose: Assert rootfs identity/file-owner invariants (no rogue UID0, no unknown file UIDs/GIDs)
+# Role: gate
+# Micro-container candidate: yes - pure-stdlib, tar-in/exit-out, has --self-test
+
 """Assert identity and file-owner invariants from an exported rootfs tar."""
 
 from __future__ import annotations

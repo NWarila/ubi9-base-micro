@@ -1,3 +1,7 @@
+# Purpose: Issue chooser config; disables blank issues and routes Security/Support links.
+# Role: governance
+# Micro-container candidate: no (issue chooser config, not gate logic)
+
 blank_issues_enabled: false
 contact_links:
   - name: Security Vulnerability

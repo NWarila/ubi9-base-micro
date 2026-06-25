@@ -1,3 +1,8 @@
+// Purpose: markdownlint-cli2 ruleset relaxing specific MD rules for this repo's docs.
+// Role: config
+// Micro-container candidate: no (linter config, not gate logic)
+// Note: .jsonc supports // comments; place above the opening brace.
+
 {
   "config": {
     "MD003": false,

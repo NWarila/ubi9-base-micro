@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Purpose: Assert Syft SBOMs enumerate the required runtime RPM floor
+# Role: gate
+# Micro-container candidate: yes - pure-stdlib, SBOM-in/exit-out, has --self-test
+
 """Assert Syft SBOMs enumerate the runtime RPM floor."""
 
 from __future__ import annotations

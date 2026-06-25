@@ -1,3 +1,9 @@
+# Purpose: Weekly cron — regenerate runtime RPM lockfiles from current UBI repos and open a refresh PR on change
+# (dedup against an existing open PR).
+# Role: workflow
+# Micro-container candidate: no — intrinsic gh/Actions PR-automation (write perms, git push, gh pr create); only
+# generate-rpm-lock.sh is the reusable core.
+
 name: RPM lock refresh
 
 on:

@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Purpose: Fail if a container rootfs contains high-confidence clear-text secrets
+# Role: gate
+# Micro-container candidate: yes - pure-stdlib, rootfs-in/exit-out, has --self-test
+
 """Fail if a container rootfs contains high-confidence clear-text secrets."""
 
 from __future__ import annotations
