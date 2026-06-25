@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
-  cat >&2 <<'EOF'
+  cat >&2 << 'EOF'
 usage: generate-rpm-lock.sh [--arch amd64|arm64|all] [--output-dir DIR]
        generate-rpm-lock.sh --check [--arch amd64|arm64|all]
        generate-rpm-lock.sh --self-test
@@ -56,7 +56,7 @@ arches_for() {
 
 write_capture_dockerfile() {
   local dockerfile="$1"
-  cat > "${dockerfile}" <<'DOCKERFILE'
+  cat > "${dockerfile}" << 'DOCKERFILE'
 # syntax=docker/dockerfile:1.7
 
 ARG UBI_MINIMAL_IMAGE
@@ -434,12 +434,14 @@ validate_lockfile() {
         direct_rpm_url["${direct_package}"]="${direct_url}"
         direct_rows=$((direct_rows + 1))
         ;;
+      *) ;;
     esac
   done < "${path}"
 
   while IFS='|' read -r package final_rpmdb name epoch version release arch sha256_header sigmd5 extra; do
     case "${package}" in
       "" | \#*) continue ;;
+      *) ;;
     esac
     if [[ -n "${extra:-}" ]]; then
       echo "${path}: too many columns for ${package}" >&2
@@ -452,7 +454,10 @@ validate_lockfile() {
       }
     done
     case "${final_rpmdb}" in
-      yes) final_rows=$((final_rows + 1)); final_seen+="${name} " ;;
+      yes)
+        final_rows=$((final_rows + 1))
+        final_seen+="${name} "
+        ;;
       no) ;;
       *)
         echo "${path}: invalid final_rpmdb=${final_rpmdb} for ${package}" >&2
@@ -588,6 +593,8 @@ run_check() {
   local generated_dir="${tmpdir}/rpm-lock"
   local failed=0
   local platform_arch
+  local arch_list
+  arch_list="$(arches_for "${arch}")"
   while IFS= read -r platform_arch; do
     generate_one "${platform_arch}" "${generated_dir}"
     local expected="${repo_root}/rpm-lock/runtime.${platform_arch}.txt"
@@ -597,7 +604,7 @@ run_check() {
       diff -u "${expected}" "${generated}" >&2 || true
       failed=1
     fi
-  done < <(arches_for "${arch}")
+  done <<< "${arch_list}"
 
   [[ "${failed}" -eq 0 ]] || return 1
   echo "RPM lockfile check: ok (generated lockfiles match committed files)"
@@ -614,7 +621,9 @@ run_self_test() {
   cp "${repo_root}/rpm-lock/runtime.amd64.txt" "${tmpdir}/bad.txt"
   awk 'BEGIN { done=0 } /^#/ { print; next } done == 0 { sub(/\|no\|/, "|maybe|"); done=1 } { print }' "${tmpdir}/bad.txt" > "${tmpdir}/bad.next"
   mv "${tmpdir}/bad.next" "${tmpdir}/bad.txt"
-  if validate_lockfile "${tmpdir}/bad.txt" amd64 >"${tmpdir}/bad.out" 2>&1; then
+  # Negative self-test expects validate_lockfile to fail closed.
+  # shellcheck disable=SC2310
+  if validate_lockfile "${tmpdir}/bad.txt" amd64 > "${tmpdir}/bad.out" 2>&1; then
     echo "self-test invalid final_rpmdb unexpectedly passed" >&2
     return 1
   fi
@@ -679,9 +688,11 @@ main() {
   fi
 
   local platform_arch
+  local arch_list
+  arch_list="$(arches_for "${arch}")"
   while IFS= read -r platform_arch; do
     generate_one "${platform_arch}" "${output_dir}"
-  done < <(arches_for "${arch}")
+  done <<< "${arch_list}"
 }
 
 main "$@"

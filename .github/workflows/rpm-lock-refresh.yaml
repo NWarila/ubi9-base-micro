@@ -105,7 +105,8 @@ jobs:
           cat > "${body_file}" <<'EOF'
           Regenerates the runtime RPM lockfiles from the current Red Hat UBI 9 repositories.
 
-          This is a normal pull request. It must pass the repository PR gates before merge, including the build and hardening gates, both-architecture byte-for-byte reproducibility gates, fixable-CVE gates, and RPM content-hash enforcement.
+          This is a normal pull request. It must pass the repository PR gates before merge, including the build and
+          hardening gates, both-architecture byte-for-byte reproducibility gates, fixable-CVE gates, and RPM content-hash enforcement.
           EOF
 
           gh pr create \

@@ -9,7 +9,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_USES = re.compile(r"uses:\s+([^@\s]+)@([^\s#]+)")
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
@@ -24,9 +23,32 @@ CODEQL_ACTION_SHA = "8aad20d150bbac5944a9f9d289da16a4b0d87c1e"
 DEPENDENCY_REVIEW_ACTION_SHA = "a1d282b36b6f3519aa1f3fc636f609c47dddb294"
 ZIZMOR_ACTION_SHA = "5f14fd08f7cf1cb1609c1e344975f152c7ee938d"
 ZIZMOR_VERSION = "1.25.2"
+PRE_COMMIT_VERSION = "4.6.0"
+SHELLCHECK_HOOK_REV = "v0.11.0.1"
+SHFMT_HOOK_REV = "v3.13.1-1"
+RUFF_HOOK_REV = "v0.15.18"
+MYPY_HOOK_REV = "v2.1.0"
+YAMLLINT_HOOK_REV = "v1.38.0"
+MARKDOWNLINT_HOOK_REV = "v0.22.1"
+HADOLINT_HOOK_REV = "v2.14.0"
+HADOLINT_IMAGE_DIGEST = "sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e"
+ACTIONLINT_HOOK_REV = "v1.7.12"
+ACTIONLINT_REVIEWDOG_ACTION_SHA = "6fb7acc99f4a1008869fa8a0f09cfca740837d9d"
+ACTIONLINT_REVIEWDOG_ACTION_TAG = "v1.72.0"
+ACTIONLINT_REVIEWDOG_TOOL_VERSION = "1.7.12"
+LINT_CONFIG_FILES = [
+    ".hadolint.yaml",
+    ".markdownlint-cli2.jsonc",
+    ".pre-commit-config.yaml",
+    ".shellcheckrc",
+    ".yamllint",
+    "pyproject.toml",
+    ".github/workflows/lint.yaml",
+]
 SUPPLY_CHAIN_WORKFLOWS = [
     ".github/workflows/codeql.yml",
     ".github/workflows/dependency-review.yml",
+    ".github/workflows/lint.yaml",
     ".github/workflows/scorecard.yml",
     ".github/workflows/zizmor.yml",
 ]
@@ -108,7 +130,7 @@ class VerifyError(Exception):
     pass
 
 
-def require(condition: bool, message: str) -> None:
+def require(condition: object, message: str) -> None:
     if not condition:
         raise VerifyError(message)
 
@@ -174,6 +196,7 @@ def check_required_files() -> None:
         ".dockerignore",
         ".editorconfig",
         ".gitattributes",
+        ".hadolint.yaml",
         "CHANGELOG.md",
         "CODE_OF_CONDUCT.md",
         "CONTRIBUTING.md",
@@ -187,6 +210,7 @@ def check_required_files() -> None:
         ".github/workflows/build.yaml",
         ".github/workflows/codeql.yml",
         ".github/workflows/dependency-review.yml",
+        ".github/workflows/lint.yaml",
         ".github/workflows/nightly.yaml",
         ".github/workflows/publish-image.yaml",
         ".github/workflows/rpm-lock-refresh.yaml",
@@ -194,8 +218,12 @@ def check_required_files() -> None:
         ".github/workflows/zizmor.yml",
         ".gitignore",
         ".markdownlint-cli2.jsonc",
+        ".pre-commit-config.yaml",
+        ".shellcheckrc",
+        ".yamllint",
         "LICENSE",
         "Makefile",
+        "pyproject.toml",
         "README.md",
         "SECURITY.md",
         "SUPPORT.md",
@@ -363,6 +391,7 @@ def check_community_profile() -> None:
     ]:
         require(marker in pr_template, f"pull request template missing marker: {marker}")
 
+
 def check_renovate_config() -> None:
     relative_path = ".github/renovate.json"
     path = ROOT / relative_path
@@ -436,13 +465,16 @@ def check_renovate_config() -> None:
         ):
             ubi_rule_found = True
 
-    require(action_pin_rule_index is not None, "Renovate config must keep ordinary GitHub Actions SHA-pinned")
-    require(generator_rule_index is not None, "Renovate config must carry the TD-1 SLSA generator tag-pin rule")
+    if action_pin_rule_index is None:
+        raise VerifyError("Renovate config must keep ordinary GitHub Actions SHA-pinned")
+    if generator_rule_index is None:
+        raise VerifyError("Renovate config must carry the TD-1 SLSA generator tag-pin rule")
     require(
         generator_rule_index > action_pin_rule_index,
         "TD-1 generator rule must follow the general GitHub Actions pin rule so it overrides it",
     )
     require(ubi_rule_found, "Renovate config must group UBI minimal and micro digest refreshes")
+
 
 def check_dockerfile() -> None:
     text = read("containers/Dockerfile")
@@ -460,22 +492,29 @@ def check_dockerfile() -> None:
         f"ARG OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64={OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AMD64}",
         f"ARG OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64={OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_ARM64}",
         "ARG SOURCE_DATE_EPOCH=1704067200",
-        "amd64) rpm_arch=\"x86_64\"",
-        "arm64) rpm_arch=\"aarch64\"",
-        "bash /tmp/fetch-runtime-rpms.sh --targetarch \"${TARGETARCH}\" --lockfile \"${runtime_lockfile}\" --dest /tmp/runtime-rpms",
+        'amd64) rpm_arch="x86_64"',
+        'arm64) rpm_arch="aarch64"',
+        (
+            'bash /tmp/fetch-runtime-rpms.sh --targetarch "${TARGETARCH}" '
+            '--lockfile "${runtime_lockfile}" --dest /tmp/runtime-rpms'
+        ),
         "rpm -Uvh --oldpackage --replacepkgs",
-        "expected_provider_nevra=\"${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}\"",
+        'expected_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}"',
         "COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/",
         "COPY tools/assert-rpm-lock-hashes.sh /tmp/assert-rpm-lock-hashes.sh",
         "COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh",
-        "locked_packages=\"\"",
-        "locked_rpm_paths=\"\"",
+        "dnf_repo_args=()",
+        '"${dnf_repo_args[@]}"',
+        "locked_packages=()",
+        "locked_rpm_paths=()",
+        'locked_packages+=("${package}")',
+        'locked_rpm_paths+=("/tmp/runtime-rpms/${name}-${version}-${release}.${arch}.rpm")',
         "final runtime RPM lock floor verified",
         "bash /tmp/assert-rpm-lock-hashes.sh --root /rootfs --lockfile",
         "--direct-rpm-dir /tmp/runtime-rpms",
-        "find /rootfs -xdev -exec touch -h -d \"@${SOURCE_DATE_EPOCH}\" {} +",
+        'find /rootfs -xdev -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +',
         "rpm --root=/rootfs -Uvh --oldpackage --replacepkgs --excludedocs",
-        "${locked_rpm_paths}",
+        '"${locked_rpm_paths[@]}"',
         "--nodocs --setopt=install_weak_deps=0",
         "FROM ${UBI_MICRO_IMAGE} AS runtime-common",
         "FROM runtime-common AS runtime-amd64",
@@ -508,7 +547,7 @@ def check_dockerfile() -> None:
         "rpm --root=/rootfs -q --qf '%{NEVRA}\\n' openssl-fips-provider-so",
         "shipped_libs_nevra",
         "ldd-protected FIPS/glibc runtime dependency paths:",
-        "rpm --root=/rootfs -e --nodeps --noscripts ${removable_packages}",
+        'rpm --root=/rootfs -e --nodeps --noscripts "${removable_packages[@]}"',
         "ldconfig -r /rootfs",
         "/rootfs/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
         "/rootfs/usr/lib/locale/C.utf8",
@@ -560,10 +599,12 @@ def check_dockerfile() -> None:
 def check_workflow() -> None:
     workflows = sorted(path.name for path in (ROOT / ".github/workflows").glob("*.y*ml"))
     require(
-        workflows == [
+        workflows
+        == [
             "build.yaml",
             "codeql.yml",
             "dependency-review.yml",
+            "lint.yaml",
             "nightly.yaml",
             "publish-image.yaml",
             "rpm-lock-refresh.yaml",
@@ -577,6 +618,10 @@ def check_workflow() -> None:
     nightly = read(".github/workflows/nightly.yaml")
     refresh = read(".github/workflows/rpm-lock-refresh.yaml")
     gate_runner = read("tools/run-test-gates.sh")
+    reviewdog_actionlint_marker = (
+        f"reviewdog/action-actionlint@{ACTIONLINT_REVIEWDOG_ACTION_SHA} # "
+        f"{ACTIONLINT_REVIEWDOG_ACTION_TAG}; bundles actionlint {ACTIONLINT_REVIEWDOG_TOOL_VERSION}"
+    )
 
     for source, source_text in [
         ("build workflow", build),
@@ -611,12 +656,15 @@ def check_workflow() -> None:
         "bash -n tools/fetch-runtime-rpms.sh",
         "bash -n tools/generate-rpm-lock.sh",
         "UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:",
-        "TRIVY_VERSION: \"0.71.0\"",
-        "GRYPE_VERSION: \"0.87.0\"",
-        "SSG_VERSION: \"0.1.81\"",
-        "SSG_TARBALL_SHA512: \"11e26cfa96a6f1bd98b3a131837e2f86c9a9851239337d86d624b01627faf10f7a03c395a5839ddab018e0fa47719ade05a9946f90d5ca96b1261776a9164379\"",
-        "STIG_PROFILE: \"xccdf_org.nwarila.content_profile_ubi9_base_micro_stig\"",
-        "STIG_FAIL_ON: \"low\"",
+        'TRIVY_VERSION: "0.71.0"',
+        'GRYPE_VERSION: "0.87.0"',
+        'SSG_VERSION: "0.1.81"',
+        (
+            'SSG_TARBALL_SHA512: "11e26cfa96a6f1bd98b3a131837e2f86c9a9851239337d86d624b01627faf10'
+            'f7a03c395a5839ddab018e0fa47719ade05a9946f90d5ca96b1261776a9164379"'
+        ),
+        'STIG_PROFILE: "xccdf_org.nwarila.content_profile_ubi9_base_micro_stig"',
+        'STIG_FAIL_ON: "low"',
         "reproducibility gate",
         "docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130",
         "platform: linux/amd64",
@@ -631,7 +679,7 @@ def check_workflow() -> None:
 
     for marker in [
         "schedule:",
-        "cron: \"23 4 * * *\"",
+        'cron: "23 4 * * *"',
         "workflow_dispatch:",
         "contents: read",
         "cancel-in-progress: false",
@@ -641,12 +689,15 @@ def check_workflow() -> None:
         "bash -n tools/fetch-runtime-rpms.sh",
         "bash -n tools/generate-rpm-lock.sh",
         "UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:",
-        "TRIVY_VERSION: \"0.71.0\"",
-        "GRYPE_VERSION: \"0.87.0\"",
-        "SSG_VERSION: \"0.1.81\"",
-        "SSG_TARBALL_SHA512: \"11e26cfa96a6f1bd98b3a131837e2f86c9a9851239337d86d624b01627faf10f7a03c395a5839ddab018e0fa47719ade05a9946f90d5ca96b1261776a9164379\"",
-        "STIG_PROFILE: \"xccdf_org.nwarila.content_profile_ubi9_base_micro_stig\"",
-        "STIG_FAIL_ON: \"low\"",
+        'TRIVY_VERSION: "0.71.0"',
+        'GRYPE_VERSION: "0.87.0"',
+        'SSG_VERSION: "0.1.81"',
+        (
+            'SSG_TARBALL_SHA512: "11e26cfa96a6f1bd98b3a131837e2f86c9a9851239337d86d624b01627faf10'
+            'f7a03c395a5839ddab018e0fa47719ade05a9946f90d5ca96b1261776a9164379"'
+        ),
+        'STIG_PROFILE: "xccdf_org.nwarila.content_profile_ubi9_base_micro_stig"',
+        'STIG_FAIL_ON: "low"',
         "reproducibility gate",
         "docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130",
         "platform: linux/amd64",
@@ -677,9 +728,9 @@ def check_workflow() -> None:
         "gh pr list",
         "gh pr create",
         "--base main",
-        "--head \"${branch}\"",
+        '--head "${branch}"',
         "Refresh runtime RPM lockfiles",
-        "build and hardening gates",
+        "build and\n          hardening gates",
         "byte-for-byte reproducibility gates",
         "fixable-CVE gates",
         "RPM content-hash enforcement",
@@ -708,8 +759,8 @@ def check_workflow() -> None:
         "bash tools/install-openscap.sh",
         "bash tools/build-stig-datastream.sh",
         "bash tools/build.sh",
-        "bash tests/hardening.sh \"${runtime_image}\"",
-        "bash tests/fips.sh \"${runtime_image}\"",
+        'bash tests/hardening.sh "${runtime_image}"',
+        'bash tests/fips.sh "${runtime_image}"',
         "tools/assert-footprint.py",
         "dist/footprint/base-micro.${arch}.json",
         "bash tools/run-stig-arf.sh",
@@ -717,7 +768,7 @@ def check_workflow() -> None:
         "json=dist/sbom/base-micro.${arch}.syft.json",
         "spdx-json=dist/sbom/base-micro.${arch}.spdx.json",
         "cyclonedx-json=dist/sbom/base-micro.${arch}.cdx.json",
-        "--source \"dist/sbom/base-micro.${arch}.syft.json\"",
+        '--source "dist/sbom/base-micro.${arch}.syft.json"',
         "tools/assert-no-phantom-packages.py",
         "dist/sbom/base-micro.${arch}.phantom-packages.json",
         "--expect-absent libacl",
@@ -730,16 +781,19 @@ def check_workflow() -> None:
         "--ignore-unfixed",
         "--severity HIGH,CRITICAL",
         "--exit-code 1",
-        "dist/tools/grype \"${runtime_image}\" --only-fixed --fail-on high",
+        'dist/tools/grype "${runtime_image}" --only-fixed --fail-on high',
         "--format json",
-        "--file \"${grype_json}\"",
+        '--file "${grype_json}"',
         "tools/assert-vex.py",
         "tools/assert-no-rootfs-secrets.py",
         "tools/generate-nist-800-190-predicate.py",
-        "--validate \"${predicate}\"",
+        '--validate "${predicate}"',
         "bash /tmp/assert-rpm-lock-hashes.sh --root /rootfs --lockfile",
     ]:
-        require(marker in gate_runner or marker in read("containers/Dockerfile"), f"test gate runner missing marker: {marker}")
+        require(
+            marker in gate_runner or marker in read("containers/Dockerfile"),
+            f"test gate runner missing marker: {marker}",
+        )
 
     forbidden = [
         "NWarila/.github/.github/workflows/",
@@ -763,7 +817,8 @@ def check_workflow() -> None:
     check_uses_pinned(build, "build workflow")
     check_uses_pinned(nightly, "nightly workflow")
     check_uses_pinned(refresh, "RPM lock refresh workflow")
-
+    require(reviewdog_actionlint_marker in build, "build workflow must document the bundled actionlint 1.7.12 pin")
+    require(reviewdog_actionlint_marker in nightly, "nightly workflow must document the bundled actionlint 1.7.12 pin")
 
 
 def check_supply_chain_workflows() -> None:
@@ -791,7 +846,7 @@ def check_supply_chain_workflows() -> None:
         "name: OpenSSF Scorecard",
         "push:\n    branches: [main]",
         "schedule:",
-        "cron: \"17 6 * * 1\"",
+        'cron: "17 6 * * 1"',
         "branch_protection_rule:",
         "types: [created, edited, deleted]",
         "permissions: {}",
@@ -815,7 +870,7 @@ def check_supply_chain_workflows() -> None:
         "pull_request:\n    branches: [main]",
         "push:\n    branches: [main]",
         "schedule:",
-        "cron: \"37 6 * * 2\"",
+        'cron: "37 6 * * 2"',
         "permissions: {}",
         "permissions:\n      actions: read\n      contents: read\n      security-events: write",
         f"actions/checkout@{CHECKOUT_SHA}",
@@ -867,7 +922,7 @@ def check_supply_chain_workflows() -> None:
         "rules:",
         "unpinned-uses:",
         "policies:",
-        "slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml\": ref-pin",
+        'slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml": ref-pin',
         '"*": hash-pin',
     ]:
         require(marker in zizmor_config, f"zizmor config missing marker: {marker}")
@@ -880,7 +935,11 @@ def check_supply_chain_workflows() -> None:
         "https://github.com/NWarila/ubi9-base-micro/actions/workflows/codeql.yml",
     ]:
         require(marker in readme, f"README.md missing supply-chain badge marker: {marker}")
-    forbidden_badges = ["bestpractices.coreinfrastructure.org", "bestpractices.coreinfrastructure", "CII Best Practices"]
+    forbidden_badges = [
+        "bestpractices.coreinfrastructure.org",
+        "bestpractices.coreinfrastructure",
+        "CII Best Practices",
+    ]
     present = [marker for marker in forbidden_badges if marker.lower() in readme.lower()]
     require(not present, "README.md must not add OpenSSF Best Practices / CII badge: " + ", ".join(present))
 
@@ -901,7 +960,7 @@ def check_publish_workflow() -> None:
         "--provenance=mode=max",
         "--sbom=false",
         "--metadata-file dist/image-metadata.json",
-        "--output \"type=registry,rewrite-timestamp=true\"",
+        '--output "type=registry,rewrite-timestamp=true"',
         "OPENSSL_FIPS_MODULE_VERSION",
         "OPENSSL_FIPS_PROVIDER_NEVRA",
         "OPENSSL_FIPS_PROVIDER_RPM_SHA256_X86_64",
@@ -912,15 +971,15 @@ def check_publish_workflow() -> None:
         "manifest[linux/amd64]:org.nwarila.fips.provider-nvr",
         "manifest[linux/arm64]:org.nwarila.fips.module-version",
         "manifest[linux/arm64]:org.nwarila.fips.provider-nvr",
-        "SOURCE_DATE_EPOCH: \"1704067200\"",
-        "OCI_CREATED: \"2024-01-01T00:00:00Z\"",
-        "SYFT_VERSION: \"1.45.1\"",
-        "TRIVY_VERSION: \"0.71.0\"",
-        "GRYPE_VERSION: \"0.87.0\"",
+        'SOURCE_DATE_EPOCH: "1704067200"',
+        'OCI_CREATED: "2024-01-01T00:00:00Z"',
+        'SYFT_VERSION: "1.45.1"',
+        'TRIVY_VERSION: "0.71.0"',
+        'GRYPE_VERSION: "0.87.0"',
         "tools/build-stig-datastream.sh",
         "tools/run-stig-arf.sh",
-        "NIST_800_190_PREDICATE_TYPE: \"https://nwarila.dev/attestations/nist-sp-800-190-image/v1\"",
-        "STIG_ARF_PREDICATE_TYPE: \"https://nwarila.dev/attestations/stig-arf/v1\"",
+        'NIST_800_190_PREDICATE_TYPE: "https://nwarila.dev/attestations/nist-sp-800-190-image/v1"',
+        'STIG_ARF_PREDICATE_TYPE: "https://nwarila.dev/attestations/stig-arf/v1"',
         "sudo podman login ghcr.io",
         "Run tailored STIG ARF gates",
         "tools/install-syft.sh",
@@ -934,7 +993,7 @@ def check_publish_workflow() -> None:
         "spdx-json=dist/sbom/base-micro.${arch}.spdx.json",
         "cyclonedx-json=dist/sbom/base-micro.${arch}.cdx.json",
         "tools/assert-sbom-rpms.py",
-        "--source \"dist/sbom/base-micro.${arch}.syft.json\"",
+        '--source "dist/sbom/base-micro.${arch}.syft.json"',
         "Run Trivy fixable vulnerability gates",
         "dist/tools/trivy image",
         "--ignore-unfixed",
@@ -944,7 +1003,7 @@ def check_publish_workflow() -> None:
         "--only-fixed --fail-on high",
         "Run OpenVEX default-deny gates",
         "--format json",
-        "--file \"${grype_json}\"",
+        '--file "${grype_json}"',
         "tools/assert-vex.py",
         "cosign attest --type spdxjson",
         "cosign attest --type cyclonedx",
@@ -955,15 +1014,15 @@ def check_publish_workflow() -> None:
         "tools/assert-no-rootfs-secrets.py",
         "Generate NIST SP 800-190 image-control predicates",
         "tools/generate-nist-800-190-predicate.py",
-        "cosign attest --type \"${NIST_800_190_PREDICATE_TYPE}\"",
-        "cosign verify-attestation --type \"${NIST_800_190_PREDICATE_TYPE}\"",
-        "cosign attest --type \"${STIG_ARF_PREDICATE_TYPE}\"",
-        "cosign verify-attestation --type \"${STIG_ARF_PREDICATE_TYPE}\"",
+        'cosign attest --type "${NIST_800_190_PREDICATE_TYPE}"',
+        'cosign verify-attestation --type "${NIST_800_190_PREDICATE_TYPE}"',
+        'cosign attest --type "${STIG_ARF_PREDICATE_TYPE}"',
+        'cosign verify-attestation --type "${STIG_ARF_PREDICATE_TYPE}"',
         "rekor-rollup:",
         "Verify Rekor roll-up",
         "tools/assert-cosign-rekor.py",
-        "verify_rekor \"cosign signature index\"",
-        "verify_rekor \"cosign signature ${arch}\"",
+        'verify_rekor "cosign signature index"',
+        'verify_rekor "cosign signature ${arch}"',
         "assert_attestation_tlog",
         "cosign verify-attestation succeeded with Rekor transparency log enabled",
         "DSSE envelope(s)",
@@ -972,22 +1031,22 @@ def check_publish_workflow() -> None:
         "cosign verify-attestation --type slsaprovenance",
         "STIG ARF",
         "OpenSCAP",
-        "assert_attestation_tlog \"SLSA provenance index\"",
+        'assert_attestation_tlog "SLSA provenance index"',
         "cosign verify-attestation --type spdxjson",
-        "assert_attestation_tlog \"SPDX SBOM ${arch}\"",
+        'assert_attestation_tlog "SPDX SBOM ${arch}"',
         "cosign verify-attestation --type cyclonedx",
-        "assert_attestation_tlog \"CycloneDX SBOM ${arch}\"",
-        "assert_attestation_tlog \"NIST 800-190 image ${arch}\"",
-        "assert_attestation_tlog \"STIG ARF ${arch}\"",
-        "assert_attestation_tlog \"OpenVEX ${arch}\"",
-        "COSIGN_YES: \"true\"",
+        'assert_attestation_tlog "CycloneDX SBOM ${arch}"',
+        'assert_attestation_tlog "NIST 800-190 image ${arch}"',
+        'assert_attestation_tlog "STIG ARF ${arch}"',
+        'assert_attestation_tlog "OpenVEX ${arch}"',
+        'COSIGN_YES: "true"',
         SLSA_GENERATOR + "@" + SLSA_GENERATOR_TAG,
         SLSA_GENERATOR_SHA,
-        "gh api \"repos/slsa-framework/slsa-github-generator/git/ref/tags/${SLSA_GENERATOR_TAG}\"",
+        'gh api "repos/slsa-framework/slsa-github-generator/git/ref/tags/${SLSA_GENERATOR_TAG}"',
         "cosign sign --recursive",
         "cosign verify",
         "https://github.com/${{ github.repository }}/.github/workflows/publish-image.yaml@${{ github.ref }}",
-        "--certificate-oidc-issuer \"https://token.actions.githubusercontent.com\"",
+        '--certificate-oidc-issuer "https://token.actions.githubusercontent.com"',
         "manifest[linux/amd64]:org.nwarila.fips.cmvp.oe-validated=true",
         "manifest[linux/arm64]:org.nwarila.fips.cmvp.oe-validated=false",
     ]
@@ -1006,18 +1065,21 @@ def check_publish_workflow() -> None:
         "examples/image-manifest.json",
         "tools/build_app.sh",
         "tools/generate_build_args.py",
-        "verify_rekor \"SLSA provenance",
-        "verify_rekor \"SPDX SBOM",
-        "verify_rekor \"CycloneDX SBOM",
-        "verify_rekor \"NIST 800-190 image",
-        "verify_rekor \"OpenVEX",
+        'verify_rekor "SLSA provenance',
+        'verify_rekor "SPDX SBOM',
+        'verify_rekor "CycloneDX SBOM',
+        'verify_rekor "NIST 800-190 image',
+        'verify_rekor "OpenVEX',
     ]
     present = [marker for marker in forbidden if marker in text]
     require(not present, "publish workflow contains forbidden marker(s): " + ", ".join(present))
 
     uses = WORKFLOW_USES.findall(text)
     generator_uses = [(action, ref) for action, ref in uses if action == SLSA_GENERATOR]
-    require(generator_uses == [(SLSA_GENERATOR, SLSA_GENERATOR_TAG)], "publish workflow must use exactly one SLSA generator tag pin")
+    require(
+        generator_uses == [(SLSA_GENERATOR, SLSA_GENERATOR_TAG)],
+        "publish workflow must use exactly one SLSA generator tag pin",
+    )
     check_uses_pinned(text, "publish workflow")
 
 
@@ -1025,12 +1087,12 @@ def check_build_script() -> None:
     text = read("tools/build.sh")
     for marker in [
         "docker buildx build",
-        "--output \"type=docker,dest=${image_tar},rewrite-timestamp=true\"",
-        "docker load -i \"${image_tar}\"",
+        '--output "type=docker,dest=${image_tar},rewrite-timestamp=true"',
+        'docker load -i "${image_tar}"',
         "--provenance=false",
         "--sbom=false",
         "SOURCE_DATE_EPOCH",
-        "--target \"${target}\"",
+        '--target "${target}"',
         "build_image runtime",
         "build_image dev",
         "ghcr.io/nwarila/ubi9-base-micro",
@@ -1076,7 +1138,7 @@ def check_sbom_assertion_script() -> None:
 
     phantom = read("tools/assert-no-phantom-packages.py")
     for marker in [
-        "RUNTIME_RPMDB_PATH = \"/var/lib/rpm\"",
+        'RUNTIME_RPMDB_PATH = "/var/lib/rpm"',
         "--dbpath",
         "orphan_binary_files",
         "non_payload_rpm_packages",
@@ -1112,7 +1174,7 @@ def check_rpm_locks() -> None:
         "amd64": (OPENSSL_FIPS_PROVIDER_RPM_SHA256_AMD64, OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AMD64),
         "arm64": (OPENSSL_FIPS_PROVIDER_RPM_SHA256_ARM64, OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_ARM64),
     }
-    fips_provider_nvr = OPENSSL_FIPS_PROVIDER_NEVRA[len("openssl-fips-provider-so-"):]
+    fips_provider_nvr = OPENSSL_FIPS_PROVIDER_NEVRA[len("openssl-fips-provider-so-") :]
     for platform_arch, rpm_arch in expected_arch.items():
         relative_path = f"rpm-lock/runtime.{platform_arch}.txt"
         lock_text = read(relative_path)
@@ -1120,12 +1182,10 @@ def check_rpm_locks() -> None:
         expected_provider_package = f"openssl-fips-provider-{fips_provider_nvr}.{rpm_arch}"
         expected_provider_so_package = f"{OPENSSL_FIPS_PROVIDER_NEVRA}.{rpm_arch}"
         expected_provider_url = (
-            f"{OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}/{rpm_arch}/baseos/os/Packages/o/"
-            f"{expected_provider_package}.rpm"
+            f"{OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}/{rpm_arch}/baseos/os/Packages/o/{expected_provider_package}.rpm"
         )
         expected_provider_so_url = (
-            f"{OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}/{rpm_arch}/baseos/os/Packages/o/"
-            f"{expected_provider_so_package}.rpm"
+            f"{OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}/{rpm_arch}/baseos/os/Packages/o/{expected_provider_so_package}.rpm"
         )
         direct_pins: dict[str, tuple[str, str]] = {}
         rows: list[dict[str, str]] = []
@@ -1184,13 +1244,19 @@ def check_rpm_locks() -> None:
         require(len(packages) == len(set(packages)), f"{relative_path}: duplicate package rows")
         require(len(packages) == 38, f"{relative_path}: expected 38 transaction RPMs, got {len(packages)}")
         require(set(direct_pins) == set(packages), f"{relative_path}: direct RPM pin set must match package rows")
-        require(expected_provider[platform_arch] in packages, f"{relative_path}: missing pinned provider {expected_provider[platform_arch]}")
+        require(
+            expected_provider[platform_arch] in packages,
+            f"{relative_path}: missing pinned provider {expected_provider[platform_arch]}",
+        )
 
         for row in rows:
             package = row["package"]
             url, rpm_sha256 = direct_pins[package]
             expected_filename = f"{row['name']}-{row['version']}-{row['release']}.{row['arch']}.rpm"
-            require(url.endswith(f"/{expected_filename}"), f"{relative_path}: direct RPM URL filename mismatch for {package}")
+            require(
+                url.endswith(f"/{expected_filename}"),
+                f"{relative_path}: direct RPM URL filename mismatch for {package}",
+            )
             if package == expected_provider_package:
                 require(
                     (url, rpm_sha256) == (expected_provider_url, provider_sha),
@@ -1204,6 +1270,8 @@ def check_rpm_locks() -> None:
 
         final_names = {row["name"] for row in rows if row["final_rpmdb"] == "yes"}
         require(final_names == required_final, f"{relative_path}: final rpmdb set mismatch: {sorted(final_names)}")
+
+
 def check_scanner_install_scripts() -> None:
     trivy = read("tools/install-trivy.sh")
     for marker in [
@@ -1226,6 +1294,7 @@ def check_scanner_install_scripts() -> None:
         "tar xzf",
     ]:
         require(marker in grype, f"Grype installer missing marker: {marker}")
+
 
 def check_fips_config() -> None:
     text = read("containers/fips/openssl.cnf")
@@ -1380,6 +1449,7 @@ def check_helper_self_tests() -> None:
             f"{relative_path} --self-test failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
         )
 
+
 def check_stig() -> None:
     codeowners = read(".github/CODEOWNERS")
     require("/stig/ @NWarila" in codeowners, "CODEOWNERS must gate stig/ with @NWarila")
@@ -1436,7 +1506,9 @@ def check_stig() -> None:
 def check_decision_records() -> None:
     index = read("docs/decision-records/README.md")
     require("repository-scope Architecture Decision Records" in index, "decision-records index must define scope")
-    require("do not mirror shared organization or template ADRs" in index, "decision-records index must stay repo-scoped")
+    require(
+        "do not mirror shared organization or template ADRs" in index, "decision-records index must stay repo-scoped"
+    )
     require("| ADR | Status | Decision |" in index, "decision-records index must contain an ADR table")
     require("repo/" in index, "decision-records index must point to repo ADRs")
 
@@ -1475,6 +1547,7 @@ def check_decision_records() -> None:
     ]:
         require(marker in joined, f"repo ADRs missing load-bearing marker: {marker}")
 
+
 def check_docs() -> None:
     readme = read("README.md")
     acceptance = read("docs/acceptance.md")
@@ -1492,7 +1565,9 @@ def check_docs() -> None:
     require("Byte-for-byte reproducible (HARD gate)" in acceptance, "acceptance.md must carry hard F3 wording")
     require("explicitly retracted" not in acceptance, "acceptance.md must not preserve the old F3 retract escape")
     require("#4857" in fips, "docs/fips.md must record the OpenSSL CMVP #4857 ledger")
-    require(OPENSSL_FIPS_MODULE_VERSION_AMD64 in fips, "docs/fips.md must record the validated OpenSSL provider version")
+    require(
+        OPENSSL_FIPS_MODULE_VERSION_AMD64 in fips, "docs/fips.md must record the validated OpenSSL provider version"
+    )
     require(OPENSSL_FIPS_MODULE_VERSION_ARM64 in fips, "docs/fips.md must record the arm64 OpenSSL provider version")
     require(OPENSSL_FIPS_PROVIDER_NEVRA_AMD64 in fips, "docs/fips.md must record the amd64 provider NVR")
     require(OPENSSL_FIPS_PROVIDER_NEVRA_ARM64 in fips, "docs/fips.md must record the arm64 provider NVR")
@@ -1507,7 +1582,10 @@ def check_docs() -> None:
         and "this is NOT a CMVP-validated configuration on this architecture" in fips,
         "docs/fips.md missing arm64 disclaimer",
     )
-    require("x86_64" in fips and "IBM Z" in fips and "POWER" in fips and "aarch64" in fips, "docs/fips.md must cite tested OE architecture scope")
+    require(
+        "x86_64" in fips and "IBM Z" in fips and "POWER" in fips and "aarch64" in fips,
+        "docs/fips.md must cite tested OE architecture scope",
+    )
     require("certificate/4857" in fips and "140sp4857.pdf" in fips, "docs/fips.md must cite NIST #4857 sources")
 
     for marker in [
@@ -1557,7 +1635,10 @@ def check_docs() -> None:
         "self-verifies when it loads",
     ]:
         require(marker in fips, f"docs/fips.md missing G2/G2a/G3 marker: {marker}")
-    require("tailored RHEL9 STIG ARF gate" in readme and "docs/stig.md" in readme, "README.md must describe current STIG gate scope")
+    require(
+        "tailored RHEL9 STIG ARF gate" in readme and "docs/stig.md" in readme,
+        "README.md must describe current STIG gate scope",
+    )
     require("TECH-DEBT.md" in docs_index, "docs README must index technical debt")
     require("reference/verify.md" in docs_index, "docs README must index verify contract")
     require("decision-records/" in docs_index, "docs README must index decision records")
@@ -1566,7 +1647,10 @@ def check_docs() -> None:
     require("reproducibility.md" in docs_index, "docs README must index reproducibility evidence")
     require("stig.md" in docs_index, "docs README must index STIG evidence")
     require("vex.md" in docs_index, "docs README must index VEX flow")
-    require("CODEOWNERS-gated" in vex_doc and "cosign attest --type openvex" in vex_doc, "docs/vex.md must describe VEX review and attestation flow")
+    require(
+        "CODEOWNERS-gated" in vex_doc and "cosign attest --type openvex" in vex_doc,
+        "docs/vex.md must describe VEX review and attestation flow",
+    )
     for marker in [
         "SOURCE_DATE_EPOCH=1704067200",
         "tools/assert-reproducible.py --assert-byte-identical",
@@ -1632,7 +1716,7 @@ def check_docs() -> None:
         require(marker in stig_doc, f"docs/stig.md missing marker: {marker}")
 
     for marker in [
-        "cosign verify \"${IMAGE_REF}\"",
+        'cosign verify "${IMAGE_REF}"',
         "cosign verify-attestation --type spdxjson",
         "cosign verify-attestation --type cyclonedx",
         "cosign verify-attestation --type openvex",
@@ -1643,7 +1727,7 @@ def check_docs() -> None:
         "signature JSON",
         "DSSE envelopes",
         "tools/assert-slsa-builder-id.py",
-        "cosign download sbom \"${IMAGE_REF}\" | grep -q glibc",
+        'cosign download sbom "${IMAGE_REF}" | grep -q glibc',
         "Trivy",
         "Grype",
         "OpenVEX default-deny",
@@ -1663,6 +1747,117 @@ def check_docs() -> None:
         require(marker in verify, f"docs/reference/verify.md missing marker: {marker}")
 
 
+def check_lint_setup() -> None:
+    gitignore = read(".gitignore")
+    for relative_path in LINT_CONFIG_FILES:
+        require((ROOT / relative_path).is_file(), f"missing lint path: {relative_path}")
+        require(f"!/{relative_path}" in gitignore, f".gitignore must allowlist lint path: {relative_path}")
+
+    shellcheck = read(".shellcheckrc")
+    for marker in ["shell=bash", "external-sources=true", "source-path=SCRIPTDIR", "enable=all"]:
+        require(marker in shellcheck, f".shellcheckrc missing marker: {marker}")
+    require("disable=" not in shellcheck, ".shellcheckrc must not carry broad ShellCheck disables")
+
+    pyproject = read("pyproject.toml")
+    for marker in [
+        "[tool.ruff]",
+        'target-version = "py312"',
+        "line-length = 120",
+        "[tool.ruff.lint]",
+        "[tool.ruff.format]",
+        "[tool.mypy]",
+        'python_version = "3.12"',
+        "strict = true",
+        "warn_unused_ignores = true",
+        "warn_redundant_casts = true",
+        "warn_unreachable = true",
+    ]:
+        require(marker in pyproject, f"pyproject.toml missing lint marker: {marker}")
+    require("ignore = [" not in pyproject, "ruff config must not blanket-ignore selected rules")
+
+    yamllint = read(".yamllint")
+    for marker in [
+        "extends: default",
+        "document-start:",
+        "present: false",
+        "max: 160",
+        'allowed-values: ["true", "false", "on"]',
+    ]:
+        require(marker in yamllint, f".yamllint missing marker: {marker}")
+
+    hadolint = read(".hadolint.yaml")
+    for marker in [
+        "failure-threshold: info",
+        "trustedRegistries:",
+        "registry.access.redhat.com",
+        "ghcr.io",
+    ]:
+        require(marker in hadolint, f".hadolint.yaml missing marker: {marker}")
+    require("ignored:" not in hadolint, ".hadolint.yaml must not ignore hadolint rules")
+
+    precommit = read(".pre-commit-config.yaml")
+    for marker in [
+        f'minimum_pre_commit_version: "{PRE_COMMIT_VERSION}"',
+        "default_language_version:",
+        "python: python3",
+        "repo: https://github.com/shellcheck-py/shellcheck-py",
+        f"rev: {SHELLCHECK_HOOK_REV}",
+        "id: shellcheck",
+        "args: [--severity=style]",
+        "repo: https://github.com/scop/pre-commit-shfmt",
+        f"rev: {SHFMT_HOOK_REV}",
+        "id: shfmt",
+        'args: [-w, -i, "2", -ci, -sr, -bn]',
+        "repo: https://github.com/astral-sh/ruff-pre-commit",
+        f"rev: {RUFF_HOOK_REV}",
+        "id: ruff",
+        "args: [--fix]",
+        "id: ruff-format",
+        "repo: https://github.com/pre-commit/mirrors-mypy",
+        f"rev: {MYPY_HOOK_REV}",
+        "id: mypy",
+        "pass_filenames: false",
+        "args: [--config-file=pyproject.toml, tools]",
+        "repo: https://github.com/adrienverge/yamllint",
+        f"rev: {YAMLLINT_HOOK_REV}",
+        "id: yamllint",
+        "args: [--strict, -c, .yamllint]",
+        "repo: https://github.com/DavidAnson/markdownlint-cli2",
+        f"rev: {MARKDOWNLINT_HOOK_REV}",
+        "id: markdownlint-cli2",
+        "files: ^.*\\.md$",
+        "repo: https://github.com/hadolint/hadolint",
+        f"rev: {HADOLINT_HOOK_REV}",
+        "id: hadolint-docker",
+        f"ghcr.io/hadolint/hadolint@{HADOLINT_IMAGE_DIGEST} hadolint",
+        "args: [--config, .hadolint.yaml]",
+        "repo: https://github.com/rhysd/actionlint",
+        f"rev: {ACTIONLINT_HOOK_REV}",
+        "id: actionlint",
+    ]:
+        require(marker in precommit, f".pre-commit-config.yaml missing marker: {marker}")
+    require("repo: local" not in precommit, ".pre-commit-config.yaml must use pinned upstream hook repos")
+
+    lint = read(".github/workflows/lint.yaml")
+    for marker in [
+        "name: Lint",
+        "pull_request:\n    branches: [main]",
+        "push:\n    branches: [main]",
+        "workflow_dispatch:",
+        "permissions: {}",
+        "permissions:\n      contents: read",
+        "runs-on: ubuntu-24.04",
+        f"step-security/harden-runner@{HARDEN_RUNNER_SHA} # v2.19.4",
+        "egress-policy: audit",
+        f"actions/checkout@{CHECKOUT_SHA}",
+        f"pre-commit=={PRE_COMMIT_VERSION}",
+        "pre-commit run --all-files --show-diff-on-failure",
+    ]:
+        require(marker in lint, f"lint workflow missing marker: {marker}")
+    for forbidden in ["id-token:", "packages:", "pull-requests:", "security-events:", "continue-on-" + "error"]:
+        require(forbidden not in lint, f"lint workflow has non-minimal or soft-fail marker: {forbidden}")
+
+
 def check_no_attribution_residue() -> None:
     fragments = [
         "[" + "cod" + "ex" + "]",
@@ -1674,7 +1869,19 @@ def check_no_attribution_residue() -> None:
     for path in ROOT.rglob("*"):
         if ".git" in path.parts or not path.is_file():
             continue
-        if path.suffix.lower() not in {".cnf", ".json", ".md", ".py", ".sh", ".xml", ".yaml", ".yml", ".dockerignore", ".gitignore", ""}:
+        if path.suffix.lower() not in {
+            ".cnf",
+            ".json",
+            ".md",
+            ".py",
+            ".sh",
+            ".xml",
+            ".yaml",
+            ".yml",
+            ".dockerignore",
+            ".gitignore",
+            "",
+        }:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore").lower()
         for fragment in fragments:
@@ -1693,6 +1900,7 @@ def main() -> int:
         check_rpm_locks,
         check_workflow,
         check_supply_chain_workflows,
+        check_lint_setup,
         check_publish_workflow,
         check_build_script,
         check_hardening_script,

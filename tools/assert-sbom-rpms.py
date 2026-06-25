@@ -7,8 +7,8 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import unquote
-
 
 REQUIRED_RPMS = frozenset(
     {
@@ -33,7 +33,7 @@ def rpm_name_from_purl(purl: str) -> str | None:
     return package or None
 
 
-def names_from_spdx(document: dict) -> set[str]:
+def names_from_spdx(document: dict[str, Any]) -> set[str]:
     names: set[str] = set()
     for package in document.get("packages") or []:
         package_name = package.get("name")
@@ -45,7 +45,7 @@ def names_from_spdx(document: dict) -> set[str]:
     return names
 
 
-def names_from_cyclonedx(document: dict) -> set[str]:
+def names_from_cyclonedx(document: dict[str, Any]) -> set[str]:
     names: set[str] = set()
     for component in document.get("components") or []:
         rpm_name = rpm_name_from_purl(component.get("purl") or "")
@@ -54,7 +54,7 @@ def names_from_cyclonedx(document: dict) -> set[str]:
     return names
 
 
-def names_from_syft_json(document: dict) -> set[str]:
+def names_from_syft_json(document: dict[str, Any]) -> set[str]:
     names: set[str] = set()
     for artifact in document.get("artifacts") or []:
         if artifact.get("type") == "rpm" and artifact.get("name"):
@@ -62,7 +62,7 @@ def names_from_syft_json(document: dict) -> set[str]:
     return names
 
 
-def rpm_names(document: dict) -> tuple[str, set[str]]:
+def rpm_names(document: dict[str, Any]) -> tuple[str, set[str]]:
     if document.get("spdxVersion") and "packages" in document:
         return "spdx-json", names_from_spdx(document)
     if document.get("bomFormat") == "CycloneDX" and "components" in document:
@@ -72,7 +72,7 @@ def rpm_names(document: dict) -> tuple[str, set[str]]:
     raise SbomError("unsupported SBOM document shape")
 
 
-def load_document(path: Path) -> dict:
+def load_document(path: Path) -> dict[str, Any]:
     try:
         with path.open(encoding="utf-8") as handle:
             document = json.load(handle)
@@ -80,7 +80,7 @@ def load_document(path: Path) -> dict:
         raise SbomError(f"{path}: invalid JSON: {exc}") from exc
     if not isinstance(document, dict):
         raise SbomError(f"{path}: expected a JSON object")
-    return document
+    return cast(dict[str, Any], document)
 
 
 def assert_names(
@@ -92,13 +92,10 @@ def assert_names(
     missing = sorted(required - names)
     if missing:
         raise SbomError(
-            f"{label}: missing required RPM package(s): {', '.join(missing)} "
-            f"(rpm package count={len(names)})"
+            f"{label}: missing required RPM package(s): {', '.join(missing)} (rpm package count={len(names)})"
         )
     if len(names) < min_rpm_count:
-        raise SbomError(
-            f"{label}: rpm package count {len(names)} is below minimum {min_rpm_count}"
-        )
+        raise SbomError(f"{label}: rpm package count {len(names)} is below minimum {min_rpm_count}")
 
 
 def check_file(path: Path, min_rpm_count: int) -> tuple[str, set[str]]:
@@ -146,9 +143,7 @@ def run_self_test() -> None:
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Fail unless SBOM JSON enumerates required RPM packages."
-    )
+    parser = argparse.ArgumentParser(description="Fail unless SBOM JSON enumerates required RPM packages.")
     parser.add_argument(
         "--min-rpm-count",
         type=int,
@@ -193,8 +188,7 @@ def main(argv: list[str]) -> int:
                 missing_from_source = sorted(REQUIRED_RPMS - source_names)
                 if missing_from_source:
                     raise SbomError(
-                        f"{path}: source inventory missing required RPM package(s): "
-                        + ", ".join(missing_from_source)
+                        f"{path}: source inventory missing required RPM package(s): " + ", ".join(missing_from_source)
                     )
             print(
                 f"{path}: format={format_name} "

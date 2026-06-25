@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  cat <<'USAGE'
+  cat << 'USAGE'
 Usage: tests/fips.sh <image-ref>
 
 Validates the base-micro runtime OpenSSL FIPS floor artifacts:
@@ -23,7 +23,7 @@ if [[ -z "${image_ref}" ]]; then
   exit 2
 fi
 
-command -v docker >/dev/null 2>&1 || {
+command -v docker > /dev/null 2>&1 || {
   echo "docker is required for runtime FIPS artifact assertions" >&2
   exit 2
 }
@@ -34,7 +34,7 @@ container_id=""
 
 cleanup() {
   if [[ -n "${container_id}" ]]; then
-    docker rm "${container_id}" >/dev/null
+    docker rm "${container_id}" > /dev/null
   fi
   rm -rf "${tmp_dir}"
 }
@@ -46,10 +46,10 @@ tar -tf "${tar_path}" | sed -e 's#^\./##' -e 's#/$##' > "${tmp_dir}/files.txt"
 
 extract_file() {
   local rel="${1#/}"
-  if tar -xOf "${tar_path}" "${rel}" 2>/dev/null; then
+  if tar -xOf "${tar_path}" "${rel}" 2> /dev/null; then
     return 0
   fi
-  if tar -xOf "${tar_path}" "./${rel}" 2>/dev/null; then
+  if tar -xOf "${tar_path}" "./${rel}" 2> /dev/null; then
     return 0
   fi
   return 1
@@ -73,7 +73,10 @@ assert_path_absent() {
 
 assert_nonempty_file() {
   local rel="${1#/}"
-  local extracted="${tmp_dir}/$(basename "${rel}")"
+  local extracted
+  extracted="${tmp_dir}/$(basename "${rel}")"
+  # extract_file is a required tar-member predicate with explicit failure handling.
+  # shellcheck disable=SC2310
   if ! extract_file "${rel}" > "${extracted}"; then
     echo "required runtime file missing or unreadable: /${rel}" >&2
     exit 1
@@ -87,7 +90,10 @@ assert_nonempty_file() {
 assert_file_contains() {
   local rel="${1#/}"
   local needle="$2"
-  local extracted="${tmp_dir}/$(basename "${rel}").content"
+  local extracted
+  extracted="${tmp_dir}/$(basename "${rel}").content"
+  # extract_file is a required tar-member predicate with explicit failure handling.
+  # shellcheck disable=SC2310
   if ! extract_file "${rel}" > "${extracted}"; then
     echo "required runtime file missing or unreadable: /${rel}" >&2
     exit 1
@@ -112,6 +118,8 @@ assert_path_present etc/nwarila/fips-status.json
 assert_nonempty_file etc/nwarila/fips-status.json
 
 status_file="${tmp_dir}/fips-status.json"
+# extract_file is a required tar-member predicate with explicit failure handling.
+# shellcheck disable=SC2310
 if ! extract_file etc/nwarila/fips-status.json > "${status_file}"; then
   echo "required runtime file missing or unreadable: /etc/nwarila/fips-status.json" >&2
   exit 1
@@ -160,11 +168,11 @@ for needle in "${status_needles[@]}"; do
 done
 
 env_values="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${image_ref}")"
-if ! grep -Fxq "OPENSSL_CONF=/etc/pki/tls/openssl-fips.cnf" <<<"${env_values}"; then
+if ! grep -Fxq "OPENSSL_CONF=/etc/pki/tls/openssl-fips.cnf" <<< "${env_values}"; then
   echo "image ENV missing OPENSSL_CONF=/etc/pki/tls/openssl-fips.cnf" >&2
   exit 1
 fi
-if ! grep -Fxq "OPENSSL_MODULES=/usr/lib64/ossl-modules" <<<"${env_values}"; then
+if ! grep -Fxq "OPENSSL_MODULES=/usr/lib64/ossl-modules" <<< "${env_values}"; then
   echo "image ENV missing OPENSSL_MODULES=/usr/lib64/ossl-modules" >&2
   exit 1
 fi

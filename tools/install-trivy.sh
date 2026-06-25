@@ -10,32 +10,35 @@ cleanup() {
 }
 trap cleanup EXIT
 
-case "$(uname -s)" in
+kernel_name="$(uname -s)"
+machine_arch="$(uname -m)"
+
+case "${kernel_name}" in
   Linux*)
     os="Linux"
     archive_ext="tar.gz"
     binary="trivy"
     ;;
-  MINGW*|MSYS*|CYGWIN*)
+  MINGW* | MSYS* | CYGWIN*)
     os="windows"
     archive_ext="zip"
     binary="trivy.exe"
     ;;
   *)
-    echo "unsupported OS for trivy install: $(uname -s)" >&2
+    echo "unsupported OS for trivy install: ${kernel_name}" >&2
     exit 1
     ;;
 esac
 
-case "$(uname -m)" in
-  x86_64|amd64)
+case "${machine_arch}" in
+  x86_64 | amd64)
     arch="64bit"
     ;;
-  aarch64|arm64)
+  aarch64 | arm64)
     arch="ARM64"
     ;;
   *)
-    echo "unsupported architecture for trivy install: $(uname -m)" >&2
+    echo "unsupported architecture for trivy install: ${machine_arch}" >&2
     exit 1
     ;;
 esac

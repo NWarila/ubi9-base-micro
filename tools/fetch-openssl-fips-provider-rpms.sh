@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  cat >&2 <<'EOF'
+  cat >&2 << 'EOF'
 usage: fetch-openssl-fips-provider-rpms.sh --targetarch amd64|arm64 --dest DIR
 EOF
 }

@@ -7,7 +7,13 @@
 | Red Hat Enterprise Linux 9 OpenSSL FIPS Provider, `fips.so` v3.0.7-395c1a240fbfffd8 | `linux/amd64` base-micro C/OpenSSL consumers that link system `libcrypto.so.3` | #4857, FIPS 140-3 Level 1 | ACTIVE; validated 2024-10-29; sunset 2029-10-28; covers RHEL 9.2, 9.4, 9.5, and 9.6 tested OEs listed by the certificate |
 | Red Hat Enterprise Linux 9 OpenSSL FIPS Provider, `fips.so` v3.0.7-395c1a240fbfffd8 | `linux/arm64` base-micro C/OpenSSL consumers that link system `libcrypto.so.3` | No arm64 OE under #4857 | Same module version and provider NVR as amd64, approved mode configured and self-test passing; disclaimed because #4857 lists no aarch64 or arm64 OE |
 
-#4857 is the authoritative RHEL 9 OpenSSL FIPS-provider certificate for the amd64 image and corrects the earlier/stale #4754 reference. Both runtime architectures hold `openssl-fips-provider-so-3.0.7-8.el9`, and the provider reports module version `3.0.7-395c1a240fbfffd8`. The `-8.el9` provider RPMs are installed from the Red Hat UBI CDN direct URLs because current repository metadata has purged those NEVRAs; the build verifies Red Hat RPM signatures and pinned SHA-256 values before local install.
+\#4857 is the authoritative RHEL 9 OpenSSL FIPS-provider certificate for the
+amd64 image and corrects the earlier/stale #4754 reference. Both runtime
+architectures hold `openssl-fips-provider-so-3.0.7-8.el9`, and the provider
+reports module version `3.0.7-395c1a240fbfffd8`. The `-8.el9` provider RPMs are
+installed from the Red Hat UBI CDN direct URLs because current repository
+metadata has purged those NEVRAs; the build verifies Red Hat RPM signatures and
+pinned SHA-256 values before local install.
 
 `base-micro` ships only the OpenSSL provider above. It does not ship Go, Node.js, Python, Java, BC-FJA jars, or a language runtime. Family certificates are listed below only to keep the platform ledger coherent; they are not claims about this image.
 

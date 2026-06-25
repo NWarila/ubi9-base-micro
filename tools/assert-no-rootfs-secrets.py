@@ -10,7 +10,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-
+from typing import Any
 
 MAX_TEXT_BYTES = 8 * 1024 * 1024
 SAMPLE_SCAN_BYTES = 64 * 1024
@@ -91,18 +91,16 @@ def is_private_key_path_reference(value: str) -> bool:
 
 def is_benign_generic_assignment(match: re.Match[str]) -> bool:
     key = (match.groupdict().get("key") or "").lower().replace("-", "_")
-    value = (match.groupdict().get("value") or "").strip().strip('"\'')
+    value = (match.groupdict().get("value") or "").strip().strip("\"'")
     lowered = value.lower()
     placeholders = {"changeme", "change_me", "example", "example_secret", "placeholder"}
     if lowered in placeholders:
         return True
-    if key == "private_key" and is_private_key_path_reference(value):
-        return True
-    return False
+    return key == "private_key" and is_private_key_path_reference(value)
 
 
 def append_findings(
-    findings: list[dict[str, object]],
+    findings: list[dict[str, Any]],
     rel: str,
     text: str,
     patterns: list[SecretPattern],
@@ -121,11 +119,11 @@ def append_findings(
             )
 
 
-def scan(rootfs: Path) -> dict[str, object]:
+def scan(rootfs: Path) -> dict[str, Any]:
     if not rootfs.is_dir():
         raise SystemExit(f"rootfs directory does not exist: {rootfs}")
 
-    findings: list[dict[str, object]] = []
+    findings: list[dict[str, Any]] = []
     files_scanned = 0
     skipped_binary = 0
     skipped_large = 0
@@ -173,7 +171,7 @@ def scan(rootfs: Path) -> dict[str, object]:
     }
 
 
-def write_report(report: dict[str, object], path: Path | None) -> None:
+def write_report(report: dict[str, Any], path: Path | None) -> None:
     if path is None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)

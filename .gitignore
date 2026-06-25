@@ -6,12 +6,17 @@
 !/.editorconfig
 !/.gitattributes
 !/.gitignore
+!/.hadolint.yaml
 !/.markdownlint-cli2.jsonc
+!/.pre-commit-config.yaml
+!/.shellcheckrc
+!/.yamllint
 !/CHANGELOG.md
 !/CODE_OF_CONDUCT.md
 !/CONTRIBUTING.md
 !/LICENSE
 !/Makefile
+!/pyproject.toml
 !/README.md
 !/SECURITY.md
 !/SUPPORT.md
@@ -28,6 +33,7 @@
 !/.github/zizmor.yml
 !/.github/workflows/
 !/.github/workflows/build.yaml
+!/.github/workflows/lint.yaml
 !/.github/workflows/zizmor.yml
 !/.github/workflows/scorecard.yml
 !/.github/workflows/dependency-review.yml

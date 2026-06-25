@@ -17,6 +17,8 @@ ARG OPENSSL_FIPS_SO_SHA256_AMD64=c197b6ddf74532f477bcb34e25b6e109491765d577b9fe1
 ARG OPENSSL_FIPS_SO_SHA256_ARM64=669910b59bca2c9a9cf5a33d3e63e6d94224d2e3b0fecd259cd235c9cf9c71cd
 ARG SOURCE_DATE_EPOCH=1704067200
 
+# UBI build-arg defaults are registry-qualified, digest-pinned, and verified by tools/verify.py.
+# hadolint ignore=DL3026
 FROM ${UBI_MINIMAL_IMAGE} AS fips-verify
 ARG BUILDKIT_SBOM_SCAN_STAGE=true
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -38,6 +40,8 @@ COPY containers/fips/openssl.cnf /tmp/openssl-fips.cnf
 COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/
 COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh
 
+# The FIPS provider NEVRA is asserted after install; this verification stage does not ship directly.
+# hadolint ignore=DL3041
 RUN set -eux; \
     export SOURCE_DATE_EPOCH; \
     case "${TARGETARCH}" in \
@@ -49,12 +53,14 @@ RUN set -eux; \
     test "${fips_provider_nvr}" != "${OPENSSL_FIPS_PROVIDER_NEVRA}" || { echo "invalid FIPS provider NEVRA pin: ${OPENSSL_FIPS_PROVIDER_NEVRA}" >&2; exit 1; }; \
     mkdir -p /tmp/runtime-rpms; \
     bash /tmp/fetch-runtime-rpms.sh --targetarch "${TARGETARCH}" --lockfile "${runtime_lockfile}" --dest /tmp/runtime-rpms; \
+    dnf_repo_args=(); \
+    if [ -n "${DNF_REPOS}" ]; then dnf_repo_args=("--disablerepo=*" "--enablerepo=${DNF_REPOS}"); fi; \
     microdnf install -y --releasever=9 \
       --config=/etc/dnf/dnf.conf --noplugins \
       --setopt=reposdir=/etc/yum.repos.d \
       --setopt=varsdir=/etc/dnf/vars \
       --nodocs --setopt=install_weak_deps=0 \
-      ${DNF_REPOS:+--disablerepo=* --enablerepo=${DNF_REPOS}} \
+      "${dnf_repo_args[@]}" \
       openssl crypto-policies; \
     rpm -Uvh --oldpackage --replacepkgs \
       "/tmp/runtime-rpms/openssl-fips-provider-${fips_provider_nvr}.${rpm_arch}.rpm" \
@@ -77,7 +83,9 @@ RUN set -eux; \
     printf '%s\n' "${providers_verbose}"; \
     printf '%s\n' "${providers_verbose}" | grep -q '^  fips$'; \
     printf '%s\n' "${providers_verbose}" | grep -q '^  base$'; \
-    ! printf '%s\n' "${providers_verbose}" | grep -q '^  default$'; \
+    if printf '%s\n' "${providers_verbose}" | grep -q '^  default$'; then \
+      echo "default OpenSSL provider unexpectedly active" >&2; exit 1; \
+    fi; \
     module_version="$(printf '%s\n' "${providers_verbose}" | grep -A8 '^  fips$' | sed -n 's/^[[:space:]]*version: //p' | head -n1)"; \
     test "${module_version}" = "${OPENSSL_FIPS_MODULE_VERSION}" || { \
       echo "unexpected OpenSSL FIPS provider module version: ${module_version}" >&2; exit 1; \
@@ -115,6 +123,8 @@ RUN set -eux; \
     test -s /fips-proof/fips.so.sha256; \
     test -s /fips-proof/module.version
 
+# UBI build-arg defaults are registry-qualified, digest-pinned, and verified by tools/verify.py.
+# hadolint ignore=DL3026
 FROM ${UBI_MINIMAL_IMAGE} AS rpm-rootfs
 ARG BUILDKIT_SBOM_SCAN_STAGE=true
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -150,24 +160,24 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
       *) echo "unsupported TARGETARCH for RPM lockfile: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     test -s "${runtime_lockfile}" || { echo "runtime RPM lockfile missing: ${runtime_lockfile}" >&2; exit 1; }; \
-    locked_packages=""; \
-    locked_rpm_paths=""; \
+    locked_packages=(); \
+    locked_rpm_paths=(); \
     while IFS='|' read -r package final_rpmdb name epoch version release arch sha256_header sigmd5; do \
       case "${package}" in ""|\#*) continue ;; esac; \
       test -n "${final_rpmdb}" && test -n "${name}" && test -n "${epoch}" && test -n "${version}" && test -n "${release}" && test -n "${arch}" && test -n "${sha256_header}" && test -n "${sigmd5}"; \
       case "${arch}" in noarch|"${rpm_arch}") ;; *) echo "locked package ${package} has wrong arch ${arch} for ${TARGETARCH}" >&2; exit 1 ;; esac; \
       case "${final_rpmdb}" in yes|no) ;; *) echo "locked package ${package} has invalid final_rpmdb=${final_rpmdb}" >&2; exit 1 ;; esac; \
-      locked_packages="${locked_packages} ${package}"; \
-      locked_rpm_paths="${locked_rpm_paths} /tmp/runtime-rpms/${name}-${version}-${release}.${arch}.rpm"; \
+      locked_packages+=("${package}"); \
+      locked_rpm_paths+=("/tmp/runtime-rpms/${name}-${version}-${release}.${arch}.rpm"); \
     done < "${runtime_lockfile}"; \
-    test -n "${locked_packages}" || { echo "runtime RPM lockfile yielded no packages" >&2; exit 1; }; \
-    test -n "${locked_rpm_paths}" || { echo "runtime RPM lockfile yielded no local RPM paths" >&2; exit 1; }; \
+    test "${#locked_packages[@]}" -gt 0 || { echo "runtime RPM lockfile yielded no packages" >&2; exit 1; }; \
+    test "${#locked_rpm_paths[@]}" -gt 0 || { echo "runtime RPM lockfile yielded no local RPM paths" >&2; exit 1; }; \
     mkdir -p /tmp/runtime-rpms; \
     bash /tmp/fetch-runtime-rpms.sh --targetarch "${TARGETARCH}" --lockfile "${runtime_lockfile}" --dest /tmp/runtime-rpms; \
-    echo "installing locked runtime RPM transaction:${locked_packages}"; \
+    echo "installing locked runtime RPM transaction:${locked_packages[*]}"; \
     mkdir -p /rootfs; \
     rpm --root=/rootfs --initdb; \
-    rpm --root=/rootfs -Uvh --oldpackage --replacepkgs --excludedocs ${locked_rpm_paths}; \
+    rpm --root=/rootfs -Uvh --oldpackage --replacepkgs --excludedocs "${locked_rpm_paths[@]}"; \
     microdnf clean all; \
     rm -rf /rootfs/var/cache/* /var/cache/microdnf-installroot \
       /rootfs/var/log/dnf.log /rootfs/var/log/dnf.librepo.log /rootfs/var/log/hawkey.log; \
@@ -245,7 +255,7 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     sort -u -o "${protected_deps}" "${protected_deps}"; \
     echo "ldd-protected FIPS/glibc runtime dependency paths:"; \
     cat "${protected_deps}"; \
-    removable_packages=""; \
+    removable_packages=(); \
     for candidate in \
       coreutils-single coreutils findutils grep sed p11-kit p11-kit-trust \
       libsepol libselinux gmp pcre2 pcre libpcre ncurses-libs ncurses-base \
@@ -268,13 +278,13 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
           echo "strip candidate ${candidate_nevra} owns protected FIPS/glibc runtime dependency ${protected_owned}" >&2; \
           exit 1; \
         fi; \
-        removable_packages="${removable_packages} ${candidate}"; \
+        removable_packages+=("${candidate}"); \
       fi; \
     done; \
-    if [ -n "${removable_packages}" ]; then \
-      echo "removing runtime packages via rpmdb:${removable_packages}"; \
-      rpm --root=/rootfs -e --nodeps --noscripts ${removable_packages}; \
-      for removed_package in ${removable_packages}; do \
+    if [ "${#removable_packages[@]}" -gt 0 ]; then \
+      echo "removing runtime packages via rpmdb:${removable_packages[*]}"; \
+      rpm --root=/rootfs -e --nodeps --noscripts "${removable_packages[@]}"; \
+      for removed_package in "${removable_packages[@]}"; do \
         if rpm --root=/rootfs -q "${removed_package}" >/dev/null 2>&1; then \
           echo "runtime package survived rpm removal: ${removed_package}" >&2; exit 1; \
         fi; \
@@ -388,6 +398,8 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     fi; \
     find /rootfs -xdev -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 
+# UBI build-arg defaults are registry-qualified, digest-pinned, and verified by tools/verify.py.
+# hadolint ignore=DL3026
 FROM ${UBI_MINIMAL_IMAGE} AS dev-rootfs
 ARG BUILDKIT_SBOM_SCAN_STAGE=true
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -396,9 +408,14 @@ ARG DEV_PACKAGES="bash ca-certificates coreutils findutils gcc glibc-devel grep 
 ARG DNF_REPOS=""
 ARG SOURCE_DATE_EPOCH
 
+# The dev image intentionally follows the current UBI build-tool RPM set; runtime bytes are locked separately.
+# hadolint ignore=DL3041
 RUN set -eux; \
     export SOURCE_DATE_EPOCH; \
     test -n "${DEV_PACKAGES}" || { echo "DEV_PACKAGES must be set" >&2; exit 1; }; \
+    dnf_repo_args=(); \
+    if [ -n "${DNF_REPOS}" ]; then dnf_repo_args=("--disablerepo=*" "--enablerepo=${DNF_REPOS}"); fi; \
+    read -r -a dev_packages <<< "${DEV_PACKAGES}"; \
     mkdir -p /rootfs /tmp/no-repos; \
     microdnf install -y --installroot=/rootfs --releasever=9 \
       --config=/etc/dnf/dnf.conf --noplugins \
@@ -406,8 +423,8 @@ RUN set -eux; \
       --setopt=varsdir=/etc/dnf/vars \
       --setopt=cachedir=/var/cache/microdnf-installroot \
       --nodocs --setopt=install_weak_deps=0 \
-      ${DNF_REPOS:+--disablerepo=* --enablerepo=${DNF_REPOS}} \
-      ${DEV_PACKAGES}; \
+      "${dnf_repo_args[@]}" \
+      "${dev_packages[@]}"; \
     microdnf clean all; \
     rm -rf /rootfs/var/cache/* /var/cache/microdnf-installroot \
       /rootfs/var/log/dnf.log /rootfs/var/log/dnf.librepo.log /rootfs/var/log/hawkey.log; \
@@ -421,6 +438,8 @@ RUN set -eux; \
       { echo "rpm database missing from dev rootfs; scanners would see zero packages" >&2; exit 1; }; \
     find /rootfs -xdev -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 
+# UBI build-arg defaults are registry-qualified, digest-pinned, and verified by tools/verify.py.
+# hadolint ignore=DL3026
 FROM ${UBI_MICRO_IMAGE} AS runtime-common
 ARG TARGETARCH
 ARG OPENSSL_FIPS_MODULE_VERSION
@@ -449,6 +468,8 @@ ENV OPENSSL_MODULES=/usr/lib64/ossl-modules
 
 # ubi-micro carries shell entry points for build-time RUN. Delete them last and
 # fail closed if any shell or package-manager executable remains.
+# Literal system directory pruning is intentional and followed by executable absence assertions.
+# hadolint ignore=SC2115
 RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     set -eu; \
     case "${TARGETARCH}" in \
@@ -553,8 +574,12 @@ LABEL org.nwarila.fips.cmvp="4857" \
       org.nwarila.fips.provider-nvr="${OPENSSL_FIPS_PROVIDER_NEVRA}"
 
 ARG TARGETARCH
+# TARGETARCH selects the per-architecture runtime stage defined above.
+# hadolint ignore=DL3006,DL3026
 FROM runtime-${TARGETARCH} AS runtime
 
+# UBI build-arg defaults are registry-qualified, digest-pinned, and verified by tools/verify.py.
+# hadolint ignore=DL3026
 FROM ${UBI_MICRO_IMAGE} AS dev
 ARG SOURCE_DATE_EPOCH
 

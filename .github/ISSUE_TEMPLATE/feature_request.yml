@@ -68,4 +68,3 @@ body:
       placeholder: python tools/verify.py; bash tools/run-test-gates.sh; both-arch reproducibility gates
     validations:
       required: false
-

@@ -8,7 +8,7 @@ import base64
 import json
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 
 def load_records(path: Path) -> list[dict[str, Any]]:
@@ -25,10 +25,13 @@ def load_records(path: Path) -> list[dict[str, Any]]:
 
 def decode_statement(record: dict[str, Any]) -> dict[str, Any] | None:
     payload = record.get("payload")
-    if not payload:
+    if not isinstance(payload, str) or not payload:
         return None
     payload += "=" * (-len(payload) % 4)
-    return json.loads(base64.b64decode(payload))
+    decoded = json.loads(base64.b64decode(payload))
+    if not isinstance(decoded, dict):
+        return None
+    return cast(dict[str, Any], decoded)
 
 
 def builder_id_from_statement(statement: dict[str, Any]) -> str | None:
@@ -36,13 +39,17 @@ def builder_id_from_statement(statement: dict[str, Any]) -> str | None:
     if not isinstance(predicate, dict):
         return None
     legacy = predicate.get("builder")
-    if isinstance(legacy, dict) and isinstance(legacy.get("id"), str):
-        return legacy["id"]
+    if isinstance(legacy, dict):
+        legacy_id = legacy.get("id")
+        if isinstance(legacy_id, str):
+            return legacy_id
     run_details = predicate.get("runDetails")
     if isinstance(run_details, dict):
         builder = run_details.get("builder")
-        if isinstance(builder, dict) and isinstance(builder.get("id"), str):
-            return builder["id"]
+        if isinstance(builder, dict):
+            builder_id = builder.get("id")
+            if isinstance(builder_id, str):
+                return builder_id
     return None
 
 
@@ -58,10 +65,7 @@ def assert_builder(path: Path, expected: str) -> None:
 
     if expected not in found:
         raise SystemExit(
-            "expected SLSA builderID not found: "
-            + expected
-            + "; found: "
-            + (", ".join(found) if found else "<none>")
+            "expected SLSA builderID not found: " + expected + "; found: " + (", ".join(found) if found else "<none>")
         )
     print(f"SLSA builderID verified: {expected}")
 

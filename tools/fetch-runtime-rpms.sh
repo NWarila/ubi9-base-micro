@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  cat >&2 <<'EOF'
+  cat >&2 << 'EOF'
 usage: fetch-runtime-rpms.sh --targetarch amd64|arm64 --lockfile LOCKFILE --dest DIR
 EOF
 }
@@ -89,6 +89,7 @@ while IFS= read -r line; do
       direct_rpm_sha["${direct_package}"]="${direct_sha}"
       direct_rpm_url["${direct_package}"]="${direct_url}"
       ;;
+    *) ;;
   esac
 done < "${lockfile}"
 
@@ -139,6 +140,7 @@ fetch_one() {
 while IFS='|' read -r package final_rpmdb name epoch version release arch sha256_header sigmd5 extra; do
   case "${package}" in
     "" | \#*) continue ;;
+    *) ;;
   esac
   if [[ -n "${extra:-}" ]]; then
     echo "too many columns for ${package}" >&2

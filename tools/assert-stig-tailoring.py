@@ -10,7 +10,7 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
-
+from typing import Any, cast
 
 RULE_PREFIX = "xccdf_org.ssgproject.content_rule_"
 
@@ -19,7 +19,7 @@ class TailoringError(Exception):
     pass
 
 
-def require(condition: bool, message: str) -> None:
+def require(condition: object, message: str) -> None:
     if not condition:
         raise TailoringError(message)
 
@@ -114,8 +114,10 @@ def parse_datastream_rules(path: Path) -> set[str]:
     return rules
 
 
-def load_ledger(path: Path) -> dict:
-    data = json.loads(path.read_text(encoding="utf-8"))
+def load_ledger(path: Path) -> dict[str, Any]:
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    require(isinstance(loaded, dict), f"justification ledger must be a JSON object: {path}")
+    data = cast(dict[str, Any], loaded)
     for key in [
         "tailored_profile",
         "ssg_version",
@@ -125,7 +127,11 @@ def load_ledger(path: Path) -> dict:
         "omission_groups",
     ]:
         require(key in data, f"justification ledger missing key: {key}")
-    require(re.fullmatch(r"[0-9a-f]{128}", data["ssg_tarball_sha512"]), "SSG SHA512 pin must be 128 lowercase hex characters")
+    ssg_tarball_sha512 = data["ssg_tarball_sha512"]
+    require(
+        isinstance(ssg_tarball_sha512, str) and re.fullmatch(r"[0-9a-f]{128}", ssg_tarball_sha512),
+        "SSG SHA512 pin must be 128 lowercase hex characters",
+    )
     return data
 
 
@@ -157,13 +163,19 @@ def validate(args: argparse.Namespace) -> dict[str, int]:
     supplemental_rules = set(supplemental)
     for rule, entry in supplemental.items():
         require(isinstance(entry, dict), f"supplemental rule {rule} must have an object entry")
-        require(isinstance(entry.get("scope"), str) and entry["scope"].strip(), f"supplemental rule {rule} must document scope")
+        require(
+            isinstance(entry.get("scope"), str) and entry["scope"].strip(),
+            f"supplemental rule {rule} must document scope",
+        )
 
     expected_selected = selected_from_controls | supplemental_rules
     require(selected_rules == expected_selected, "tailoring selected rules do not match the reviewed ledger")
 
     for rule in unselected_rules:
-        require(rule in supplemental_rules or rule in selected_from_controls, f"explicitly unselected rule lacks a reviewed ledger entry: {rule}")
+        require(
+            rule in supplemental_rules or rule in selected_from_controls,
+            f"explicitly unselected rule lacks a reviewed ledger entry: {rule}",
+        )
 
     compiled_groups: list[tuple[str, list[re.Pattern[str]], str]] = []
     for group in omission_groups:
@@ -171,7 +183,10 @@ def validate(args: argparse.Namespace) -> dict[str, int]:
         patterns = group.get("control_id_patterns")
         justification = group.get("justification")
         require(isinstance(group_id, str) and group_id.strip(), "omission group must have an id")
-        require(isinstance(justification, str) and justification.strip(), f"omission group {group_id} must have a justification")
+        require(
+            isinstance(justification, str) and justification.strip(),
+            f"omission group {group_id} must have a justification",
+        )
         require(isinstance(patterns, list) and patterns, f"omission group {group_id} must list control_id_patterns")
         compiled_groups.append((group_id, [re.compile(pattern) for pattern in patterns], justification))
 
@@ -180,7 +195,11 @@ def validate(args: argparse.Namespace) -> dict[str, int]:
     for control_id in sorted(controls):
         if control_id in selected_control_ids:
             continue
-        matched = [group_id for group_id, patterns, _ in compiled_groups if any(pattern.search(control_id) for pattern in patterns)]
+        matched = [
+            group_id
+            for group_id, patterns, _ in compiled_groups
+            if any(pattern.search(control_id) for pattern in patterns)
+        ]
         if not matched:
             uncovered.append(control_id)
 
@@ -252,9 +271,7 @@ controls:
                             "scope": "selected for the image",
                         }
                     },
-                    "supplemental_selected_rules": {
-                        "supplemental_rule": {"scope": "extra image-rootfs rule"}
-                    },
+                    "supplemental_selected_rules": {"supplemental_rule": {"scope": "extra image-rootfs rule"}},
                     "omission_groups": [
                         {
                             "id": "omitted",
@@ -307,7 +324,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tailoring", type=Path, default=Path("stig/rhel9-base-micro-tailoring.xml"))
     parser.add_argument("--justifications", type=Path, default=Path("stig/tailoring-justifications.json"))
-    parser.add_argument("--controls-yaml", type=Path, help="Pinned ComplianceAsCode products/rhel9/controls/stig_rhel9.yml")
+    parser.add_argument(
+        "--controls-yaml", type=Path, help="Pinned ComplianceAsCode products/rhel9/controls/stig_rhel9.yml"
+    )
     parser.add_argument("--datastream", type=Path, help="Generated ssg-rhel9-ds.xml to validate selected rule IDs")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
