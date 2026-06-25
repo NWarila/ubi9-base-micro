@@ -91,9 +91,17 @@ verify_lock_hashes() {
       echo "SIGMD5 mismatch for ${package}: expected ${sigmd5}, got ${actual_sigmd5}" >&2
       return 1
     fi
-    if [[ -n "${direct_rpm_sha[${package}]+set}" ]]; then
-      direct_rpm_row_seen["${package}"]=1
+    if [[ -z "${direct_rpm_sha[${package}]+set}" ]]; then
+      echo "missing direct RPM source pin for ${package}" >&2
+      return 1
     fi
+    expected_filename="${name}-${version}-${release}.${arch}.rpm"
+    direct_filename="${direct_rpm_url[${package}]##*/}"
+    if [[ "${direct_filename}" != "${expected_filename}" ]]; then
+      echo "direct RPM URL filename mismatch for ${package}: expected ${expected_filename}, got ${direct_filename}" >&2
+      return 1
+    fi
+    direct_rpm_row_seen["${package}"]=1
     count=$((count + 1))
   done < "${lockfile}"
 
@@ -165,6 +173,7 @@ EOF
   cat > "${tmpdir}/lock.good" <<EOF
 # columns: package|final_rpmdb|name|epoch|version|release|arch|sha256_header|sigmd5
 # direct_rpm: foo-1-1.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/o/foo-1-1.x86_64.rpm|${sha_a}
+# direct_rpm: bar-1-1.noarch|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/b/bar-1-1.noarch.rpm|${sha_b}
 foo-1-1.x86_64|yes|foo|0|1|1|x86_64|${sha_a}|${sig_a}
 bar-1-1.noarch|yes|bar|0|1|1|noarch|${sha_b}|${sig_b}
 EOF
@@ -174,6 +183,7 @@ EOF
 
   cat > "${tmpdir}/lock.bad" <<EOF
 # columns: package|final_rpmdb|name|epoch|version|release|arch|sha256_header|sigmd5
+# direct_rpm: foo-1-1.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/f/foo-1-1.x86_64.rpm|${sha_a}
 foo-1-1.x86_64|yes|foo|0|1|1|x86_64|${sha_bad}|${sig_a}
 EOF
   if PATH="${tmpdir}/bin:${PATH}" verify_lock_hashes "/fake-root" "${tmpdir}/lock.bad" > "${tmpdir}/bad.out" 2>&1; then
@@ -183,7 +193,8 @@ EOF
   grep -Fq "SHA256HEADER mismatch for foo-1-1.x86_64" "${tmpdir}/bad.out"
 
   cat > "${tmpdir}/lock.missing-direct-row" <<EOF
-# direct_rpm: missing-1-1.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/o/missing-1-1.x86_64.rpm|${sha_a}
+# direct_rpm: foo-1-1.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/f/foo-1-1.x86_64.rpm|${sha_a}
+# direct_rpm: missing-1-1.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/m/missing-1-1.x86_64.rpm|${sha_a}
 foo-1-1.x86_64|yes|foo|0|1|1|x86_64|${sha_a}|${sig_a}
 EOF
   if PATH="${tmpdir}/bin:${PATH}" verify_lock_hashes "/fake-root" "${tmpdir}/lock.missing-direct-row" > "${tmpdir}/missing.out" 2>&1; then

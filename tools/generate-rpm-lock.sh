@@ -265,11 +265,52 @@ for package_name in "${required_final_names[@]}"; do
   fi
 done
 
+rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
+mkdir -p /tmp/direct-runtime-rpms
+: > /tmp/runtime.direct.lock
+
+fetch_direct_rpm_for_row() {
+  local package="$1"
+  local name="$2"
+  local version="$3"
+  local release="$4"
+  local arch="$5"
+  local filename="${name}-${version}-${release}.${arch}.rpm"
+  local first_letter="${name:0:1}"
+  local repo url tmp path actual_sha sig_output
+
+  for repo in baseos appstream; do
+    url="${OPENSSL_FIPS_PROVIDER_RPM_BASE_URL%/}/${rpm_arch}/${repo}/os/Packages/${first_letter}/${filename}"
+    tmp="/tmp/direct-runtime-rpms/${filename}.${repo}.tmp"
+    if curl -fL --retry 3 --retry-delay 2 --proto '=https' --tlsv1.2 --output "${tmp}" "${url}"; then
+      actual_sha="$(sha256sum "${tmp}" | awk '{print $1}')"
+      path="/tmp/direct-runtime-rpms/${filename}"
+      mv "${tmp}" "${path}"
+      sig_output="$(rpm -K "${path}")"
+      printf '%s\n' "${sig_output}"
+      if [[ "${sig_output}" != *"digests signatures OK"* ]]; then
+        echo "${path}: Red Hat RPM signature verification did not report digests signatures OK" >&2
+        exit 1
+      fi
+      printf '# direct_rpm: %s|%s|%s\n' "${package}" "${url}" "${actual_sha}" >> /tmp/runtime.direct.lock
+      return 0
+    fi
+    rm -f "${tmp}"
+  done
+
+  echo "could not resolve direct CDN URL for ${package}" >&2
+  exit 1
+}
+
+while IFS='|' read -r package name epoch version release arch sha256_header sigmd5; do
+  fetch_direct_rpm_for_row "${package}" "${name}" "${version}" "${release}" "${arch}"
+done < /tmp/runtime.full.tsv
+
 {
   printf '# arch: %s\n' "${TARGETARCH}"
   printf '# source_date_epoch: %s\n' "${SOURCE_DATE_EPOCH}"
   printf '# columns: package|final_rpmdb|name|epoch|version|release|arch|sha256_header|sigmd5\n'
-  cat /tmp/fips-provider-rpms/direct-rpms.lock
+  cat /tmp/runtime.direct.lock
   awk -F'|' '
     NR == FNR {
       final[$0] = 1
@@ -362,9 +403,11 @@ validate_lockfile() {
   )
   local final_seen=" "
   local provider_pin_seen=0
-  local provider_package_direct_seen=0
-  local provider_so_direct_seen=0
   local line direct_payload direct_package direct_url direct_sha direct_extra
+  local direct_rows=0
+  declare -A direct_rpm_sha=()
+  declare -A direct_rpm_url=()
+  declare -A direct_rpm_row_seen=()
 
   while IFS= read -r line; do
     case "${line}" in
@@ -375,25 +418,24 @@ validate_lockfile() {
           echo "${path}: invalid direct RPM entry: ${line}" >&2
           return 1
         fi
-        if [[ "${direct_package}|${direct_url}|${direct_sha}" == "${expected_provider_package_nevra}|${expected_provider_url}|${expected_provider_sha}" ]]; then
-          provider_package_direct_seen=1
-        elif [[ "${direct_package}|${direct_url}|${direct_sha}" == "${expected_provider_nevra}|${expected_provider_so_url}|${expected_provider_so_sha}" ]]; then
-          provider_so_direct_seen=1
-        else
-          echo "${path}: unexpected direct RPM entry: ${line}" >&2
+        [[ "${direct_url}" == https://cdn-ubi.redhat.com/* ]] || {
+          echo "${path}: direct RPM source must be cdn-ubi.redhat.com for ${direct_package}: ${direct_url}" >&2
+          return 1
+        }
+        [[ "${direct_sha}" =~ ^[0-9a-f]{64}$ ]] || {
+          echo "${path}: invalid direct RPM sha256 for ${direct_package}: ${direct_sha}" >&2
+          return 1
+        }
+        if [[ -n "${direct_rpm_sha[${direct_package}]+set}" ]]; then
+          echo "${path}: duplicate direct RPM entry: ${direct_package}" >&2
           return 1
         fi
+        direct_rpm_sha["${direct_package}"]="${direct_sha}"
+        direct_rpm_url["${direct_package}"]="${direct_url}"
+        direct_rows=$((direct_rows + 1))
         ;;
     esac
   done < "${path}"
-  [[ "${provider_package_direct_seen}" -eq 1 ]] || {
-    echo "${path}: missing direct RPM source pin for ${expected_provider_package_nevra}" >&2
-    return 1
-  }
-  [[ "${provider_so_direct_seen}" -eq 1 ]] || {
-    echo "${path}: missing direct RPM source pin for ${expected_provider_nevra}" >&2
-    return 1
-  }
 
   while IFS='|' read -r package final_rpmdb name epoch version release arch sha256_header sigmd5 extra; do
     case "${package}" in
@@ -436,6 +478,29 @@ validate_lockfile() {
       echo "${path}: invalid SIGMD5 for ${package}" >&2
       return 1
     }
+    if [[ -z "${direct_rpm_sha[${package}]+set}" ]]; then
+      echo "${path}: missing direct RPM source pin for ${package}" >&2
+      return 1
+    fi
+    expected_filename="${name}-${version}-${release}.${arch}.rpm"
+    direct_filename="${direct_rpm_url[${package}]##*/}"
+    if [[ "${direct_filename}" != "${expected_filename}" ]]; then
+      echo "${path}: direct RPM URL filename mismatch for ${package}: expected ${expected_filename}, got ${direct_filename}" >&2
+      return 1
+    fi
+    if [[ "${package}" == "${expected_provider_package_nevra}" ]]; then
+      [[ "${direct_rpm_url[${package}]}" == "${expected_provider_url}" && "${direct_rpm_sha[${package}]}" == "${expected_provider_sha}" ]] || {
+        echo "${path}: FIPS provider package direct pin mismatch for ${package}" >&2
+        return 1
+      }
+    fi
+    if [[ "${package}" == "${expected_provider_nevra}" ]]; then
+      [[ "${direct_rpm_url[${package}]}" == "${expected_provider_so_url}" && "${direct_rpm_sha[${package}]}" == "${expected_provider_so_sha}" ]] || {
+        echo "${path}: FIPS provider shared-object direct pin mismatch for ${package}" >&2
+        return 1
+      }
+    fi
+    direct_rpm_row_seen["${package}"]=1
     if [[ -n "${previous_package}" && "${package}" < "${previous_package}" ]]; then
       echo "${path}: rows are not sorted by package: ${package} after ${previous_package}" >&2
       return 1
@@ -455,6 +520,16 @@ validate_lockfile() {
     echo "${path}: lockfile has no package rows" >&2
     return 1
   }
+  [[ "${direct_rows}" -eq "${rows}" ]] || {
+    echo "${path}: expected ${rows} direct RPM pins, got ${direct_rows}" >&2
+    return 1
+  }
+  for direct_package in "${!direct_rpm_sha[@]}"; do
+    [[ -n "${direct_rpm_row_seen[${direct_package}]+set}" ]] || {
+      echo "${path}: direct RPM entry has no matching package row: ${direct_package}" >&2
+      return 1
+    }
+  done
   [[ "${final_rows}" -eq 15 ]] || {
     echo "${path}: expected 15 final runtime RPMs, got ${final_rows}" >&2
     return 1

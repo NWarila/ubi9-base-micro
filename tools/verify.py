@@ -97,6 +97,10 @@ REPO_ADRS = [
         "docs/decision-records/repo/0011-pin-github-hosted-runner-labels.md",
         "Pin GitHub-Hosted Runner Labels",
     ),
+    (
+        "docs/decision-records/repo/0012-source-runtime-rpms-from-direct-cdn.md",
+        "Source Runtime RPMs From Pinned Direct CDN Blobs",
+    ),
 ]
 
 
@@ -219,6 +223,7 @@ def check_required_files() -> None:
         "tools/assert-no-phantom-packages.py",
         "tools/assert-reproducible.py",
         "tools/assert-rpm-lock-hashes.sh",
+        "tools/fetch-runtime-rpms.sh",
         "tools/generate-rpm-lock.sh",
         "tools/install-syft.sh",
         "tools/install-trivy.sh",
@@ -245,8 +250,8 @@ def check_required_files() -> None:
         require((ROOT / relative_path).is_file(), f"missing required file: {relative_path}")
     dockerignore = read(".dockerignore")
     require(
-        "!tools/fetch-openssl-fips-provider-rpms.sh" in dockerignore,
-        ".dockerignore must allowlist direct FIPS provider fetch helper",
+        "!tools/fetch-runtime-rpms.sh" in dockerignore,
+        ".dockerignore must allowlist runtime direct-CDN RPM fetch helper",
     )
     for relative_path, _ in REPO_ADRS:
         require((ROOT / relative_path).is_file(), f"missing required ADR: {relative_path}")
@@ -457,19 +462,20 @@ def check_dockerfile() -> None:
         "ARG SOURCE_DATE_EPOCH=1704067200",
         "amd64) rpm_arch=\"x86_64\"",
         "arm64) rpm_arch=\"aarch64\"",
-        "OPENSSL_FIPS_PROVIDER_NEVRA=\"${OPENSSL_FIPS_PROVIDER_NEVRA}\"",
-        "bash /tmp/fetch-openssl-fips-provider-rpms.sh --targetarch \"${TARGETARCH}\" --dest /tmp/fips-provider-rpms",
+        "bash /tmp/fetch-runtime-rpms.sh --targetarch \"${TARGETARCH}\" --lockfile \"${runtime_lockfile}\" --dest /tmp/runtime-rpms",
         "rpm -Uvh --oldpackage --replacepkgs",
         "expected_provider_nevra=\"${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}\"",
         "COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/",
         "COPY tools/assert-rpm-lock-hashes.sh /tmp/assert-rpm-lock-hashes.sh",
-        "COPY tools/fetch-openssl-fips-provider-rpms.sh /tmp/fetch-openssl-fips-provider-rpms.sh",
+        "COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh",
         "locked_packages=\"\"",
+        "locked_rpm_paths=\"\"",
         "final runtime RPM lock floor verified",
         "bash /tmp/assert-rpm-lock-hashes.sh --root /rootfs --lockfile",
-        "--direct-rpm-dir /tmp/fips-provider-rpms",
+        "--direct-rpm-dir /tmp/runtime-rpms",
         "find /rootfs -xdev -exec touch -h -d \"@${SOURCE_DATE_EPOCH}\" {} +",
-        "microdnf install -y --installroot=/rootfs",
+        "rpm --root=/rootfs -Uvh --oldpackage --replacepkgs --excludedocs",
+        "${locked_rpm_paths}",
         "--nodocs --setopt=install_weak_deps=0",
         "FROM ${UBI_MICRO_IMAGE} AS runtime-common",
         "FROM runtime-common AS runtime-amd64",
@@ -602,6 +608,7 @@ def check_workflow() -> None:
         "tools/assert-stig-arf.py --self-test",
         "tools/generate-stig-arf-predicate.py --self-test",
         "bash -n tools/run-test-gates.sh",
+        "bash -n tools/fetch-runtime-rpms.sh",
         "bash -n tools/generate-rpm-lock.sh",
         "UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:",
         "TRIVY_VERSION: \"0.71.0\"",
@@ -631,6 +638,7 @@ def check_workflow() -> None:
         "tools/verify.py",
         "bash tools/generate-rpm-lock.sh --self-test",
         "bash -n tools/run-test-gates.sh",
+        "bash -n tools/fetch-runtime-rpms.sh",
         "bash -n tools/generate-rpm-lock.sh",
         "UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:",
         "TRIVY_VERSION: \"0.71.0\"",
@@ -1107,18 +1115,42 @@ def check_rpm_locks() -> None:
     fips_provider_nvr = OPENSSL_FIPS_PROVIDER_NEVRA[len("openssl-fips-provider-so-"):]
     for platform_arch, rpm_arch in expected_arch.items():
         relative_path = f"rpm-lock/runtime.{platform_arch}.txt"
-        rows = []
         lock_text = read(relative_path)
         provider_sha, provider_so_sha = expected_direct_sha[platform_arch]
         expected_provider_package = f"openssl-fips-provider-{fips_provider_nvr}.{rpm_arch}"
         expected_provider_so_package = f"{OPENSSL_FIPS_PROVIDER_NEVRA}.{rpm_arch}"
-        expected_direct = {
-            f"# direct_rpm: {expected_provider_package}|{OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}/{rpm_arch}/baseos/os/Packages/o/{expected_provider_package}.rpm|{provider_sha}",
-            f"# direct_rpm: {expected_provider_so_package}|{OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}/{rpm_arch}/baseos/os/Packages/o/{expected_provider_so_package}.rpm|{provider_so_sha}",
-        }
-        actual_direct = {raw for raw in lock_text.splitlines() if raw.startswith("# direct_rpm: ")}
-        require(actual_direct == expected_direct, f"{relative_path}: direct RPM source pins mismatch")
+        expected_provider_url = (
+            f"{OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}/{rpm_arch}/baseos/os/Packages/o/"
+            f"{expected_provider_package}.rpm"
+        )
+        expected_provider_so_url = (
+            f"{OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}/{rpm_arch}/baseos/os/Packages/o/"
+            f"{expected_provider_so_package}.rpm"
+        )
+        direct_pins: dict[str, tuple[str, str]] = {}
+        rows: list[dict[str, str]] = []
+
         for raw in lock_text.splitlines():
+            if raw.startswith("# direct_rpm: "):
+                parts = raw.removeprefix("# direct_rpm: ").split("|")
+                require(len(parts) == 3, f"{relative_path}: malformed direct RPM pin: {raw}")
+                package, url, rpm_sha256 = parts
+                require(package, f"{relative_path}: direct RPM pin has empty package: {raw}")
+                require(package not in direct_pins, f"{relative_path}: duplicate direct RPM pin: {package}")
+                require(
+                    url.startswith("https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/"),
+                    f"{relative_path}: direct RPM URL must use cdn-ubi.redhat.com: {url}",
+                )
+                require(
+                    "/baseos/os/Packages/" in url or "/appstream/os/Packages/" in url,
+                    f"{relative_path}: direct RPM URL must name baseos or appstream Packages path: {url}",
+                )
+                require(
+                    len(rpm_sha256) == 64 and all(c in "0123456789abcdef" for c in rpm_sha256),
+                    f"{relative_path}: invalid direct RPM sha256 for {package}",
+                )
+                direct_pins[package] = (url, rpm_sha256)
+                continue
             if not raw or raw.startswith("#"):
                 continue
             parts = raw.split("|")
@@ -1137,14 +1169,41 @@ def check_rpm_locks() -> None:
             require(name in package, f"{relative_path}: package spec does not include name {name}: {package}")
             require(epoch.isdigit(), f"{relative_path}: epoch must be numeric for {package}")
             require(version and release, f"{relative_path}: missing version/release for {package}")
-            rows.append((package, final_rpmdb, name))
-        packages = [row[0] for row in rows]
+            rows.append(
+                {
+                    "package": package,
+                    "final_rpmdb": final_rpmdb,
+                    "name": name,
+                    "version": version,
+                    "release": release,
+                    "arch": arch,
+                }
+            )
+
+        packages = [row["package"] for row in rows]
         require(len(packages) == len(set(packages)), f"{relative_path}: duplicate package rows")
         require(len(packages) == 38, f"{relative_path}: expected 38 transaction RPMs, got {len(packages)}")
+        require(set(direct_pins) == set(packages), f"{relative_path}: direct RPM pin set must match package rows")
         require(expected_provider[platform_arch] in packages, f"{relative_path}: missing pinned provider {expected_provider[platform_arch]}")
-        final_names = {name for _, final_rpmdb, name in rows if final_rpmdb == "yes"}
-        require(final_names == required_final, f"{relative_path}: final rpmdb set mismatch: {sorted(final_names)}")
 
+        for row in rows:
+            package = row["package"]
+            url, rpm_sha256 = direct_pins[package]
+            expected_filename = f"{row['name']}-{row['version']}-{row['release']}.{row['arch']}.rpm"
+            require(url.endswith(f"/{expected_filename}"), f"{relative_path}: direct RPM URL filename mismatch for {package}")
+            if package == expected_provider_package:
+                require(
+                    (url, rpm_sha256) == (expected_provider_url, provider_sha),
+                    f"{relative_path}: FIPS provider package direct pin mismatch",
+                )
+            if package == expected_provider_so_package:
+                require(
+                    (url, rpm_sha256) == (expected_provider_so_url, provider_so_sha),
+                    f"{relative_path}: FIPS provider shared-object direct pin mismatch",
+                )
+
+        final_names = {row["name"] for row in rows if row["final_rpmdb"] == "yes"}
+        require(final_names == required_final, f"{relative_path}: final rpmdb set mismatch: {sorted(final_names)}")
 def check_scanner_install_scripts() -> None:
     trivy = read("tools/install-trivy.sh")
     for marker in [
@@ -1385,9 +1444,10 @@ def check_decision_records() -> None:
     for number, (relative_path, title) in zip(expected_numbers, REPO_ADRS, strict=True):
         text = read(relative_path)
         require(text.startswith(f"# ADR-{number}: {title}\n"), f"{relative_path} has wrong ADR heading")
+        expected_date = "2026-06-25" if number == "0012" else "2026-06-21"
         for marker in [
             "- Status: Accepted",
-            "- Date: 2026-06-21",
+            f"- Date: {expected_date}",
             "- Scope: repo",
             "## Context",
             "## Decision",
@@ -1410,6 +1470,8 @@ def check_decision_records() -> None:
         "https://nwarila.dev/attestations/nist-sp-800-190-image/v1",
         "base-micro@sha256:<digest>",
         "runs-on: ubuntu-24.04",
+        "fetch-runtime-rpms.sh",
+        "cdn-ubi.redhat.com",
     ]:
         require(marker in joined, f"repo ADRs missing load-bearing marker: {marker}")
 

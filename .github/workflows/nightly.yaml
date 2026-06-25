@@ -93,6 +93,7 @@ jobs:
           bash -n tools/build.sh
           bash -n tools/run-test-gates.sh
           bash -n tools/assert-rpm-lock-hashes.sh
+          bash -n tools/fetch-runtime-rpms.sh
           bash -n tools/generate-rpm-lock.sh
           bash -n tools/install-syft.sh
           bash -n tools/install-openscap.sh
