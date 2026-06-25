@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# Purpose: Verify runtime RPMs against the lockfile (%{SHA256HEADER}/%{SIGMD5}), cross-check each row's direct_rpm CDN
+# pin + filename, and (with --direct-rpm-dir) the downloaded RPM sha256 + rpm -K GPG signatures; --self-test for
+# fail-closed fixtures.
+# Role: gate
+# Python-convertible: yes — pure lockfile parser + hash verifier + self-test; belongs with the assert-*.py contract
+# validators (only rpm/sha256sum are subprocess calls).
+# Micro-container candidate: yes — RPM supply-chain hash/GPG gate; run inside a pinned image with rpm.
+# Relocate: no — verification gate, not a build-process script.
+
 set -euo pipefail
 
 usage() {

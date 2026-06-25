@@ -1,3 +1,8 @@
+# Purpose: Deny-all Docker build-context filter; allowlist only build inputs.
+# Role: config
+# Micro-container candidate: no (build-context filter, not gate logic)
+# Note: place header above the leading `**` deny rule.
+
 **
 !containers/
 !containers/Dockerfile

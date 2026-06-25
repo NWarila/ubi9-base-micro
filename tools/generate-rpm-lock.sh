@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# Purpose: Regenerate / --check / --self-test rpm-lock/runtime.<arch>.txt via a capture Dockerfile (install runtime
+# set, ldd-protected strip of shells/pkg-managers/unneeded deps, resolve direct CDN URLs) plus host-side
+# lockfile-grammar validation against committed files and Dockerfile ARG pins.
+# Role: tooling
+# Python-convertible: partial — validate_lockfile + the strip/ldd-closure algorithm should be Python; the docker
+# buildx driver + Dockerfile heredoc stay shell glue.
+# Micro-container candidate: no — maintainer regeneration tool, not a per-PR gate.
+# Relocate: no — dev/regeneration tool; keep under tools/ (extract the Python validator).
+
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

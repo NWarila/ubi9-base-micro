@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# Purpose: Build the RHEL9 SCAP datastream — fetch + sha512-verify the pinned SSG tarball, cmake/ninja generate
+# ssg-rhel9-ds.xml, copy the datastream + stig_rhel9.yml, then run assert-stig-tailoring.py.
+# Role: container-build
+# Python-convertible: no — thin curl/sha512/tar/cmake/ninja orchestration; the real assertion already lives in
+# assert-stig-tailoring.py.
+# Relocate: yes — build-process script; move under containers/scripts/.
+
 set -euo pipefail
 
 version="${SSG_VERSION:-0.1.81}"

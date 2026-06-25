@@ -1,3 +1,9 @@
+# Purpose: OpenSSF Scorecard on push/weekly cron/branch-protection change — run scorecard-action, publish results,
+# upload SARIF.
+# Role: gate
+# Micro-container candidate: no — id-token publish + SARIF upload + branch_protection_rule trigger are intrinsic
+# Actions/OIDC integration.
+
 name: OpenSSF Scorecard
 
 on:

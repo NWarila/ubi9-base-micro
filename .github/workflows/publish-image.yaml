@@ -1,3 +1,9 @@
+# Purpose: Release pipeline — SLSA-tag integrity, multi-arch buildx build+push, Cosign sign/verify, SBOM + CVE +
+# OpenVEX + NIST-800-190 + STIG-ARF attest/verify, SLSA L3 provenance, Rekor roll-up.
+# Role: workflow
+# Micro-container candidate: partial — sign/attest spine + OIDC + SLSA reusable stay as workflow; fold the per-arch
+# SBOM/CVE/VEX/predicate/verify loops into pinned micro-container actions.
+
 name: Publish image
 
 on:

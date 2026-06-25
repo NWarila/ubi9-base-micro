@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Purpose: Validate the image-scoped RHEL9 STIG tailoring + scope/justification ledger
+# Role: gate
+# Micro-container candidate: yes - pure-stdlib (xml/json), files-in/exit-out, has --self-test
+
 """Validate the image-scoped RHEL9 STIG tailoring and scope ledger."""
 
 from __future__ import annotations

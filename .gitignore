@@ -1,3 +1,9 @@
+# Already self-documents (line 1 comment). A header may be added:
+# Purpose: Deny-all ignore; every tracked path must be explicitly allowlisted below.
+# Role: config
+# Micro-container candidate: no (VCS ignore config, not gate logic)
+# Note: keep the existing leading-** deny rule first; place header above it.
+
 # Default-deny: every tracked file must be explicitly allowlisted below.
 **
 

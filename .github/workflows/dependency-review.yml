@@ -1,3 +1,9 @@
+# Purpose: PR gate — dependency-review-action with fail-on-severity: high to block high+ vulnerable dependency
+# changes.
+# Role: gate
+# Micro-container candidate: no — uses the GitHub Dependency Review API on the PR diff; intrinsic Actions/PR-context
+# integration.
+
 name: Dependency review
 
 on:

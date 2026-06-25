@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Purpose: Assert cosign verification JSON carries a Rekor tlog bundle in every record
+# Role: gate
+# Micro-container candidate: yes - single-purpose, file-in/exit-code-out, has --self-test
+
 """Assert cosign signature verification JSON includes Rekor tlog bundles."""
 
 from __future__ import annotations

@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# Purpose: Generate/validate the NIST SP 800-190 s4.1 image-control attestation predicate
+# Role: tooling
+# Micro-container candidate: yes - pure-stdlib, deterministic JSON out, has --self-test/--validate
+
 """Generate and validate the NIST SP 800-190 section 4.1 image predicate."""
 
 from __future__ import annotations

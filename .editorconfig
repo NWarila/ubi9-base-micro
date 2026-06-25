@@ -1,3 +1,8 @@
+# Purpose: Shared editor charset/EOL/indent defaults (root = true).
+# Role: config
+# Micro-container candidate: no (editor config, not gate logic)
+# Note: header comment must go ABOVE the `root = true` line.
+
 root = true
 
 [*]

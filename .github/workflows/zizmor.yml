@@ -1,3 +1,9 @@
+# Purpose: zizmor static analysis of .github/workflows/ on PR/push (pinned zizmor 1.25.2, advanced-security SARIF
+# upload).
+# Role: gate
+# Micro-container candidate: partial — the zizmor CLI scan is container-able; the advanced-security SARIF upload keeps
+# an Actions-integration tail.
+
 name: zizmor
 
 on:

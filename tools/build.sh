@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# Purpose: Build the runtime + dev images with docker buildx — derive OCI labels from VERSION/git, enforce
+# digest-pinned UBI bases, emit reproducible (rewrite-timestamp) tars, and docker load them.
+# Role: container-build
+# Python-convertible: no — thin docker buildx orchestration; only the digest-pin regex is logic.
+# Relocate: yes — core build-process script; move under containers/scripts/.
+
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

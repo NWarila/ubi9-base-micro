@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# Purpose: Export the runtime image rootfs and assert the OpenSSL FIPS floor (fips.so, openssl-fips.cnf approved mode,
+# no legacy/openssl CLI, per-arch CMVP #4857 fips-status.json + OCI labels + ENV).
+# Role: test
+# Python-convertible: yes — tar/JSON/label parsing + per-arch assertion tables belong in Python alongside the
+# assert-*.py gates; only docker create/export/inspect are glue.
+# Micro-container candidate: yes — runtime FIPS gate; run the assertions inside a pinned gate image.
+# Relocate: no — runtime verification, not a build-process script.
+
 set -euo pipefail
 
 usage() {
