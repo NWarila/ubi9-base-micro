@@ -492,11 +492,11 @@ def check_dockerfile() -> None:
         f"ARG OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64={OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AMD64}",
         f"ARG OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64={OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_ARM64}",
         "ARG SOURCE_DATE_EPOCH=1704067200",
-        "amd64) rpm_arch=\"x86_64\"",
-        "arm64) rpm_arch=\"aarch64\"",
-        "bash /tmp/fetch-runtime-rpms.sh --targetarch \"${TARGETARCH}\" --lockfile \"${runtime_lockfile}\" --dest /tmp/runtime-rpms",
+        'amd64) rpm_arch="x86_64"',
+        'arm64) rpm_arch="aarch64"',
+        'bash /tmp/fetch-runtime-rpms.sh --targetarch "${TARGETARCH}" --lockfile "${runtime_lockfile}" --dest /tmp/runtime-rpms',
         "rpm -Uvh --oldpackage --replacepkgs",
-        "expected_provider_nevra=\"${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}\"",
+        'expected_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}"',
         "COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/",
         "COPY tools/assert-rpm-lock-hashes.sh /tmp/assert-rpm-lock-hashes.sh",
         "COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh",
@@ -816,7 +816,6 @@ def check_workflow() -> None:
     check_uses_pinned(refresh, "RPM lock refresh workflow")
     require(reviewdog_actionlint_marker in build, "build workflow must document the bundled actionlint 1.7.12 pin")
     require(reviewdog_actionlint_marker in nightly, "nightly workflow must document the bundled actionlint 1.7.12 pin")
-
 
 
 def check_supply_chain_workflows() -> None:
@@ -1172,7 +1171,7 @@ def check_rpm_locks() -> None:
         "amd64": (OPENSSL_FIPS_PROVIDER_RPM_SHA256_AMD64, OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AMD64),
         "arm64": (OPENSSL_FIPS_PROVIDER_RPM_SHA256_ARM64, OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_ARM64),
     }
-    fips_provider_nvr = OPENSSL_FIPS_PROVIDER_NEVRA[len("openssl-fips-provider-so-"):]
+    fips_provider_nvr = OPENSSL_FIPS_PROVIDER_NEVRA[len("openssl-fips-provider-so-") :]
     for platform_arch, rpm_arch in expected_arch.items():
         relative_path = f"rpm-lock/runtime.{platform_arch}.txt"
         lock_text = read(relative_path)

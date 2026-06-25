@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-  cat >&2 <<'EOF'
+  cat >&2 << 'EOF'
 usage: assert-rpm-lock-hashes.sh --root ROOTFS --lockfile LOCKFILE [--direct-rpm-dir DIR]
        assert-rpm-lock-hashes.sh --self-test
 EOF
@@ -49,6 +49,7 @@ verify_lock_hashes() {
       "" | \#*)
         continue
         ;;
+      *) ;;
     esac
 
     IFS='|' read -r package final_rpmdb name epoch version release arch sha256_header sigmd5 extra <<< "${line}"
@@ -158,7 +159,7 @@ run_self_test() {
   local sig_b="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
   mkdir -p "${tmpdir}/bin"
-  cat > "${tmpdir}/bin/rpm" <<EOF
+  cat > "${tmpdir}/bin/rpm" << EOF
 #!/usr/bin/env bash
 set -euo pipefail
 package="\${@: -1}"
@@ -170,7 +171,7 @@ esac
 EOF
   chmod +x "${tmpdir}/bin/rpm"
 
-  cat > "${tmpdir}/lock.good" <<EOF
+  cat > "${tmpdir}/lock.good" << EOF
 # columns: package|final_rpmdb|name|epoch|version|release|arch|sha256_header|sigmd5
 # direct_rpm: foo-1-1.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/o/foo-1-1.x86_64.rpm|${sha_a}
 # direct_rpm: bar-1-1.noarch|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/b/bar-1-1.noarch.rpm|${sha_b}
@@ -181,22 +182,26 @@ EOF
   grep -Fq "2 packages" "${tmpdir}/good.out"
   grep -Fq "direct RPM source pins verified" "${tmpdir}/good.out"
 
-  cat > "${tmpdir}/lock.bad" <<EOF
+  cat > "${tmpdir}/lock.bad" << EOF
 # columns: package|final_rpmdb|name|epoch|version|release|arch|sha256_header|sigmd5
 # direct_rpm: foo-1-1.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/f/foo-1-1.x86_64.rpm|${sha_a}
 foo-1-1.x86_64|yes|foo|0|1|1|x86_64|${sha_bad}|${sig_a}
 EOF
+  # Negative self-test expects verify_lock_hashes to fail closed.
+  # shellcheck disable=SC2310
   if PATH="${tmpdir}/bin:${PATH}" verify_lock_hashes "/fake-root" "${tmpdir}/lock.bad" > "${tmpdir}/bad.out" 2>&1; then
     echo "self-test mismatch unexpectedly passed" >&2
     return 1
   fi
   grep -Fq "SHA256HEADER mismatch for foo-1-1.x86_64" "${tmpdir}/bad.out"
 
-  cat > "${tmpdir}/lock.missing-direct-row" <<EOF
+  cat > "${tmpdir}/lock.missing-direct-row" << EOF
 # direct_rpm: foo-1-1.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/f/foo-1-1.x86_64.rpm|${sha_a}
 # direct_rpm: missing-1-1.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/m/missing-1-1.x86_64.rpm|${sha_a}
 foo-1-1.x86_64|yes|foo|0|1|1|x86_64|${sha_a}|${sig_a}
 EOF
+  # Negative self-test expects missing direct-RPM rows to fail closed.
+  # shellcheck disable=SC2310
   if PATH="${tmpdir}/bin:${PATH}" verify_lock_hashes "/fake-root" "${tmpdir}/lock.missing-direct-row" > "${tmpdir}/missing.out" 2>&1; then
     echo "self-test missing direct row unexpectedly passed" >&2
     return 1
@@ -230,7 +235,7 @@ main() {
         direct_rpm_dir="${2:-}"
         shift 2
         ;;
-      -h|--help)
+      -h | --help)
         usage
         return 0
         ;;
