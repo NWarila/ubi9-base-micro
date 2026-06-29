@@ -1,7 +1,1 @@
-# Purpose: Code review ownership; @NWarila owns all, with vex/ and stig/ evidence dirs gated.
-# Role: governance
-# Micro-container candidate: no (review-ownership policy, not gate logic)
-
 * @NWarila
-/vex/ @NWarila
-/stig/ @NWarila
