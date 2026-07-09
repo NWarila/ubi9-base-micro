@@ -3,9 +3,30 @@
 `base-micro` enforces the F3 byte-for-byte rootfs gate in CI. The
 `reproducibility-gate` job builds the runtime target twice from identical inputs
 for both `linux/amd64` and `linux/arm64`, exports each image rootfs, and runs
-`tools/assert-reproducible.py --assert-byte-identical`. Any content, metadata,
-mtime, ownership, type, or presence difference in the exported rootfs fails the
-build.
+`tools/assert-reproducible.py --assert-byte-identical --expect-from-contract
+contracts/image-manifest.json`. Any content, metadata, mtime, ownership, type,
+or presence difference in the exported rootfs fails the build. The same gate
+also asserts the per-architecture `canonical_rootfs_digest` and `rpmdb_sha256`
+recorded in `contracts/image-manifest.json` on every pull request, push to
+`main`, and nightly run.
+
+The canonical rootfs digest is not a tarball hash. The helper flattens the image
+layers into normalized rootfs entries, sorts those entries by path, then hashes
+the UTF-8 text made from one line per entry:
+`path|type|mode|uid|gid|uname|gname|mtime|size|linkname|sha256`. The `mode`
+field is octal, and the final field is empty for entries without file or link
+content. This keeps the digest tied to rootfs content and metadata rather than
+Python `tarfile` archive encoding.
+
+`canonical_rootfs_digest` is asserted at the scope of this repository's pinned
+CI builder path: Docker Buildx with `rewrite-timestamp=true`. Because the line
+format includes entry metadata (`uname`, `gname`, and `mtime`) along with file
+content, a different builder such as buildah or kaniko can export
+byte-identical file contents while producing a different
+`canonical_rootfs_digest`. The builder-portable checks available today are the
+per-file content digests recorded in the contract, specifically `rpmdb_sha256`
+for `/var/lib/rpm/rpmdb.sqlite` and `fips_so_sha256` for
+`/usr/lib64/ossl-modules/fips.so`.
 
 The arm64 proof intentionally uses QEMU on the GitHub-hosted amd64 runner because
 that is the same architecture path used by the publish workflow. Native arm64
@@ -56,8 +77,9 @@ scope.
   `sha256_header` column; `SIGMD5` matches the `sigmd5` column. A mismatch fails
   the build before any strip step runs.
 - The Dockerfile verifies that the final runtime rpmdb still contains exactly
-  the 15-package scanner-visible floor after strip. The accepted raw-rpm rpmdb
-  serialization baseline is `33c07782`.
+  the 15-package scanner-visible floor after strip. The reproducibility gate
+  also asserts the per-architecture rpmdb serialization SHA-256 recorded in
+  `contracts/image-manifest.json`.
 - Generated rootfs files such as `/etc/nwarila/fips-status.json` use the same
   deterministic timestamp path.
 

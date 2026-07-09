@@ -8,7 +8,7 @@ it.
 | --- | --- |
 | `tools/verify.py` | Repository contract checks: required files, pinned workflow inputs, deny-all ignore allowlists, documentation markers, Diataxis layout, ADR inventory, lint setup, helper self-tests, and attribution-residue denial. |
 | `tools/run-test-gates.sh` | Local orchestration for the image gate set: build, hardening, FIPS, footprint, STIG, SBOM, scanners, OpenVEX, rootfs secret scan, NIST SP 800-190 predicate validation, SLSA builder assertion, and Rekor assertion helpers. |
-| `tools/assert-reproducible.py` | Builds the same runtime twice for a platform, exports both rootfs tar streams, and fails on any byte, metadata, ownership, type, mtime, or presence difference when `--assert-byte-identical` is set. |
+| `tools/assert-reproducible.py` | Builds the same runtime twice for a platform, exports both rootfs tar streams, reports canonical rootfs and rpmdb digests, fails on any byte, metadata, ownership, type, mtime, or presence difference when `--assert-byte-identical` is set, and fails when `--expect-from-contract` values from `contracts/image-manifest.json` do not match. |
 | `tools/assert-footprint.py` | Exports the runtime rootfs and fails when regular-file bytes exceed the configured H2 limit. |
 | `tools/assert-no-phantom-packages.py` | Compares rpmdb-declared payloads with the exported rootfs so stripped files cannot leave scanner-visible packages with missing shippable payload. |
 | `tools/assert-rpm-lock-hashes.sh` | Confirms installed RPMs match the lockfile `%{SHA256HEADER}` and `%{SIGMD5}` values after local RPM installation. |

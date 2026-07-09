@@ -12,6 +12,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, cast
 
@@ -71,6 +72,19 @@ COMMUNITY_PROFILE_FILES = [
     ".github/ISSUE_TEMPLATE/config.yml",
     ".github/ISSUE_TEMPLATE/feature_request.yml",
     ".github/pull_request_template.md",
+]
+DOCKERFILE_FORBIDDEN_MARKERS = [
+    "rm -rf /rootfs/var/lib/rpm",
+    "rm -rf /var/lib/rpm",
+    "ghcr.io/nwarila-" + "platform",
+    "fips" + "install",
+    "OPENSSL_FIPS_PROVIDER_NEVRA=openssl-fips-provider-so-3.0.7-8.el9.x86_64",
+    "OPENSSL_FIPS_MODULE_VERSION_AMD64",
+    "OPENSSL_FIPS_PROVIDER_NEVRA_AMD64",
+    "OPENSSL_FIPS_MODULE_VERSION_ARM64",
+    "OPENSSL_FIPS_PROVIDER_NEVRA_ARM64",
+    "openssl-fips-provider-so-3.0.7-11.el9_8",
+    "3.0.7-cda111b5812c30d4",
 ]
 REPO_ADRS = [
     (
@@ -284,6 +298,17 @@ def validate_image_contract_invariants(manifest: dict[str, Any]) -> None:
     require(len(architectures) == len(set(architectures)), "image contract architectures must be unique")
     fips_arches = object_at(manifest, ("fips", "architectures"))
     require(set(fips_arches) == set(architectures), "image contract FIPS architectures must match architectures")
+    repro = object_at(manifest, ("reproducibility",))
+    rootfs_digests = object_at(repro, ("canonical_rootfs_digest",))
+    rpmdb_digests = object_at(repro, ("rpmdb_sha256",))
+    require(
+        set(rootfs_digests) == set(architectures),
+        "image contract canonical rootfs digest architectures must match architectures",
+    )
+    require(
+        set(rpmdb_digests) == set(architectures),
+        "image contract rpmdb digest architectures must match architectures",
+    )
     require(
         string_at(manifest, ("fips", "provider_nevra")).startswith("openssl-fips-provider-so-"),
         "image contract FIPS provider must name openssl-fips-provider-so",
@@ -294,6 +319,14 @@ def validate_image_contract_invariants(manifest: dict[str, Any]) -> None:
             re.fullmatch(r"[0-9a-f]{64}", string_at(arch_contract, ("fips_so_sha256",))) is not None,
             f"image contract fips.so sha256 for {arch} must be 64 hex characters",
         )
+        for digest_name, digest_value in [
+            ("canonical rootfs", string_at(rootfs_digests, (arch,))),
+            ("rpmdb", string_at(rpmdb_digests, (arch,))),
+        ]:
+            require(
+                re.fullmatch(r"[0-9a-f]{64}", digest_value) is not None,
+                f"image contract {digest_name} sha256 for {arch} must be 64 hex characters",
+            )
     require(string_list_at(manifest, ("runtime", "package_floor")), "runtime package floor must not be empty")
     require(int_at(manifest, ("runtime", "footprint_limit_bytes")) > 0, "footprint limit must be positive")
     require(
@@ -792,6 +825,43 @@ def check_renovate_config() -> None:
     require(ubi_rule_found, "Renovate config must group UBI minimal and micro digest refreshes")
 
 
+def collect_dockerfile_forbidden_sources(root: Path = ROOT) -> list[tuple[str, str]]:
+    paths = [root / "containers/Dockerfile"]
+    scripts_dir = root / "containers/scripts"
+    if scripts_dir.is_dir():
+        paths.extend(sorted(scripts_dir.glob("*.sh")))
+
+    sources: list[tuple[str, str]] = []
+    for path in paths:
+        relative_path = str(path.relative_to(root))
+        require(path.is_file(), f"missing required forbidden-scan source: {relative_path}")
+        sources.append((relative_path, path.read_text(encoding="utf-8")))
+    return sources
+
+
+def find_dockerfile_forbidden_markers(sources: list[tuple[str, str]]) -> list[str]:
+    findings: list[str] = []
+    for source, text in sources:
+        findings.extend(f"{source}: {marker}" for marker in DOCKERFILE_FORBIDDEN_MARKERS if marker in text)
+    return findings
+
+
+def check_dockerfile_forbidden_scan_self_test() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        dockerfile = tmp_path / "containers/Dockerfile"
+        script = tmp_path / "containers/scripts/strip.sh"
+        script.parent.mkdir(parents=True)
+        dockerfile.parent.mkdir(parents=True, exist_ok=True)
+        dockerfile.write_text("FROM scratch\n", encoding="utf-8")
+        script.write_text("rm -rf /rootfs/var/lib/rpm\n", encoding="utf-8")
+        findings = find_dockerfile_forbidden_markers(collect_dockerfile_forbidden_sources(tmp_path))
+    require(
+        findings == ["containers/scripts/strip.sh: rm -rf /rootfs/var/lib/rpm"],
+        "forbidden marker scan must cover containers/scripts/*.sh fixtures",
+    )
+
+
 def check_dockerfile() -> None:
     text = read("containers/Dockerfile")
     required = [
@@ -898,21 +968,8 @@ def check_dockerfile() -> None:
             continue
         require("@sha256:" in line, f"Dockerfile FROM must be digest-pinned: {line}")
 
-    forbidden = [
-        "rm -rf /rootfs/var/lib/rpm",
-        "rm -rf /var/lib/rpm",
-        "ghcr.io/nwarila-" + "platform",
-        "fips" + "install",
-        "OPENSSL_FIPS_PROVIDER_NEVRA=openssl-fips-provider-so-3.0.7-8.el9.x86_64",
-        "OPENSSL_FIPS_MODULE_VERSION_AMD64",
-        "OPENSSL_FIPS_PROVIDER_NEVRA_AMD64",
-        "OPENSSL_FIPS_MODULE_VERSION_ARM64",
-        "OPENSSL_FIPS_PROVIDER_NEVRA_ARM64",
-        "openssl-fips-provider-so-3.0.7-11.el9_8",
-        "3.0.7-cda111b5812c30d4",
-    ]
-    present = [marker for marker in forbidden if marker in text]
-    require(not present, "Dockerfile contains forbidden marker(s): " + ", ".join(present))
+    present = find_dockerfile_forbidden_markers(collect_dockerfile_forbidden_sources())
+    require(not present, "Dockerfile/script contains forbidden marker(s): " + ", ".join(present))
 
 
 def check_workflow() -> None:
@@ -989,6 +1046,8 @@ def check_workflow() -> None:
         "platform: linux/amd64",
         "platform: linux/arm64",
         "--assert-byte-identical",
+        "--expect-from-contract",
+        "contracts/image-manifest.json",
         "dist/reproducibility/base-micro.${ARCH}.reproducibility.json",
         "Run full test-only gate set",
         "tools/run-test-gates.sh",
@@ -1022,6 +1081,8 @@ def check_workflow() -> None:
         "platform: linux/amd64",
         "platform: linux/arm64",
         "--assert-byte-identical",
+        "--expect-from-contract",
+        "contracts/image-manifest.json",
         "dist/reproducibility/base-micro.${ARCH}.reproducibility.json",
         "Run full test-only gate set",
         "tools/run-test-gates.sh",
@@ -2053,9 +2114,14 @@ def check_docs() -> None:
     for marker in [
         "SOURCE_DATE_EPOCH=1704067200",
         "tools/assert-reproducible.py --assert-byte-identical",
+        "--expect-from-contract",
         "rewrite-timestamp=true",
         "docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130",
         "emulator-relative",
+        "contracts/image-manifest.json",
+        "canonical_rootfs_digest",
+        "rpmdb_sha256",
+        "path|type|mode|uid|gid|uname|gname|mtime|size|linkname|sha256",
         "rpm-lock/",
         "linux/amd64",
         "linux/arm64",
@@ -2067,7 +2133,6 @@ def check_docs() -> None:
         "Refresh runtime RPM lockfiles",
         "direct CDN RPM URLs",
         "rpm -Uvh",
-        "33c07782",
     ]:
         require(marker in reproducibility_doc, f"docs/explanation/reproducibility.md missing marker: {marker}")
     require(
@@ -2369,6 +2434,7 @@ def main() -> int:
         check_community_profile,
         check_renovate_config,
         check_dockerfile,
+        check_dockerfile_forbidden_scan_self_test,
         check_rpm_locks,
         check_workflow,
         check_supply_chain_workflows,
