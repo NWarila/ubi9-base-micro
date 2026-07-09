@@ -31,6 +31,7 @@ repos:
     rev: v2.1.0
     hooks:
       - id: mypy
+        additional_dependencies: [pytest==8.4.1]
         pass_filenames: false
         args: [--config-file=pyproject.toml, tools]
 
@@ -60,3 +61,13 @@ repos:
     rev: v1.7.12
     hooks:
       - id: actionlint
+  - repo: local
+    hooks:
+      - id: rpmlock-pytest
+        name: rpmlock pytest
+        entry: python -m pytest tools/tests/test_rpmlock.py -q
+        language: python
+        additional_dependencies: [pytest==8.4.1]
+        pass_filenames: false
+        always_run: true
+        files: ^(tools/rpmlock\.py|tools/tests/test_rpmlock\.py|rpm-lock/runtime\.(amd64|arm64)\.txt)$

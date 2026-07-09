@@ -47,14 +47,6 @@ validate_arch() {
   esac
 }
 
-arch_to_rpm_arch() {
-  case "$1" in
-    amd64) printf 'x86_64\n' ;;
-    arm64) printf 'aarch64\n' ;;
-    *) return 2 ;;
-  esac
-}
-
 arches_for() {
   case "$1" in
     all) printf 'amd64\narm64\n' ;;
@@ -347,219 +339,18 @@ DOCKERFILE
 validate_lockfile() {
   local path="$1"
   local platform_arch="$2"
-  local rpm_arch
-  rpm_arch="$(arch_to_rpm_arch "${platform_arch}")"
-  local expected_provider_nvr="${openssl_fips_provider_nevra}"
-  local fips_provider_nvr="${expected_provider_nvr#openssl-fips-provider-so-}"
-  local expected_provider_package_nevra="openssl-fips-provider-${fips_provider_nvr}.${rpm_arch}"
-  local expected_provider_nevra="${expected_provider_nvr}.${rpm_arch}"
-  local expected_provider_sha expected_provider_so_sha rpm_basearch
-  case "${platform_arch}" in
-    amd64)
-      rpm_basearch="x86_64"
-      expected_provider_sha="${openssl_fips_provider_rpm_sha256_x86_64}"
-      expected_provider_so_sha="${openssl_fips_provider_so_rpm_sha256_x86_64}"
-      ;;
-    arm64)
-      rpm_basearch="aarch64"
-      expected_provider_sha="${openssl_fips_provider_rpm_sha256_aarch64}"
-      expected_provider_so_sha="${openssl_fips_provider_so_rpm_sha256_aarch64}"
-      ;;
-    *) return 2 ;;
-  esac
-  local expected_provider_url="${openssl_fips_provider_rpm_base_url%/}/${rpm_basearch}/baseos/os/Packages/o/${expected_provider_package_nevra}.rpm"
-  local expected_provider_so_url="${openssl_fips_provider_rpm_base_url%/}/${rpm_basearch}/baseos/os/Packages/o/${expected_provider_nevra}.rpm"
 
-  [[ -s "${path}" ]] || {
-    echo "RPM lockfile missing or empty: ${path}" >&2
-    return 1
-  }
-
-  mapfile -t lines < "${path}"
-  [[ "${lines[0]:-}" == "# arch: ${platform_arch}" ]] || {
-    echo "${path}: invalid arch header" >&2
-    return 1
-  }
-  [[ "${lines[1]:-}" == "# source_date_epoch: ${source_date_epoch}" ]] || {
-    echo "${path}: invalid source_date_epoch header" >&2
-    return 1
-  }
-  [[ "${lines[2]:-}" == "# columns: package|final_rpmdb|name|epoch|version|release|arch|sha256_header|sigmd5" ]] || {
-    echo "${path}: invalid columns header" >&2
-    return 1
-  }
-
-  local rows=0
-  local final_rows=0
-  local previous_package=""
-  local package final_rpmdb name epoch version release arch sha256_header sigmd5 extra
-  local required_final_names=(
-    basesystem
-    ca-certificates
-    crypto-policies
-    filesystem
-    glibc
-    glibc-common
-    glibc-minimal-langpack
-    libgcc
-    openssl-fips-provider
-    openssl-fips-provider-so
-    openssl-libs
-    redhat-release
-    setup
-    tzdata
-    zlib
-  )
-  local final_seen=" "
-  local provider_pin_seen=0
-  local line direct_payload direct_package direct_url direct_sha direct_extra
-  local direct_rows=0
-  declare -A direct_rpm_sha=()
-  declare -A direct_rpm_url=()
-  declare -A direct_rpm_row_seen=()
-
-  while IFS= read -r line; do
-    case "${line}" in
-      "# direct_rpm: "*)
-        direct_payload="${line#\# direct_rpm: }"
-        IFS='|' read -r direct_package direct_url direct_sha direct_extra <<< "${direct_payload}"
-        if [[ -n "${direct_extra:-}" || -z "${direct_package}" || -z "${direct_url}" || -z "${direct_sha}" ]]; then
-          echo "${path}: invalid direct RPM entry: ${line}" >&2
-          return 1
-        fi
-        [[ "${direct_url}" == https://cdn-ubi.redhat.com/* ]] || {
-          echo "${path}: direct RPM source must be cdn-ubi.redhat.com for ${direct_package}: ${direct_url}" >&2
-          return 1
-        }
-        [[ "${direct_sha}" =~ ^[0-9a-f]{64}$ ]] || {
-          echo "${path}: invalid direct RPM sha256 for ${direct_package}: ${direct_sha}" >&2
-          return 1
-        }
-        if [[ -n "${direct_rpm_sha[${direct_package}]+set}" ]]; then
-          echo "${path}: duplicate direct RPM entry: ${direct_package}" >&2
-          return 1
-        fi
-        direct_rpm_sha["${direct_package}"]="${direct_sha}"
-        direct_rpm_url["${direct_package}"]="${direct_url}"
-        direct_rows=$((direct_rows + 1))
-        ;;
-      *) ;;
-    esac
-  done < "${path}"
-
-  while IFS='|' read -r package final_rpmdb name epoch version release arch sha256_header sigmd5 extra; do
-    case "${package}" in
-      "" | \#*) continue ;;
-      *) ;;
-    esac
-    if [[ -n "${extra:-}" ]]; then
-      echo "${path}: too many columns for ${package}" >&2
-      return 1
-    fi
-    for field in "${package}" "${final_rpmdb}" "${name}" "${epoch}" "${version}" "${release}" "${arch}" "${sha256_header}" "${sigmd5}"; do
-      [[ -n "${field}" ]] || {
-        echo "${path}: empty field in row ${package}" >&2
-        return 1
-      }
-    done
-    case "${final_rpmdb}" in
-      yes)
-        final_rows=$((final_rows + 1))
-        final_seen+="${name} "
-        ;;
-      no) ;;
-      *)
-        echo "${path}: invalid final_rpmdb=${final_rpmdb} for ${package}" >&2
-        return 1
-        ;;
-    esac
-    case "${arch}" in
-      noarch | "${rpm_arch}") ;;
-      *)
-        echo "${path}: invalid arch=${arch} for ${package}" >&2
-        return 1
-        ;;
-    esac
-    [[ "${epoch}" =~ ^[0-9]+$ ]] || {
-      echo "${path}: non-numeric epoch for ${package}" >&2
-      return 1
-    }
-    [[ "${sha256_header}" =~ ^[0-9a-f]{64}$ ]] || {
-      echo "${path}: invalid SHA256HEADER for ${package}" >&2
-      return 1
-    }
-    [[ "${sigmd5}" =~ ^[0-9a-f]{32}$ ]] || {
-      echo "${path}: invalid SIGMD5 for ${package}" >&2
-      return 1
-    }
-    if [[ -z "${direct_rpm_sha[${package}]+set}" ]]; then
-      echo "${path}: missing direct RPM source pin for ${package}" >&2
-      return 1
-    fi
-    expected_filename="${name}-${version}-${release}.${arch}.rpm"
-    direct_filename="${direct_rpm_url[${package}]##*/}"
-    if [[ "${direct_filename}" != "${expected_filename}" ]]; then
-      echo "${path}: direct RPM URL filename mismatch for ${package}: expected ${expected_filename}, got ${direct_filename}" >&2
-      return 1
-    fi
-    if [[ "${package}" == "${expected_provider_package_nevra}" ]]; then
-      [[ "${direct_rpm_url[${package}]}" == "${expected_provider_url}" && "${direct_rpm_sha[${package}]}" == "${expected_provider_sha}" ]] || {
-        echo "${path}: FIPS provider package direct pin mismatch for ${package}" >&2
-        return 1
-      }
-    fi
-    if [[ "${package}" == "${expected_provider_nevra}" ]]; then
-      [[ "${direct_rpm_url[${package}]}" == "${expected_provider_so_url}" && "${direct_rpm_sha[${package}]}" == "${expected_provider_so_sha}" ]] || {
-        echo "${path}: FIPS provider shared-object direct pin mismatch for ${package}" >&2
-        return 1
-      }
-    fi
-    direct_rpm_row_seen["${package}"]=1
-    if [[ -n "${previous_package}" && "${package}" < "${previous_package}" ]]; then
-      echo "${path}: rows are not sorted by package: ${package} after ${previous_package}" >&2
-      return 1
-    fi
-    if [[ "${package}" == "${previous_package}" ]]; then
-      echo "${path}: duplicate package row: ${package}" >&2
-      return 1
-    fi
-    if [[ "${package}" == "${expected_provider_nevra}" && "${name}" == "openssl-fips-provider-so" ]]; then
-      provider_pin_seen=1
-    fi
-    previous_package="${package}"
-    rows=$((rows + 1))
-  done < "${path}"
-
-  [[ "${rows}" -gt 0 ]] || {
-    echo "${path}: lockfile has no package rows" >&2
-    return 1
-  }
-  [[ "${direct_rows}" -eq "${rows}" ]] || {
-    echo "${path}: expected ${rows} direct RPM pins, got ${direct_rows}" >&2
-    return 1
-  }
-  for direct_package in "${!direct_rpm_sha[@]}"; do
-    [[ -n "${direct_rpm_row_seen[${direct_package}]+set}" ]] || {
-      echo "${path}: direct RPM entry has no matching package row: ${direct_package}" >&2
-      return 1
-    }
-  done
-  [[ "${final_rows}" -eq 15 ]] || {
-    echo "${path}: expected 15 final runtime RPMs, got ${final_rows}" >&2
-    return 1
-  }
-  for name in "${required_final_names[@]}"; do
-    [[ "${final_seen}" == *" ${name} "* ]] || {
-      echo "${path}: missing final runtime RPM ${name}" >&2
-      return 1
-    }
-  done
-  [[ "${provider_pin_seen}" -eq 1 ]] || {
-    echo "${path}: missing pinned OpenSSL FIPS provider ${expected_provider_nevra}" >&2
-    return 1
-  }
+  python3 "${repo_root}/tools/rpmlock.py" validate \
+    --lockfile "${path}" \
+    --arch "${platform_arch}" \
+    --source-date-epoch "${source_date_epoch}" \
+    --openssl-fips-provider-nevra "${openssl_fips_provider_nevra}" \
+    --openssl-fips-provider-rpm-base-url "${openssl_fips_provider_rpm_base_url}" \
+    --openssl-fips-provider-rpm-sha256-x86-64 "${openssl_fips_provider_rpm_sha256_x86_64}" \
+    --openssl-fips-provider-rpm-sha256-aarch64 "${openssl_fips_provider_rpm_sha256_aarch64}" \
+    --openssl-fips-provider-so-rpm-sha256-x86-64 "${openssl_fips_provider_so_rpm_sha256_x86_64}" \
+    --openssl-fips-provider-so-rpm-sha256-aarch64 "${openssl_fips_provider_so_rpm_sha256_aarch64}"
 }
-
 generate_one() {
   local platform_arch="$1"
   local output_dir="$2"
@@ -620,27 +411,10 @@ run_check() {
 }
 
 run_self_test() {
-  local tmpdir
-  tmpdir="$(mktemp -d)"
-  trap 'rm -rf "${tmpdir:-}"' RETURN
-
   validate_lockfile "${repo_root}/rpm-lock/runtime.amd64.txt" amd64
   validate_lockfile "${repo_root}/rpm-lock/runtime.arm64.txt" arm64
-
-  cp "${repo_root}/rpm-lock/runtime.amd64.txt" "${tmpdir}/bad.txt"
-  awk 'BEGIN { done=0 } /^#/ { print; next } done == 0 { sub(/\|no\|/, "|maybe|"); done=1 } { print }' "${tmpdir}/bad.txt" > "${tmpdir}/bad.next"
-  mv "${tmpdir}/bad.next" "${tmpdir}/bad.txt"
-  # Negative self-test expects validate_lockfile to fail closed.
-  # shellcheck disable=SC2310
-  if validate_lockfile "${tmpdir}/bad.txt" amd64 > "${tmpdir}/bad.out" 2>&1; then
-    echo "self-test invalid final_rpmdb unexpectedly passed" >&2
-    return 1
-  fi
-  grep -Fq "invalid final_rpmdb=maybe" "${tmpdir}/bad.out"
-
   echo "RPM lock generator self-test: ok"
 }
-
 main() {
   local arch="all"
   local output_dir="${repo_root}/rpm-lock"

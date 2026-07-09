@@ -93,3 +93,5 @@
 !/tools/
 !/tools/*.py
 !/tools/*.sh
+!/tools/tests/
+!/tools/tests/*.py
