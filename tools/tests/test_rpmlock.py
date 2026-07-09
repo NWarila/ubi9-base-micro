@@ -1,3 +1,8 @@
+# Purpose: Validate the canonical runtime RPM lockfile parser and CLI.
+# Role: test
+# Micro-container candidate: gate-adjacent - pytest coverage for host/CI lockfile contract validation.
+# Build-process: no - test-only coverage; not executed inside image builds.
+
 from __future__ import annotations
 
 import json
@@ -7,9 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-
 from tools import rpmlock
-
 
 ROOT = Path(__file__).resolve().parents[2]
 AMD64_LOCK = ROOT / "rpm-lock" / "runtime.amd64.txt"
@@ -184,7 +187,7 @@ def test_rejects_row_without_direct_rpm(tmp_path: Path) -> None:
     first_direct = _first_direct_line(_lock_text())
     mutated = "\n".join(line for line in _lock_text().splitlines() if line != first_direct) + "\n"
 
-    with pytest.raises(rpmlock.LockError, match="missing direct RPM source pin|expected 38 direct RPM pins"):
+    with pytest.raises(rpmlock.LockError, match="missing direct RPM source pin"):
         _validate_text(tmp_path, mutated)
 
 
@@ -263,6 +266,47 @@ def test_rejects_other_mirrored_validator_failures(tmp_path: Path, mutated_text:
         _validate_text(tmp_path, mutated_text)
 
 
+def test_rejects_arch_header_at_eof(tmp_path: Path) -> None:
+    lines = _lock_text().splitlines()
+    arch_header = lines.pop(0)
+    lines.append(arch_header)
+
+    with pytest.raises(rpmlock.LockError, match="invalid arch header"):
+        _validate_text(tmp_path, "\n".join(lines) + "\n")
+
+
+def test_rejects_wrong_arch_header_even_with_later_correct_duplicate(tmp_path: Path) -> None:
+    lines = _lock_text().splitlines()
+    lines[0] = "# arch: arm64"
+    lines.insert(3, "# arch: amd64")
+
+    with pytest.raises(rpmlock.LockError, match="invalid arch header"):
+        _validate_text(tmp_path, "\n".join(lines) + "\n")
+
+
+def test_rejects_non_ascii_digit_epoch(tmp_path: Path) -> None:
+    parts = _first_data_parts(_lock_text())
+    mutated = _replace_first_data_row(_lock_text(), [*parts[:3], "\u0661", *parts[4:]])
+
+    with pytest.raises(rpmlock.LockError, match="non-numeric epoch"):
+        _validate_text(tmp_path, mutated)
+
+
+def test_rejects_crlf_lockfile(tmp_path: Path) -> None:
+    path = tmp_path / "runtime.txt"
+    path.write_bytes(_lock_text().replace("\n", "\r\n").encode("utf-8"))
+
+    with pytest.raises(rpmlock.LockError, match="CR characters are not allowed"):
+        rpmlock.parse(path)
+
+
+def test_inert_stray_header_comment_after_positional_headers_validates(tmp_path: Path) -> None:
+    lines = _lock_text().splitlines()
+    lines.insert(3, "# arch: arm64")
+
+    _validate_text(tmp_path, "\n".join(lines) + "\n")
+
+
 def test_rejects_unsorted_and_duplicate_rows(tmp_path: Path) -> None:
     lines = _lock_text().splitlines()
     row_indexes = [index for index, line in enumerate(lines) if line and not line.startswith("#")]
@@ -272,7 +316,7 @@ def test_rejects_unsorted_and_duplicate_rows(tmp_path: Path) -> None:
 
     lines = _lock_text().splitlines()
     lines[row_indexes[1]] = lines[row_indexes[0]]
-    with pytest.raises(rpmlock.LockError, match="duplicate package row|expected 38 direct RPM pins"):
+    with pytest.raises(rpmlock.LockError, match="duplicate package row"):
         _validate_text(tmp_path, "\n".join(lines) + "\n")
 
 

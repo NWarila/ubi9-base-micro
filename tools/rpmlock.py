@@ -12,16 +12,17 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Sequence
-
+from typing import Final, cast
 
 COLUMNS: Final = "package|final_rpmdb|name|epoch|version|release|arch|sha256_header|sigmd5"
 DIRECT_PREFIX: Final = "# direct_rpm: "
 RPM_ARCH_BY_PLATFORM: Final = {"amd64": "x86_64", "arm64": "aarch64"}
 HEX64: Final = re.compile(r"^[0-9a-f]{64}$")
 HEX32: Final = re.compile(r"^[0-9a-f]{32}$")
+ASCII_DECIMAL: Final = re.compile(r"^[0-9]+$")
 REQUIRED_FINAL_NAMES: Final = (
     "basesystem",
     "ca-certificates",
@@ -182,31 +183,43 @@ def _require(condition: bool, message: str) -> None:
         raise LockError(message)
 
 
-def _parse_header(line: str) -> tuple[str, str] | None:
-    if not line.startswith("# "):
-        return None
-    payload = line[2:]
-    key, separator, value = payload.partition(": ")
-    if not separator:
-        return None
-    return (key, value)
+def _read_lock_text(lock_path: Path) -> str:
+    try:
+        raw = lock_path.read_bytes()
+    except OSError as exc:
+        raise LockError(f"RPM lockfile missing or empty: {lock_path}") from exc
+    if not raw:
+        raise LockError(f"RPM lockfile missing or empty: {lock_path}")
+    if b"\r" in raw:
+        raise LockError(f"{lock_path}: CR characters are not allowed in RPM lockfiles")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise LockError(f"{lock_path}: RPM lockfile must be UTF-8") from exc
+
+
+def _positional_headers(lines: list[str]) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    if len(lines) > 0 and lines[0].startswith("# arch: "):
+        headers["arch"] = lines[0].removeprefix("# arch: ")
+    if len(lines) > 1 and lines[1].startswith("# source_date_epoch: "):
+        headers["source_date_epoch"] = lines[1].removeprefix("# source_date_epoch: ")
+    if len(lines) > 2 and lines[2].startswith("# columns: "):
+        headers["columns"] = lines[2].removeprefix("# columns: ")
+    return headers
 
 
 def parse(path: Path) -> Lockfile:
     lock_path = Path(path)
-    try:
-        if lock_path.stat().st_size == 0:
-            raise LockError(f"RPM lockfile missing or empty: {lock_path}")
-        text = lock_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise LockError(f"RPM lockfile missing or empty: {lock_path}") from exc
+    text = _read_lock_text(lock_path)
 
-    headers: dict[str, str] = {}
+    lines = text.splitlines()
+    headers = _positional_headers(lines)
     direct_entries: list[DirectRpm] = []
     direct_map: dict[str, tuple[str, str]] = {}
     rows: list[LockRow] = []
 
-    for line in text.splitlines():
+    for line in lines:
         if not line:
             continue
         if line.startswith(DIRECT_PREFIX):
@@ -217,9 +230,6 @@ def parse(path: Path) -> Lockfile:
             direct_map[entry.package] = (entry.url, entry.sha256)
             continue
         if line.startswith("#"):
-            header = _parse_header(line)
-            if header is not None:
-                headers[header[0]] = header[1]
             continue
         rows.append(_parse_row(lock_path, line))
 
@@ -294,8 +304,14 @@ def validate(lockfile: Lockfile, *, arch: str, policy: LockPolicy | None = None)
 
         if row.arch not in {"noarch", rpm_arch}:
             raise LockError(f"{lockfile.path}: invalid arch={row.arch} for {row.package}")
-        _require(row.epoch.isdigit(), f"{lockfile.path}: non-numeric epoch for {row.package}")
-        _require(HEX64.fullmatch(row.sha256_header) is not None, f"{lockfile.path}: invalid SHA256HEADER for {row.package}")
+        _require(
+            ASCII_DECIMAL.fullmatch(row.epoch) is not None,
+            f"{lockfile.path}: non-numeric epoch for {row.package}",
+        )
+        _require(
+            HEX64.fullmatch(row.sha256_header) is not None,
+            f"{lockfile.path}: invalid SHA256HEADER for {row.package}",
+        )
         _require(HEX32.fullmatch(row.sigmd5) is not None, f"{lockfile.path}: invalid SIGMD5 for {row.package}")
         _validate_direct_match(lockfile, row, provider_expectations)
 
@@ -320,7 +336,10 @@ def validate(lockfile: Lockfile, *, arch: str, policy: LockPolicy | None = None)
             direct_package in direct_row_seen,
             f"{lockfile.path}: direct RPM entry has no matching package row: {direct_package}",
         )
-    _require(final_rows == len(REQUIRED_FINAL_NAMES), f"{lockfile.path}: expected 15 final runtime RPMs, got {final_rows}")
+    _require(
+        final_rows == len(REQUIRED_FINAL_NAMES),
+        f"{lockfile.path}: expected 15 final runtime RPMs, got {final_rows}",
+    )
     for name in REQUIRED_FINAL_NAMES:
         _require(name in final_seen, f"{lockfile.path}: missing final runtime RPM {name}")
     _require(
@@ -382,7 +401,10 @@ def _validate_direct_entry(path: Path, entry: DirectRpm, seen: set[str]) -> None
         entry.url.startswith("https://cdn-ubi.redhat.com/"),
         f"{path}: direct RPM source must be cdn-ubi.redhat.com for {entry.package}: {entry.url}",
     )
-    _require(HEX64.fullmatch(entry.sha256) is not None, f"{path}: invalid direct RPM sha256 for {entry.package}: {entry.sha256}")
+    _require(
+        HEX64.fullmatch(entry.sha256) is not None,
+        f"{path}: invalid direct RPM sha256 for {entry.package}: {entry.sha256}",
+    )
     seen.add(entry.package)
 
 
@@ -439,19 +461,19 @@ def direct_rpms(lockfile: Lockfile) -> list[tuple[str, str, str]]:
 
 def _policy_from_args(args: argparse.Namespace) -> LockPolicy:
     return LockPolicy.from_repo().with_overrides(
-        source_date_epoch=getattr(args, "source_date_epoch", None),
-        openssl_fips_provider_nevra=getattr(args, "openssl_fips_provider_nevra", None),
-        openssl_fips_provider_rpm_base_url=getattr(args, "openssl_fips_provider_rpm_base_url", None),
-        openssl_fips_provider_rpm_sha256_x86_64=getattr(args, "openssl_fips_provider_rpm_sha256_x86_64", None),
-        openssl_fips_provider_rpm_sha256_aarch64=getattr(args, "openssl_fips_provider_rpm_sha256_aarch64", None),
-        openssl_fips_provider_so_rpm_sha256_x86_64=getattr(args, "openssl_fips_provider_so_rpm_sha256_x86_64", None),
-        openssl_fips_provider_so_rpm_sha256_aarch64=getattr(args, "openssl_fips_provider_so_rpm_sha256_aarch64", None),
+        source_date_epoch=args.source_date_epoch,
+        openssl_fips_provider_nevra=args.openssl_fips_provider_nevra,
+        openssl_fips_provider_rpm_base_url=args.openssl_fips_provider_rpm_base_url,
+        openssl_fips_provider_rpm_sha256_x86_64=args.openssl_fips_provider_rpm_sha256_x86_64,
+        openssl_fips_provider_rpm_sha256_aarch64=args.openssl_fips_provider_rpm_sha256_aarch64,
+        openssl_fips_provider_so_rpm_sha256_x86_64=args.openssl_fips_provider_so_rpm_sha256_x86_64,
+        openssl_fips_provider_so_rpm_sha256_aarch64=args.openssl_fips_provider_so_rpm_sha256_aarch64,
     )
 
 
 def _validated_lockfile(args: argparse.Namespace) -> Lockfile:
-    lockfile = parse(getattr(args, "lockfile"))
-    validate(lockfile, arch=getattr(args, "arch"), policy=_policy_from_args(args))
+    lockfile = parse(args.lockfile)
+    validate(lockfile, arch=args.arch, policy=_policy_from_args(args))
     return lockfile
 
 
@@ -462,7 +484,7 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
 def _cmd_floor(args: argparse.Namespace) -> int:
     lockfile = _validated_lockfile(args)
-    field = getattr(args, "field")
+    field = args.field
     for row in lockfile.rows:
         if row.final_rpmdb != "yes":
             continue
@@ -540,10 +562,13 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+CommandHandler = Callable[[argparse.Namespace], int]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
-    handler = getattr(args, "handler")
+    handler = cast(CommandHandler, args.handler)
     try:
         return handler(args)
     except LockError as exc:

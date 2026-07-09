@@ -1498,7 +1498,8 @@ def rpmlock_summary(relative_path: str, platform_arch: str) -> dict[str, Any]:
 
 def summary_records(summary: dict[str, Any], key: str, relative_path: str) -> list[dict[str, str]]:
     value = summary.get(key)
-    require(isinstance(value, list), f"{relative_path}: rpmlock summary {key} must be a list")
+    if not isinstance(value, list):
+        raise VerifyError(f"{relative_path}: rpmlock summary {key} must be a list")
     records: list[dict[str, str]] = []
     for index, item in enumerate(value):
         require(isinstance(item, dict), f"{relative_path}: rpmlock summary {key}[{index}] must be an object")
@@ -1547,7 +1548,10 @@ def check_rpm_locks() -> None:
 
         for row in rows:
             package = row["package"]
-            require(row["name"] in package, f"{relative_path}: package spec does not include name {row['name']}: {package}")
+            require(
+                row["name"] in package,
+                f"{relative_path}: package spec does not include name {row['name']}: {package}",
+            )
             url, rpm_sha256 = direct_pins[package]
             require(
                 url.startswith("https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/"),
@@ -1574,6 +1578,7 @@ def check_rpm_locks() -> None:
 
         final_names = {row["name"] for row in rows if row["final_rpmdb"] == "yes"}
         require(final_names == required_final, f"{relative_path}: final rpmdb set mismatch: {sorted(final_names)}")
+
 
 def check_scanner_install_scripts() -> None:
     trivy = read("tools/install-trivy.sh")
@@ -2299,7 +2304,10 @@ def check_lint_setup() -> None:
     ]:
         require(marker in precommit, f".pre-commit-config.yaml missing marker: {marker}")
     require(precommit.count("repo: local") == 1, ".pre-commit-config.yaml must carry exactly one local hook block")
-    require(precommit.count("pass_filenames: false") >= 2, ".pre-commit-config.yaml must keep mypy and rpmlock pytest filename-independent")
+    require(
+        precommit.count("pass_filenames: false") >= 2,
+        ".pre-commit-config.yaml must keep mypy and rpmlock pytest filename-independent",
+    )
 
     lint = read(".github/workflows/lint.yaml")
     for marker in [
