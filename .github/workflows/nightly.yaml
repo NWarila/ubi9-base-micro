@@ -148,6 +148,7 @@ jobs:
           python tools/assert-reproducible.py \
             --platform "${PLATFORM}" \
             --assert-byte-identical \
+            --expect-from-contract "contracts/image-manifest.json" \
             --report "dist/reproducibility/base-micro.${ARCH}.reproducibility.json" \
             --summary "dist/reproducibility/base-micro.${ARCH}.reproducibility.txt" \
             --workdir "dist/reproducibility/work.${ARCH}"

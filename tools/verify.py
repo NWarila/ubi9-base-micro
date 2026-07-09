@@ -12,6 +12,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, cast
 
@@ -71,6 +72,19 @@ COMMUNITY_PROFILE_FILES = [
     ".github/ISSUE_TEMPLATE/config.yml",
     ".github/ISSUE_TEMPLATE/feature_request.yml",
     ".github/pull_request_template.md",
+]
+DOCKERFILE_FORBIDDEN_MARKERS = [
+    "rm -rf /rootfs/var/lib/rpm",
+    "rm -rf /var/lib/rpm",
+    "ghcr.io/nwarila-" + "platform",
+    "fips" + "install",
+    "OPENSSL_FIPS_PROVIDER_NEVRA=openssl-fips-provider-so-3.0.7-8.el9.x86_64",
+    "OPENSSL_FIPS_MODULE_VERSION_AMD64",
+    "OPENSSL_FIPS_PROVIDER_NEVRA_AMD64",
+    "OPENSSL_FIPS_MODULE_VERSION_ARM64",
+    "OPENSSL_FIPS_PROVIDER_NEVRA_ARM64",
+    "openssl-fips-provider-so-3.0.7-11.el9_8",
+    "3.0.7-cda111b5812c30d4",
 ]
 REPO_ADRS = [
     (
@@ -792,6 +806,43 @@ def check_renovate_config() -> None:
     require(ubi_rule_found, "Renovate config must group UBI minimal and micro digest refreshes")
 
 
+def collect_dockerfile_forbidden_sources(root: Path = ROOT) -> list[tuple[str, str]]:
+    paths = [root / "containers/Dockerfile"]
+    scripts_dir = root / "containers/scripts"
+    if scripts_dir.is_dir():
+        paths.extend(sorted(scripts_dir.glob("*.sh")))
+
+    sources: list[tuple[str, str]] = []
+    for path in paths:
+        relative_path = str(path.relative_to(root))
+        require(path.is_file(), f"missing required forbidden-scan source: {relative_path}")
+        sources.append((relative_path, path.read_text(encoding="utf-8")))
+    return sources
+
+
+def find_dockerfile_forbidden_markers(sources: list[tuple[str, str]]) -> list[str]:
+    findings: list[str] = []
+    for source, text in sources:
+        findings.extend(f"{source}: {marker}" for marker in DOCKERFILE_FORBIDDEN_MARKERS if marker in text)
+    return findings
+
+
+def check_dockerfile_forbidden_scan_self_test() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        dockerfile = tmp_path / "containers/Dockerfile"
+        script = tmp_path / "containers/scripts/strip.sh"
+        script.parent.mkdir(parents=True)
+        dockerfile.parent.mkdir(parents=True, exist_ok=True)
+        dockerfile.write_text("FROM scratch\n", encoding="utf-8")
+        script.write_text("rm -rf /rootfs/var/lib/rpm\n", encoding="utf-8")
+        findings = find_dockerfile_forbidden_markers(collect_dockerfile_forbidden_sources(tmp_path))
+    require(
+        findings == ["containers/scripts/strip.sh: rm -rf /rootfs/var/lib/rpm"],
+        "forbidden marker scan must cover containers/scripts/*.sh fixtures",
+    )
+
+
 def check_dockerfile() -> None:
     text = read("containers/Dockerfile")
     required = [
@@ -898,21 +949,8 @@ def check_dockerfile() -> None:
             continue
         require("@sha256:" in line, f"Dockerfile FROM must be digest-pinned: {line}")
 
-    forbidden = [
-        "rm -rf /rootfs/var/lib/rpm",
-        "rm -rf /var/lib/rpm",
-        "ghcr.io/nwarila-" + "platform",
-        "fips" + "install",
-        "OPENSSL_FIPS_PROVIDER_NEVRA=openssl-fips-provider-so-3.0.7-8.el9.x86_64",
-        "OPENSSL_FIPS_MODULE_VERSION_AMD64",
-        "OPENSSL_FIPS_PROVIDER_NEVRA_AMD64",
-        "OPENSSL_FIPS_MODULE_VERSION_ARM64",
-        "OPENSSL_FIPS_PROVIDER_NEVRA_ARM64",
-        "openssl-fips-provider-so-3.0.7-11.el9_8",
-        "3.0.7-cda111b5812c30d4",
-    ]
-    present = [marker for marker in forbidden if marker in text]
-    require(not present, "Dockerfile contains forbidden marker(s): " + ", ".join(present))
+    present = find_dockerfile_forbidden_markers(collect_dockerfile_forbidden_sources())
+    require(not present, "Dockerfile/script contains forbidden marker(s): " + ", ".join(present))
 
 
 def check_workflow() -> None:
@@ -989,6 +1027,8 @@ def check_workflow() -> None:
         "platform: linux/amd64",
         "platform: linux/arm64",
         "--assert-byte-identical",
+        "--expect-from-contract",
+        "contracts/image-manifest.json",
         "dist/reproducibility/base-micro.${ARCH}.reproducibility.json",
         "Run full test-only gate set",
         "tools/run-test-gates.sh",
@@ -1022,6 +1062,8 @@ def check_workflow() -> None:
         "platform: linux/amd64",
         "platform: linux/arm64",
         "--assert-byte-identical",
+        "--expect-from-contract",
+        "contracts/image-manifest.json",
         "dist/reproducibility/base-micro.${ARCH}.reproducibility.json",
         "Run full test-only gate set",
         "tools/run-test-gates.sh",
@@ -2369,6 +2411,7 @@ def main() -> int:
         check_community_profile,
         check_renovate_config,
         check_dockerfile,
+        check_dockerfile_forbidden_scan_self_test,
         check_rpm_locks,
         check_workflow,
         check_supply_chain_workflows,
