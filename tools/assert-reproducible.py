@@ -754,10 +754,7 @@ def run_self_test() -> None:
         ):
             raise ReproError("self-test expected contract assertion to pass")
 
-        if (
-            run_main_silently([*common_args, "--expect-rootfs-digest", flipped_sha256(rootfs_digest)])
-            == 0
-        ):
+        if run_main_silently([*common_args, "--expect-rootfs-digest", flipped_sha256(rootfs_digest)]) == 0:
             raise ReproError("self-test expected rootfs digest mismatch to fail")
 
         if run_main_silently([*common_args, "--expect-from-contract", str(tmp_path / "missing.json")]) == 0:
