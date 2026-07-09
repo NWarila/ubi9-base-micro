@@ -298,6 +298,17 @@ def validate_image_contract_invariants(manifest: dict[str, Any]) -> None:
     require(len(architectures) == len(set(architectures)), "image contract architectures must be unique")
     fips_arches = object_at(manifest, ("fips", "architectures"))
     require(set(fips_arches) == set(architectures), "image contract FIPS architectures must match architectures")
+    repro = object_at(manifest, ("reproducibility",))
+    rootfs_digests = object_at(repro, ("canonical_rootfs_digest",))
+    rpmdb_digests = object_at(repro, ("rpmdb_sha256",))
+    require(
+        set(rootfs_digests) == set(architectures),
+        "image contract canonical rootfs digest architectures must match architectures",
+    )
+    require(
+        set(rpmdb_digests) == set(architectures),
+        "image contract rpmdb digest architectures must match architectures",
+    )
     require(
         string_at(manifest, ("fips", "provider_nevra")).startswith("openssl-fips-provider-so-"),
         "image contract FIPS provider must name openssl-fips-provider-so",
@@ -308,6 +319,14 @@ def validate_image_contract_invariants(manifest: dict[str, Any]) -> None:
             re.fullmatch(r"[0-9a-f]{64}", string_at(arch_contract, ("fips_so_sha256",))) is not None,
             f"image contract fips.so sha256 for {arch} must be 64 hex characters",
         )
+        for digest_name, digest_value in [
+            ("canonical rootfs", string_at(rootfs_digests, (arch,))),
+            ("rpmdb", string_at(rpmdb_digests, (arch,))),
+        ]:
+            require(
+                re.fullmatch(r"[0-9a-f]{64}", digest_value) is not None,
+                f"image contract {digest_name} sha256 for {arch} must be 64 hex characters",
+            )
     require(string_list_at(manifest, ("runtime", "package_floor")), "runtime package floor must not be empty")
     require(int_at(manifest, ("runtime", "footprint_limit_bytes")) > 0, "footprint limit must be positive")
     require(
@@ -2095,9 +2114,14 @@ def check_docs() -> None:
     for marker in [
         "SOURCE_DATE_EPOCH=1704067200",
         "tools/assert-reproducible.py --assert-byte-identical",
+        "--expect-from-contract",
         "rewrite-timestamp=true",
         "docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130",
         "emulator-relative",
+        "contracts/image-manifest.json",
+        "canonical_rootfs_digest",
+        "rpmdb_sha256",
+        "path|type|mode|uid|gid|uname|gname|mtime|size|linkname|sha256",
         "rpm-lock/",
         "linux/amd64",
         "linux/arm64",
@@ -2109,7 +2133,6 @@ def check_docs() -> None:
         "Refresh runtime RPM lockfiles",
         "direct CDN RPM URLs",
         "rpm -Uvh",
-        "33c07782",
     ]:
         require(marker in reproducibility_doc, f"docs/explanation/reproducibility.md missing marker: {marker}")
     require(

@@ -9,6 +9,7 @@
     "architectures",
     "fips",
     "runtime",
+    "reproducibility",
     "provenance"
   ],
   "additionalProperties": false,
@@ -108,6 +109,52 @@
         "footprint_limit_bytes": {
           "type": "integer",
           "minimum": 1
+        }
+      }
+    },
+    "reproducibility": {
+      "type": "object",
+      "required": [
+        "canonical_rootfs_digest",
+        "rpmdb_sha256"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "canonical_rootfs_digest": {
+          "type": "object",
+          "required": [
+            "amd64",
+            "arm64"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "amd64": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "arm64": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "rpmdb_sha256": {
+          "type": "object",
+          "required": [
+            "amd64",
+            "arm64"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "amd64": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "arm64": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
         }
       }
     },
