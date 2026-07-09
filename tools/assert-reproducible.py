@@ -353,9 +353,7 @@ def assert_expectations(builds: list[dict[str, object]], checks: list[tuple[str,
                     raise ReproError(f"{fact_key} is uncomputable for {side}: missing {RPMDB_PATH}")
                 raise ReproError(f"{fact_key} is uncomputable for {side}")
             if actual != expected:
-                raise ReproError(
-                    f"{fact_key} mismatch for {side}: expected {expected} from {source}, actual {actual}"
-                )
+                raise ReproError(f"{fact_key} mismatch for {side}: expected {expected} from {source}, actual {actual}")
 
 
 def first_diff(left: bytes, right: bytes) -> dict[str, object]:
