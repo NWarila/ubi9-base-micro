@@ -34,6 +34,7 @@ line-ending = "lf"
 [tool.mypy]
 python_version = "3.12"
 files = ["tools"]
+explicit_package_bases = true
 strict = true
 warn_unused_ignores = true
 warn_redundant_casts = true

@@ -543,6 +543,8 @@ def check_required_files() -> None:
         "tools/assert-reproducible.py",
         "tools/assert-rpm-lock-hashes.sh",
         "tools/fetch-runtime-rpms.sh",
+        "tools/rpmlock.py",
+        "tools/tests/test_rpmlock.py",
         "tools/generate-rpm-lock.sh",
         "tools/install-syft.sh",
         "tools/install-trivy.sh",
@@ -1466,6 +1468,49 @@ def check_sbom_assertion_script() -> None:
         require(marker in phantom, f"phantom package guard missing marker: {marker}")
 
 
+def rpmlock_summary(relative_path: str, platform_arch: str) -> dict[str, Any]:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools/rpmlock.py"),
+            "summary",
+            "--lockfile",
+            str(ROOT / relative_path),
+            "--arch",
+            platform_arch,
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    require(
+        result.returncode == 0,
+        f"tools/rpmlock.py summary failed for {relative_path}:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
+    )
+    try:
+        loaded = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise VerifyError(f"tools/rpmlock.py emitted invalid JSON for {relative_path}: {exc}") from exc
+    require(isinstance(loaded, dict), f"tools/rpmlock.py summary for {relative_path} must be a JSON object")
+    return cast(dict[str, Any], loaded)
+
+
+def summary_records(summary: dict[str, Any], key: str, relative_path: str) -> list[dict[str, str]]:
+    value = summary.get(key)
+    if not isinstance(value, list):
+        raise VerifyError(f"{relative_path}: rpmlock summary {key} must be a list")
+    records: list[dict[str, str]] = []
+    for index, item in enumerate(value):
+        require(isinstance(item, dict), f"{relative_path}: rpmlock summary {key}[{index}] must be an object")
+        require(
+            all(isinstance(field, str) and isinstance(field_value, str) for field, field_value in item.items()),
+            f"{relative_path}: rpmlock summary {key}[{index}] must contain only string fields",
+        )
+        records.append(cast(dict[str, str], item))
+    return records
+
+
 def check_rpm_locks() -> None:
     required_final = runtime_package_floor()
     expected_arch = {arch: fips_rpm_arch(arch) for arch in image_architectures()}
@@ -1477,7 +1522,9 @@ def check_rpm_locks() -> None:
     fips_provider_nvr = fips_provider_nevra()[len("openssl-fips-provider-so-") :]
     for platform_arch, rpm_arch in expected_arch.items():
         relative_path = f"rpm-lock/runtime.{platform_arch}.txt"
-        lock_text = read(relative_path)
+        summary = rpmlock_summary(relative_path, platform_arch)
+        rows = summary_records(summary, "rows", relative_path)
+        direct_rows = summary_records(summary, "direct_rpms", relative_path)
         provider_sha, provider_so_sha = expected_direct_sha[platform_arch]
         expected_provider_package = f"openssl-fips-provider-{fips_provider_nvr}.{rpm_arch}"
         expected_provider_so_package = f"{fips_provider_nevra()}.{rpm_arch}"
@@ -1487,62 +1534,12 @@ def check_rpm_locks() -> None:
         expected_provider_so_url = (
             f"{OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}/{rpm_arch}/baseos/os/Packages/o/{expected_provider_so_package}.rpm"
         )
-        direct_pins: dict[str, tuple[str, str]] = {}
-        rows: list[dict[str, str]] = []
-
-        for raw in lock_text.splitlines():
-            if raw.startswith("# direct_rpm: "):
-                parts = raw.removeprefix("# direct_rpm: ").split("|")
-                require(len(parts) == 3, f"{relative_path}: malformed direct RPM pin: {raw}")
-                package, url, rpm_sha256 = parts
-                require(package, f"{relative_path}: direct RPM pin has empty package: {raw}")
-                require(package not in direct_pins, f"{relative_path}: duplicate direct RPM pin: {package}")
-                require(
-                    url.startswith("https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/"),
-                    f"{relative_path}: direct RPM URL must use cdn-ubi.redhat.com: {url}",
-                )
-                require(
-                    "/baseos/os/Packages/" in url or "/appstream/os/Packages/" in url,
-                    f"{relative_path}: direct RPM URL must name baseos or appstream Packages path: {url}",
-                )
-                require(
-                    len(rpm_sha256) == 64 and all(c in "0123456789abcdef" for c in rpm_sha256),
-                    f"{relative_path}: invalid direct RPM sha256 for {package}",
-                )
-                direct_pins[package] = (url, rpm_sha256)
-                continue
-            if not raw or raw.startswith("#"):
-                continue
-            parts = raw.split("|")
-            require(len(parts) == 9, f"{relative_path}: malformed lock row: {raw}")
-            package, final_rpmdb, name, epoch, version, release, arch, sha256_header, sigmd5 = parts
-            require(final_rpmdb in {"yes", "no"}, f"{relative_path}: invalid final_rpmdb for {package}")
-            require(arch in {"noarch", rpm_arch}, f"{relative_path}: invalid arch for {package}: {arch}")
-            require(
-                len(sha256_header) == 64 and all(c in "0123456789abcdef" for c in sha256_header),
-                f"{relative_path}: invalid SHA256HEADER for {package}",
-            )
-            require(
-                len(sigmd5) == 32 and all(c in "0123456789abcdef" for c in sigmd5),
-                f"{relative_path}: invalid SIGMD5 for {package}",
-            )
-            require(name in package, f"{relative_path}: package spec does not include name {name}: {package}")
-            require(epoch.isdigit(), f"{relative_path}: epoch must be numeric for {package}")
-            require(version and release, f"{relative_path}: missing version/release for {package}")
-            rows.append(
-                {
-                    "package": package,
-                    "final_rpmdb": final_rpmdb,
-                    "name": name,
-                    "version": version,
-                    "release": release,
-                    "arch": arch,
-                }
-            )
 
         packages = [row["package"] for row in rows]
         require(len(packages) == len(set(packages)), f"{relative_path}: duplicate package rows")
         require(len(packages) == 38, f"{relative_path}: expected 38 transaction RPMs, got {len(packages)}")
+        require(len(direct_rows) == len(packages), f"{relative_path}: direct RPM pin count must match package rows")
+        direct_pins = {direct["package"]: (direct["url"], direct["sha256"]) for direct in direct_rows}
         require(set(direct_pins) == set(packages), f"{relative_path}: direct RPM pin set must match package rows")
         require(
             expected_provider[platform_arch] in packages,
@@ -1551,11 +1548,22 @@ def check_rpm_locks() -> None:
 
         for row in rows:
             package = row["package"]
-            url, rpm_sha256 = direct_pins[package]
-            expected_filename = f"{row['name']}-{row['version']}-{row['release']}.{row['arch']}.rpm"
             require(
-                url.endswith(f"/{expected_filename}"),
-                f"{relative_path}: direct RPM URL filename mismatch for {package}",
+                row["name"] in package,
+                f"{relative_path}: package spec does not include name {row['name']}: {package}",
+            )
+            url, rpm_sha256 = direct_pins[package]
+            require(
+                url.startswith("https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/"),
+                f"{relative_path}: direct RPM URL must use cdn-ubi.redhat.com: {url}",
+            )
+            require(
+                "/baseos/os/Packages/" in url or "/appstream/os/Packages/" in url,
+                f"{relative_path}: direct RPM URL must name baseos or appstream Packages path: {url}",
+            )
+            require(
+                len(rpm_sha256) == 64 and all(c in "0123456789abcdef" for c in rpm_sha256),
+                f"{relative_path}: invalid direct RPM sha256 for {package}",
             )
             if package == expected_provider_package:
                 require(
@@ -2270,6 +2278,7 @@ def check_lint_setup() -> None:
         "id: mypy",
         "pass_filenames: false",
         "args: [--config-file=pyproject.toml, tools]",
+        "additional_dependencies: [pytest==8.4.1]",
         "repo: https://github.com/adrienverge/yamllint",
         f"rev: {YAMLLINT_HOOK_REV}",
         "id: yamllint",
@@ -2286,9 +2295,19 @@ def check_lint_setup() -> None:
         "repo: https://github.com/rhysd/actionlint",
         f"rev: {ACTIONLINT_HOOK_REV}",
         "id: actionlint",
+        "repo: local",
+        "id: rpmlock-pytest",
+        "name: rpmlock pytest",
+        "entry: python -m pytest tools/tests/test_rpmlock.py -q",
+        "language: python",
+        "always_run: true",
     ]:
         require(marker in precommit, f".pre-commit-config.yaml missing marker: {marker}")
-    require("repo: local" not in precommit, ".pre-commit-config.yaml must use pinned upstream hook repos")
+    require(precommit.count("repo: local") == 1, ".pre-commit-config.yaml must carry exactly one local hook block")
+    require(
+        precommit.count("pass_filenames: false") >= 2,
+        ".pre-commit-config.yaml must keep mypy and rpmlock pytest filename-independent",
+    )
 
     lint = read(".github/workflows/lint.yaml")
     for marker in [
