@@ -18,6 +18,16 @@ field is octal, and the final field is empty for entries without file or link
 content. This keeps the digest tied to rootfs content and metadata rather than
 Python `tarfile` archive encoding.
 
+`canonical_rootfs_digest` is asserted at the scope of this repository's pinned
+CI builder path: Docker Buildx with `rewrite-timestamp=true`. Because the line
+format includes entry metadata (`uname`, `gname`, and `mtime`) along with file
+content, a different builder such as buildah or kaniko can export
+byte-identical file contents while producing a different
+`canonical_rootfs_digest`. The builder-portable checks available today are the
+per-file content digests recorded in the contract, specifically `rpmdb_sha256`
+for `/var/lib/rpm/rpmdb.sqlite` and `fips_so_sha256` for
+`/usr/lib64/ossl-modules/fips.so`.
+
 The arm64 proof intentionally uses QEMU on the GitHub-hosted amd64 runner because
 that is the same architecture path used by the publish workflow. Native arm64
 hosted runners would be a cleaner fallback if QEMU ever produces a byte diff, but
