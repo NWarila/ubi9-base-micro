@@ -30,6 +30,27 @@ esac
 bash tools/install-syft.sh
 bash tools/install-trivy.sh
 bash tools/install-grype.sh
+
+scanner_db_max_age_days="${SCANNER_DB_MAX_AGE_DAYS:-7}"
+case "${scanner_db_max_age_days}" in
+  "" | *[!0-9]*)
+    echo "SCANNER_DB_MAX_AGE_DAYS must be a positive integer, got: ${scanner_db_max_age_days}" >&2
+    exit 1
+    ;;
+  *) ;;
+esac
+if ((scanner_db_max_age_days < 1)); then
+  echo "SCANNER_DB_MAX_AGE_DAYS must be at least 1" >&2
+  exit 1
+fi
+
+dist/tools/trivy image --download-db-only
+dist/tools/grype db update
+python tools/assert-scanner-db-freshness.py --max-age-days "${scanner_db_max_age_days}"
+
+export GRYPE_DB_VALIDATE_AGE=true
+export GRYPE_DB_MAX_ALLOWED_BUILT_AGE="$((scanner_db_max_age_days * 24))h"
+
 bash tools/install-openscap.sh
 bash tools/build-stig-datastream.sh
 

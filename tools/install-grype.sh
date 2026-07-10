@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-version="${GRYPE_VERSION:-0.87.0}"
+version="${GRYPE_VERSION:-0.115.0}"
 dest="${1:-dist/tools}"
 tmp_dir="$(mktemp -d)"
 
