@@ -36,6 +36,8 @@ is tracked under `[Unreleased]`.
   preserved rpmdb, CA trust, and non-root `USER 65532:65532`.
 - Module-scoped OpenSSL FIPS provider approved-mode evidence, with per-
   architecture scope recorded in the documentation.
+- Runtime RPM locks refreshed for the shipped UBI 9 glibc errata, with the
+  refreshed byte-for-byte reproducibility baseline recorded in the image
+  contract.
 - Coordinated vulnerability reporting through GitHub private vulnerability
   reporting.
-
