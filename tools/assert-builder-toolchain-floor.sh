@@ -8,7 +8,7 @@
 set -euo pipefail
 
 usage() {
-  cat >&2 <<'EOF'
+  cat >&2 << 'EOF'
 usage: assert-builder-toolchain-floor.sh --before SNAPSHOT --after SNAPSHOT
 EOF
 }
@@ -79,7 +79,7 @@ load_snapshot() {
       return 1
     }
     values["${package}"]="${nevra}"
-  done <"${path}"
+  done < "${path}"
 }
 
 load_snapshot "${before}" before_nevra

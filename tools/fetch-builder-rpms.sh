@@ -8,7 +8,7 @@
 set -euo pipefail
 
 usage() {
-  cat >&2 <<'EOF'
+  cat >&2 << 'EOF'
 usage: fetch-builder-rpms.sh --targetarch amd64|arm64 --lockfile LOCKFILE --dest DIR
 EOF
 }
@@ -62,7 +62,7 @@ esac
 
 mkdir -p "${dest}"
 manifest="${dest%/}/direct-builder-rpms.lock"
-: >"${manifest}"
+: > "${manifest}"
 
 rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
 
@@ -75,7 +75,7 @@ while IFS= read -r line; do
   case "${line}" in
     "# direct_rpm: "*)
       direct_payload="${line#\# direct_rpm: }"
-      IFS='|' read -r direct_package direct_url direct_sha direct_extra <<<"${direct_payload}"
+      IFS='|' read -r direct_package direct_url direct_sha direct_extra <<< "${direct_payload}"
       if [[ -n "${direct_extra:-}" || -z "${direct_package}" || -z "${direct_url}" || -z "${direct_sha}" ]]; then
         echo "invalid direct builder RPM lock entry: ${line}" >&2
         exit 1
@@ -97,7 +97,7 @@ while IFS= read -r line; do
       ;;
     *) ;;
   esac
-done <"${lockfile}"
+done < "${lockfile}"
 
 fetch_one() {
   local package="$1"
@@ -150,7 +150,7 @@ fetch_one() {
   fi
 
   direct_rpm_seen["${package}"]=1
-  printf '# direct_rpm: %s|%s|%s\n' "${package}" "${url}" "${expected_sha}" >>"${manifest}"
+  printf '# direct_rpm: %s|%s|%s\n' "${package}" "${url}" "${expected_sha}" >> "${manifest}"
 }
 
 while IFS='|' read -r package name epoch version release arch sha256_header sigmd5 extra; do
@@ -181,7 +181,7 @@ while IFS='|' read -r package name epoch version release arch sha256_header sigm
   fi
   row_seen["${package}"]=1
   fetch_one "${package}" "${name}" "${epoch}" "${version}" "${release}" "${arch}" "${sha256_header}" "${sigmd5}"
-done <"${lockfile}"
+done < "${lockfile}"
 
 for direct_package in "${!direct_rpm_sha[@]}"; do
   [[ -n "${direct_rpm_seen[${direct_package}]+set}" ]] || {
