@@ -603,6 +603,7 @@ def check_required_files() -> None:
         "stig/rhel9-base-micro-tailoring.xml",
         "stig/tailoring-justifications.json",
         "vex/.gitkeep",
+        "vex/cve-2026-31790.openvex.json",
         "vex/README.md",
     ]:
         require((ROOT / relative_path).is_file(), f"missing required file: {relative_path}")
@@ -1881,7 +1882,66 @@ def check_vex() -> None:
     require("/vex/ @NWarila" in codeowners, "CODEOWNERS must gate vex/ with @NWarila")
 
     read("vex/README.md")
-    require((ROOT / "vex/.gitkeep").is_file(), "vex/.gitkeep must preserve the empty VEX directory")
+    require((ROOT / "vex/.gitkeep").is_file(), "vex/.gitkeep must remain present")
+
+    vex_path = "vex/cve-2026-31790.openvex.json"
+    vex = load_json_object(vex_path)
+    require(vex.get("@context") == "https://openvex.dev/ns/v0.2.0", f"{vex_path} must use OpenVEX v0.2.0")
+    require(
+        vex.get("@id") == "https://github.com/NWarila/ubi9-base-micro/vex/cve-2026-31790",
+        f"{vex_path} must carry its stable document IRI",
+    )
+    require(vex.get("author") == "NWarila", f"{vex_path} must identify the human author")
+    require(vex.get("timestamp") == "2026-07-10T00:00:00Z", f"{vex_path} must pin its issue timestamp")
+    require(vex.get("version") == 1, f"{vex_path} must start at version 1")
+
+    raw_statements = vex.get("statements")
+    require(isinstance(raw_statements, list) and len(raw_statements) == 1, f"{vex_path} must contain one statement")
+    statements = cast(list[Any], raw_statements)
+    require(isinstance(statements[0], dict), f"{vex_path} statement must be an object")
+    statement = cast(dict[str, Any], statements[0])
+    require(
+        statement.get("vulnerability") == {"name": "CVE-2026-31790"},
+        f"{vex_path} must identify CVE-2026-31790",
+    )
+    require(statement.get("status") == "affected", f"{vex_path} status must remain affected")
+    require(
+        statement.get("action_statement_timestamp") == "2026-07-10T00:00:00Z",
+        f"{vex_path} action statement timestamp must match its issue date",
+    )
+    raw_action_statement = statement.get("action_statement")
+    require(
+        isinstance(raw_action_statement, str) and raw_action_statement.strip(),
+        f"{vex_path} requires mitigation guidance",
+    )
+    action_statement = cast(str, raw_action_statement)
+    for marker in ["3.0.7-8.el9", "TD-6", "2026-10-10", "CMVP #4857"]:
+        require(marker in action_statement, f"{vex_path} action statement missing policy marker: {marker}")
+
+    raw_products = statement.get("products")
+    require(isinstance(raw_products, list) and len(raw_products) == 1, f"{vex_path} must identify one base product")
+    products = cast(list[Any], raw_products)
+    require(isinstance(products[0], dict), f"{vex_path} product must be an object")
+    product = cast(dict[str, Any], products[0])
+    require(product.get("@id") == "pkg:oci/ubi9-base-micro", f"{vex_path} must identify the base image")
+    require(
+        product.get("identifiers") == {"purl": "pkg:oci/ubi9-base-micro"},
+        f"{vex_path} base product purl must match its identifier",
+    )
+    raw_subcomponents = product.get("subcomponents")
+    require(isinstance(raw_subcomponents, list), f"{vex_path} must identify affected subcomponents")
+    subcomponents = cast(list[Any], raw_subcomponents)
+    subcomponent_ids = {
+        item.get("@id") for item in subcomponents if isinstance(item, dict) and isinstance(item.get("@id"), str)
+    }
+    require(
+        subcomponent_ids
+        == {
+            "pkg:rpm/redhat/openssl-fips-provider@3.0.7-8.el9",
+            "pkg:rpm/redhat/openssl-fips-provider-so@3.0.7-8.el9",
+        },
+        f"{vex_path} must scope the affected statement to both held provider packages",
+    )
 
     script = read("tools/assert-vex.py")
     for marker in [
@@ -1907,6 +1967,33 @@ def check_vex() -> None:
         f"cosign attest --type {predicate_type('openvex')}",
     ]:
         require(marker in vex_readme, f"vex/README.md missing marker: {marker}")
+
+    with tempfile.TemporaryDirectory(prefix="verify-openvex-") as raw_tmp:
+        tmp = Path(raw_tmp)
+        trivy_json = tmp / "trivy.json"
+        grype_json = tmp / "grype.json"
+        trivy_json.write_text('{"Results": []}\n', encoding="utf-8")
+        grype_json.write_text('{"matches": []}\n', encoding="utf-8")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "tools/assert-vex.py"),
+                "--product",
+                "ghcr.io/nwarila/ubi9-base-micro@sha256:" + ("0" * 64),
+                "--trivy-json",
+                str(trivy_json),
+                "--grype-json",
+                str(grype_json),
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    require(
+        result.returncode == 0 and "unfixed HIGH/CRITICAL findings requiring VEX: 0" in result.stdout,
+        f"committed OpenVEX document failed assert-vex.py:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
+    )
 
 
 def check_nist_800_190_scripts() -> None:
