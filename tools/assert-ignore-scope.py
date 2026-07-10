@@ -285,9 +285,7 @@ def validate_trivy(document: dict[str, Any], today: date) -> frozenset[tuple[str
             purl = text_value(raw_purl, f"{label}.purls[{purl_index}]")
             match = PURL_PATTERN.fullmatch(purl)
             if match is None:
-                fail(
-                    f"{label}.purls[{purl_index}] must be an exact qualifier-free Red Hat rpm purl with name+version"
-                )
+                fail(f"{label}.purls[{purl_index}] must be an exact qualifier-free Red Hat rpm purl with name+version")
             package = match.group("package")
             version = match.group("version")
             if version != ALLOWED_VERSION:
@@ -361,9 +359,7 @@ def validate_grype_report(path: Path) -> list[tuple[str, str, str]]:
                 policy_rules.append(rule)
                 continue
             if set(rule) != {"namespace", "fix-state"} or not isinstance(rule["fix-state"], str):
-                fail(
-                    f"grype ignoredMatches[{index}].appliedIgnoreRules[{rule_index}] has an unknown rule shape"
-                )
+                fail(f"grype ignoredMatches[{index}].appliedIgnoreRules[{rule_index}] has an unknown rule shape")
         if not policy_rules:
             continue
         if len(policy_rules) != 1:
@@ -380,9 +376,7 @@ def validate_grype_report(path: Path) -> list[tuple[str, str, str]]:
             {"vulnerability", "reason", "namespace", "package"},
             f"grype ignoredMatches[{index}].appliedIgnoreRules[0]",
         )
-        grype_reason_date(
-            rule["reason"], f"grype ignoredMatches[{index}].appliedIgnoreRules[0].reason", REVIEW_DATE
-        )
+        grype_reason_date(rule["reason"], f"grype ignoredMatches[{index}].appliedIgnoreRules[0].reason", REVIEW_DATE)
         rule_package = mapping(rule.get("package"), f"grype ignoredMatches[{index}].appliedIgnoreRules[0].package")
         require_keys(
             rule_package,
@@ -392,7 +386,9 @@ def validate_grype_report(path: Path) -> list[tuple[str, str, str]]:
         rule_values = (
             text_value(rule.get("vulnerability"), f"grype ignoredMatches[{index}].appliedIgnoreRules[0].vulnerability"),
             text_value(rule_package.get("name"), f"grype ignoredMatches[{index}].appliedIgnoreRules[0].package.name"),
-            text_value(rule_package.get("version"), f"grype ignoredMatches[{index}].appliedIgnoreRules[0].package.version"),
+            text_value(
+                rule_package.get("version"), f"grype ignoredMatches[{index}].appliedIgnoreRules[0].package.version"
+            ),
         )
         finding = (cve, package, version)
         if rule_values != finding:
@@ -401,9 +397,7 @@ def validate_grype_report(path: Path) -> list[tuple[str, str, str]]:
     if len(applied) != len(set(applied)):
         fail("grype gate report contains duplicate applied ignore findings")
     if frozenset(applied) != ALLOWED_TRIPLES:
-        fail(
-            f"grype gate applied ignores must be exactly {sorted(ALLOWED_TRIPLES)}, got {sorted(applied)}"
-        )
+        fail(f"grype gate applied ignores must be exactly {sorted(ALLOWED_TRIPLES)}, got {sorted(applied)}")
     return sorted(applied)
 
 
@@ -506,7 +500,7 @@ def run_self_test() -> None:
             ),
             "extra trivy CVE": TRIVY_FIXTURE.replace(ALLOWED_CVE, "CVE-2099-0001", 1),
             "extra trivy package": TRIVY_FIXTURE.replace("openssl-fips-provider-so", "openssl-libs"),
-            "wildcard trivy package": TRIVY_FIXTURE.replace("openssl-fips-provider-so", "openssl-*") ,
+            "wildcard trivy package": TRIVY_FIXTURE.replace("openssl-fips-provider-so", "openssl-*"),
             "wrong trivy version": TRIVY_FIXTURE.replace(ALLOWED_VERSION, "3.0.7-9.el9", 1),
             "expired trivy date": TRIVY_FIXTURE.replace("2026-10-10", "2020-01-01"),
             "malformed trivy YAML": "vulnerabilities:\n   - id: CVE-2026-31790\n",
@@ -528,9 +522,7 @@ def run_self_test() -> None:
         grype.write_text(GRYPE_FIXTURE, encoding="utf-8")
 
         expect_failure("missing trivy file", lambda: validate_ignore_files(root / "missing.yaml", grype, today))
-        expect_failure(
-            "review date elapsed", lambda: validate_ignore_files(trivy, grype, date(2026, 10, 11))
-        )
+        expect_failure("review date elapsed", lambda: validate_ignore_files(trivy, grype, date(2026, 10, 11)))
         report.write_text(json.dumps(grype_report_fixture(extra=True)), encoding="utf-8")
         expect_failure("extra runtime suppression", lambda: validate_grype_report(report))
         report.write_text("{", encoding="utf-8")
