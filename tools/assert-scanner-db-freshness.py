@@ -16,7 +16,7 @@ import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, NoReturn, cast
 
@@ -50,7 +50,7 @@ def fail(message: str) -> NoReturn:
 
 
 def format_timestamp(value: datetime) -> str:
-    return value.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return value.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def format_duration(value: timedelta) -> str:
@@ -87,7 +87,7 @@ def parse_rfc3339(value: object, field: str) -> datetime:
         raise ScannerDbFreshnessError(f"{field} is not parseable as RFC3339: {value!r}") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         fail(f"{field} must include a timezone offset")
-    return parsed.astimezone(timezone.utc)
+    return parsed.astimezone(UTC)
 
 
 def load_json_object(path: Path, label: str) -> dict[str, Any]:
@@ -241,7 +241,7 @@ def expect_failure(name: str, callback: Callable[[], object]) -> None:
 
 
 def run_self_test() -> None:
-    now = datetime(2026, 7, 10, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 10, 0, 0, tzinfo=UTC)
     max_age = timedelta(days=DEFAULT_MAX_AGE_DAYS)
     assert_databases(positive_grype(now), positive_trivy(now), now, max_age)
 
@@ -251,11 +251,15 @@ def run_self_test() -> None:
 
     old_trivy = positive_trivy(now)
     old_trivy["DownloadedAt"] = format_timestamp(now - timedelta(days=DEFAULT_MAX_AGE_DAYS + 1))
-    expect_failure("back-dated trivy DownloadedAt", lambda: assert_databases(positive_grype(now), old_trivy, now, max_age))
+    expect_failure(
+        "back-dated trivy DownloadedAt", lambda: assert_databases(positive_grype(now), old_trivy, now, max_age)
+    )
 
     expired_trivy = positive_trivy(now)
     expired_trivy["NextUpdate"] = format_timestamp(now - timedelta(minutes=1))
-    expect_failure("trivy NextUpdate in past", lambda: assert_databases(positive_grype(now), expired_trivy, now, max_age))
+    expect_failure(
+        "trivy NextUpdate in past", lambda: assert_databases(positive_grype(now), expired_trivy, now, max_age)
+    )
 
     invalid_grype = positive_grype(now)
     invalid_grype["valid"] = False
@@ -267,7 +271,9 @@ def run_self_test() -> None:
 
     missing_schema = positive_grype(now)
     del missing_schema["schemaVersion"]
-    expect_failure("missing grype schemaVersion", lambda: assert_databases(missing_schema, positive_trivy(now), now, max_age))
+    expect_failure(
+        "missing grype schemaVersion", lambda: assert_databases(missing_schema, positive_trivy(now), now, max_age)
+    )
 
     old_schema = positive_grype(now)
     old_schema["schemaVersion"] = 5
@@ -275,7 +281,9 @@ def run_self_test() -> None:
 
     bad_timestamp = positive_trivy(now)
     bad_timestamp["DownloadedAt"] = "not-a-time"
-    expect_failure("unparseable trivy timestamp", lambda: assert_databases(positive_grype(now), bad_timestamp, now, max_age))
+    expect_failure(
+        "unparseable trivy timestamp", lambda: assert_databases(positive_grype(now), bad_timestamp, now, max_age)
+    )
 
     missing_next_update = positive_trivy(now)
     del missing_next_update["NextUpdate"]
@@ -348,7 +356,7 @@ def main(argv: list[str]) -> int:
             run_self_test()
             return 0
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         max_age = timedelta(days=cast(int, args.max_age_days))
         grype_status = (
             load_json_object(args.grype_status_json, "grype")

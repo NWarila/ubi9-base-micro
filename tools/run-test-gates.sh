@@ -37,8 +37,9 @@ case "${scanner_db_max_age_days}" in
     echo "SCANNER_DB_MAX_AGE_DAYS must be a positive integer, got: ${scanner_db_max_age_days}" >&2
     exit 1
     ;;
+  *) ;;
 esac
-if (( scanner_db_max_age_days < 1 )); then
+if ((scanner_db_max_age_days < 1)); then
   echo "SCANNER_DB_MAX_AGE_DAYS must be at least 1" >&2
   exit 1
 fi
