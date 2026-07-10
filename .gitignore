@@ -62,6 +62,10 @@
 !/rpm-lock/
 !/rpm-lock/*.txt
 
+!/security/
+!/security/cve-ignore.trivyignore.yaml
+!/security/cve-ignore.grype.yaml
+
 !/docs/
 !/docs/README.md
 !/docs/TECH-DEBT.md

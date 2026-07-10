@@ -27,6 +27,8 @@ case "${arch}" in
     ;;
 esac
 
+python tools/assert-ignore-scope.py
+
 bash tools/install-syft.sh
 bash tools/install-trivy.sh
 bash tools/install-grype.sh
@@ -91,16 +93,26 @@ python tools/assert-no-phantom-packages.py \
   --expect-absent pcre2-syntax \
   --expect-absent alternatives
 
+mkdir -p dist/vuln
+
 dist/tools/trivy image \
   --vuln-type os,library \
   --ignore-unfixed \
-  --severity HIGH,CRITICAL \
+  --severity MEDIUM,HIGH,CRITICAL \
+  --ignorefile security/cve-ignore.trivyignore.yaml \
   --exit-code 1 \
   "${runtime_image}"
 
-dist/tools/grype "${runtime_image}" --only-fixed --fail-on high
+grype_gate_json="dist/vuln/base-micro.${arch}.grype.gate.json"
+dist/tools/grype "${runtime_image}" \
+  --only-fixed \
+  --fail-on medium \
+  -c security/cve-ignore.grype.yaml \
+  --show-suppressed \
+  -o json \
+  --file "${grype_gate_json}"
+python tools/assert-ignore-scope.py --grype-report "${grype_gate_json}"
 
-mkdir -p dist/vuln
 trivy_json="dist/vuln/base-micro.${arch}.trivy.all.json"
 grype_json="dist/vuln/base-micro.${arch}.grype.all.json"
 
