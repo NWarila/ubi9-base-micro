@@ -60,7 +60,10 @@
 !/contracts/examples/*.md
 
 !/rpm-lock/
-!/rpm-lock/*.txt
+!/rpm-lock/builder.amd64.txt
+!/rpm-lock/builder.arm64.txt
+!/rpm-lock/runtime.amd64.txt
+!/rpm-lock/runtime.arm64.txt
 
 !/security/
 !/security/cve-ignore.trivyignore.yaml

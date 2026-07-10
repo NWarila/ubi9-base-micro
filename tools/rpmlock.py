@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-# Purpose: Canonical parser and validator for rpm-lock/runtime.<arch>.txt.
+# Purpose: Canonical parser and validator for runtime and discarded-stage builder RPM lockfiles.
 # Role: tooling
 # Micro-container candidate: gate-adjacent - host/CI lockfile contract validation, not copied into image stages.
 # Build-process: no - validates generated lock artifacts; not executed inside image builds.
 
-"""Parse and validate runtime RPM lockfiles."""
+"""Parse and validate runtime and builder RPM lockfiles."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Final, cast
 
 COLUMNS: Final = "package|final_rpmdb|name|epoch|version|release|arch|sha256_header|sigmd5"
+BUILDER_COLUMNS: Final = "package|name|epoch|version|release|arch|sha256_header|sigmd5"
 DIRECT_PREFIX: Final = "# direct_rpm: "
 RPM_ARCH_BY_PLATFORM: Final = {"amd64": "x86_64", "arm64": "aarch64"}
 HEX64: Final = re.compile(r"^[0-9a-f]{64}$")
@@ -41,6 +42,15 @@ REQUIRED_FINAL_NAMES: Final = (
     "zlib",
 )
 OPENSSL_FIPS_PROVIDER_PREFIX: Final = "openssl-fips-provider-so-"
+BUILDER_PYTHON_NAMES: Final = (
+    "expat",
+    "libnsl2",
+    "libtirpc",
+    "mpdecimal",
+    "python3.12",
+    "python3.12-libs",
+    "python3.12-pip-wheel",
+)
 
 
 class LockError(Exception):
@@ -74,6 +84,30 @@ class LockRow:
 
 
 @dataclass(frozen=True, slots=True)
+class BuilderLockRow:
+    package: str
+    name: str
+    epoch: str
+    version: str
+    release: str
+    arch: str
+    sha256_header: str
+    sigmd5: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "package": self.package,
+            "name": self.name,
+            "epoch": self.epoch,
+            "version": self.version,
+            "release": self.release,
+            "arch": self.arch,
+            "sha256_header": self.sha256_header,
+            "sigmd5": self.sigmd5,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class DirectRpm:
     package: str
     url: str
@@ -93,6 +127,15 @@ class Lockfile:
     direct_entries: tuple[DirectRpm, ...]
     direct_map: dict[str, tuple[str, str]]
     rows: tuple[LockRow, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class BuilderLockfile:
+    path: Path
+    headers: dict[str, str]
+    direct_entries: tuple[DirectRpm, ...]
+    direct_map: dict[str, tuple[str, str]]
+    rows: tuple[BuilderLockRow, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,6 +285,42 @@ def parse(path: Path) -> Lockfile:
     )
 
 
+def parse_builder(path: Path) -> BuilderLockfile:
+    lock_path = Path(path)
+    text = _read_lock_text(lock_path)
+    lines = text.splitlines()
+    headers: dict[str, str] = {}
+    if len(lines) > 0 and lines[0].startswith("# arch: "):
+        headers["arch"] = lines[0].removeprefix("# arch: ")
+    if len(lines) > 1 and lines[1].startswith("# columns: "):
+        headers["columns"] = lines[1].removeprefix("# columns: ")
+
+    direct_entries: list[DirectRpm] = []
+    direct_map: dict[str, tuple[str, str]] = {}
+    rows: list[BuilderLockRow] = []
+    for line in lines:
+        if not line:
+            continue
+        if line.startswith(DIRECT_PREFIX):
+            entry = _parse_direct_entry(lock_path, line)
+            if entry.package in direct_map:
+                raise LockError(f"{lock_path}: duplicate direct RPM entry: {entry.package}")
+            direct_entries.append(entry)
+            direct_map[entry.package] = (entry.url, entry.sha256)
+            continue
+        if line.startswith("#"):
+            continue
+        rows.append(_parse_builder_row(lock_path, line))
+
+    return BuilderLockfile(
+        path=lock_path,
+        headers=headers,
+        direct_entries=tuple(direct_entries),
+        direct_map=direct_map,
+        rows=tuple(rows),
+    )
+
+
 def _parse_direct_entry(path: Path, line: str) -> DirectRpm:
     payload = line.removeprefix(DIRECT_PREFIX)
     parts = payload.split("|")
@@ -267,6 +346,25 @@ def _parse_row(path: Path, line: str) -> LockRow:
         arch=parts[6],
         sha256_header=parts[7],
         sigmd5=parts[8],
+    )
+
+
+def _parse_builder_row(path: Path, line: str) -> BuilderLockRow:
+    parts = line.split("|")
+    package = parts[0] if parts else ""
+    if len(parts) > 8:
+        raise LockError(f"{path}: too many columns for {package}")
+    if len(parts) < 8:
+        parts = [*parts, *([""] * (8 - len(parts)))]
+    return BuilderLockRow(
+        package=parts[0],
+        name=parts[1],
+        epoch=parts[2],
+        version=parts[3],
+        release=parts[4],
+        arch=parts[5],
+        sha256_header=parts[6],
+        sigmd5=parts[7],
     )
 
 
@@ -348,6 +446,65 @@ def validate(lockfile: Lockfile, *, arch: str, policy: LockPolicy | None = None)
     )
 
 
+def validate_builder(lockfile: BuilderLockfile, *, arch: str) -> None:
+    rpm_arch = _rpm_arch_for_platform(arch)
+    _require(lockfile.headers.get("arch") == arch, f"{lockfile.path}: invalid arch header")
+    _require(lockfile.headers.get("columns") == BUILDER_COLUMNS, f"{lockfile.path}: invalid columns header")
+
+    direct_seen: set[str] = set()
+    for entry in lockfile.direct_entries:
+        _validate_direct_entry(lockfile.path, entry, direct_seen)
+
+    previous_package = ""
+    row_seen: set[str] = set()
+    direct_row_seen: set[str] = set()
+    names: set[str] = set()
+    for row in lockfile.rows:
+        _validate_builder_row_fields(lockfile.path, row)
+        _require(
+            row.arch in {"noarch", rpm_arch},
+            f"{lockfile.path}: invalid arch={row.arch} for {row.package}",
+        )
+        _require(
+            ASCII_DECIMAL.fullmatch(row.epoch) is not None,
+            f"{lockfile.path}: non-numeric epoch for {row.package}",
+        )
+        _require(
+            HEX64.fullmatch(row.sha256_header) is not None,
+            f"{lockfile.path}: invalid SHA256HEADER for {row.package}",
+        )
+        _require(HEX32.fullmatch(row.sigmd5) is not None, f"{lockfile.path}: invalid SIGMD5 for {row.package}")
+        _require(
+            row.package == builder_nevra(row),
+            f"{lockfile.path}: package field does not match builder row NEVRA: {row.package}",
+        )
+        _validate_builder_direct_match(lockfile, row)
+
+        if previous_package and row.package < previous_package:
+            raise LockError(f"{lockfile.path}: rows are not sorted by package: {row.package} after {previous_package}")
+        _require(row.package not in row_seen, f"{lockfile.path}: duplicate package row: {row.package}")
+        _require(row.name not in names, f"{lockfile.path}: duplicate builder package name: {row.name}")
+        row_seen.add(row.package)
+        names.add(row.name)
+        direct_row_seen.add(row.package)
+        previous_package = row.package
+
+    _require(bool(lockfile.rows), f"{lockfile.path}: lockfile has no package rows")
+    _require(
+        names == set(BUILDER_PYTHON_NAMES),
+        f"{lockfile.path}: builder Python closure must contain exactly {', '.join(BUILDER_PYTHON_NAMES)}",
+    )
+    _require(
+        len(lockfile.direct_entries) == len(lockfile.rows),
+        f"{lockfile.path}: expected {len(lockfile.rows)} direct RPM pins, got {len(lockfile.direct_entries)}",
+    )
+    for direct_package in lockfile.direct_map:
+        _require(
+            direct_package in direct_row_seen,
+            f"{lockfile.path}: direct RPM entry has no matching package row: {direct_package}",
+        )
+
+
 def _rpm_arch_for_platform(arch: str) -> str:
     try:
         return RPM_ARCH_BY_PLATFORM[arch]
@@ -424,6 +581,21 @@ def _validate_row_fields(path: Path, row: LockRow) -> None:
             raise LockError(f"{path}: empty field in row {row.package}")
 
 
+def _validate_builder_row_fields(path: Path, row: BuilderLockRow) -> None:
+    for field in [
+        row.package,
+        row.name,
+        row.epoch,
+        row.version,
+        row.release,
+        row.arch,
+        row.sha256_header,
+        row.sigmd5,
+    ]:
+        if not field:
+            raise LockError(f"{path}: empty field in row {row.package}")
+
+
 def _validate_direct_match(lockfile: Lockfile, row: LockRow, expected: ProviderExpectations) -> None:
     if row.package not in lockfile.direct_map:
         raise LockError(f"{lockfile.path}: missing direct RPM source pin for {row.package}")
@@ -447,7 +619,25 @@ def _validate_direct_match(lockfile: Lockfile, row: LockRow, expected: ProviderE
         )
 
 
-def rpm_filename(row: LockRow) -> str:
+def _validate_builder_direct_match(lockfile: BuilderLockfile, row: BuilderLockRow) -> None:
+    if row.package not in lockfile.direct_map:
+        raise LockError(f"{lockfile.path}: missing direct RPM source pin for {row.package}")
+    direct_url, _ = lockfile.direct_map[row.package]
+    expected_filename = rpm_filename(row)
+    direct_filename = direct_url.rsplit("/", 1)[-1]
+    _require(
+        direct_filename == expected_filename,
+        f"{lockfile.path}: direct RPM URL filename mismatch for {row.package}: "
+        f"expected {expected_filename}, got {direct_filename}",
+    )
+
+
+def builder_nevra(row: BuilderLockRow) -> str:
+    epoch = "" if row.epoch == "0" else f"{row.epoch}:"
+    return f"{row.name}-{epoch}{row.version}-{row.release}.{row.arch}"
+
+
+def rpm_filename(row: LockRow | BuilderLockRow) -> str:
     return f"{row.name}-{row.version}-{row.release}.{row.arch}.rpm"
 
 
@@ -477,8 +667,19 @@ def _validated_lockfile(args: argparse.Namespace) -> Lockfile:
     return lockfile
 
 
+def _validated_builder_lockfile(args: argparse.Namespace) -> BuilderLockfile:
+    lockfile = parse_builder(args.lockfile)
+    validate_builder(lockfile, arch=args.arch)
+    return lockfile
+
+
 def _cmd_validate(args: argparse.Namespace) -> int:
     _validated_lockfile(args)
+    return 0
+
+
+def _cmd_builder_validate(args: argparse.Namespace) -> int:
+    _validated_builder_lockfile(args)
     return 0
 
 
@@ -519,6 +720,18 @@ def _cmd_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_builder_summary(args: argparse.Namespace) -> int:
+    lockfile = _validated_builder_lockfile(args)
+    summary = {
+        "headers": lockfile.headers,
+        "direct_rpms": [entry.as_dict() for entry in lockfile.direct_entries],
+        "rows": [row.as_dict() for row in lockfile.rows],
+        "rpm_filenames": [rpm_filename(row) for row in lockfile.rows],
+    }
+    print(json.dumps(summary, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--lockfile", required=True, type=Path)
     parser.add_argument("--arch", required=True, choices=sorted(RPM_ARCH_BY_PLATFORM))
@@ -532,6 +745,11 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         dest="openssl_fips_provider_so_rpm_sha256_x86_64",
     )
     parser.add_argument("--openssl-fips-provider-so-rpm-sha256-aarch64")
+
+
+def _add_builder_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--lockfile", required=True, type=Path)
+    parser.add_argument("--arch", required=True, choices=sorted(RPM_ARCH_BY_PLATFORM))
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -558,6 +776,16 @@ def _build_parser() -> argparse.ArgumentParser:
     summary_parser = subparsers.add_parser("summary", help="print validated lockfile data as JSON")
     _add_common_args(summary_parser)
     summary_parser.set_defaults(handler=_cmd_summary)
+
+    builder_validate_parser = subparsers.add_parser("builder-validate", help="validate a builder RPM lockfile")
+    _add_builder_args(builder_validate_parser)
+    builder_validate_parser.set_defaults(handler=_cmd_builder_validate)
+
+    builder_summary_parser = subparsers.add_parser(
+        "builder-summary", help="print validated builder lockfile data as JSON"
+    )
+    _add_builder_args(builder_summary_parser)
+    builder_summary_parser.set_defaults(handler=_cmd_builder_summary)
 
     return parser
 

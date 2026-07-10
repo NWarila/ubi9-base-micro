@@ -139,6 +139,10 @@ REPO_ADRS = [
         "docs/decision-records/repo/0013-externalize-image-contract-manifest.md",
         "Externalize The Image Contract Manifest",
     ),
+    (
+        "docs/decision-records/repo/0014-pin-builder-python-closure.md",
+        "Pin The Builder Python Closure",
+    ),
 ]
 
 
@@ -546,6 +550,8 @@ def check_required_files() -> None:
         "contracts/examples/fips-status.arm64.json",
         "rpm-lock/runtime.amd64.txt",
         "rpm-lock/runtime.arm64.txt",
+        "rpm-lock/builder.amd64.txt",
+        "rpm-lock/builder.arm64.txt",
         "security/cve-ignore.trivyignore.yaml",
         "security/cve-ignore.grype.yaml",
         "docs/README.md",
@@ -574,10 +580,12 @@ def check_required_files() -> None:
         "tools/build.sh",
         "tools/run-test-gates.sh",
         "tools/assert-footprint.py",
+        "tools/assert-builder-toolchain-floor.sh",
         "tools/assert-no-phantom-packages.py",
         "tools/assert-reproducible.py",
         "tools/assert-rpm-lock-hashes.sh",
         "tools/fetch-runtime-rpms.sh",
+        "tools/fetch-builder-rpms.sh",
         "tools/rpmlock.py",
         "tools/tests/test_rpmlock.py",
         "tools/generate-rpm-lock.sh",
@@ -612,6 +620,8 @@ def check_required_files() -> None:
         "!tools/fetch-runtime-rpms.sh" in dockerignore,
         ".dockerignore must allowlist runtime direct-CDN RPM fetch helper",
     )
+    for marker in ["!tools/assert-builder-toolchain-floor.sh", "!tools/fetch-builder-rpms.sh"]:
+        require(marker in dockerignore, f".dockerignore must allowlist builder Python input: {marker}")
     for relative_path, _ in REPO_ADRS:
         require((ROOT / relative_path).is_file(), f"missing required ADR: {relative_path}")
 
@@ -867,6 +877,42 @@ def check_dockerfile_forbidden_scan_self_test() -> None:
     )
 
 
+def check_builder_toolchain_floor_self_test() -> None:
+    baseline = "\n".join(
+        [
+            "rpm|rpm-0:1-1.x86_64",
+            "rpm-libs|rpm-libs-0:1-1.x86_64",
+            "sqlite-libs|sqlite-libs-0:1-1.x86_64",
+            "glibc|glibc-0:1-1.x86_64",
+            "glibc-common|glibc-common-0:1-1.x86_64",
+        ]
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        before = tmp_path / "before"
+        after = tmp_path / "after"
+        before.write_text(f"{baseline}\n", encoding="utf-8")
+        after.write_text(f"{baseline}\n", encoding="utf-8")
+        command = [
+            "bash",
+            str(ROOT / "tools/assert-builder-toolchain-floor.sh"),
+            "--before",
+            str(before),
+            "--after",
+            str(after),
+        ]
+        passing = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
+        require(passing.returncode == 0, f"builder toolchain floor positive test failed: {passing.stderr}")
+
+        after.write_text(f"{baseline.replace('sqlite-libs-0:1-1', 'sqlite-libs-0:2-1')}\n", encoding="utf-8")
+        failing = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
+        require(failing.returncode != 0, "builder toolchain floor mutation must fail")
+        require(
+            "builder toolchain package sqlite-libs moved" in failing.stderr,
+            "builder toolchain floor mutation must name sqlite-libs",
+        )
+
+
 def check_dockerfile() -> None:
     text = read("containers/Dockerfile")
     required = [
@@ -891,10 +937,22 @@ def check_dockerfile() -> None:
             'bash /tmp/fetch-runtime-rpms.sh --targetarch "${TARGETARCH}" '
             '--lockfile "${runtime_lockfile}" --dest /tmp/runtime-rpms'
         ),
+        (
+            'bash /tmp/fetch-builder-rpms.sh --targetarch "${TARGETARCH}" '
+            '--lockfile "${builder_lockfile}" --dest /tmp/builder-rpms'
+        ),
+        "COPY rpm-lock/builder.amd64.txt rpm-lock/builder.arm64.txt /tmp/rpm-lock/",
         "rpm -Uvh --oldpackage --replacepkgs",
+        "rpm -q --qf '%{NEVRA}\\n' \"${package}\"",
+        'rpm -Uvh --oldpackage --replacepkgs --excludedocs "${builder_rpm_paths[@]}"',
+        "bash /tmp/assert-builder-toolchain-floor.sh --before /tmp/builder-toolchain.before",
+        "python3.12 -c 'import sys; print(sys.version)'",
+        "python python3 python3.12",
         'expected_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}"',
         "COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/",
+        "COPY tools/assert-builder-toolchain-floor.sh /tmp/assert-builder-toolchain-floor.sh",
         "COPY tools/assert-rpm-lock-hashes.sh /tmp/assert-rpm-lock-hashes.sh",
+        "COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh",
         "COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh",
         "dnf_repo_args=()",
         '"${dnf_repo_args[@]}"',
@@ -959,6 +1017,32 @@ def check_dockerfile() -> None:
     ]
     missing = [marker for marker in required if marker not in text]
     require(not missing, "Dockerfile missing required markers: " + ", ".join(missing))
+
+    rpm_rootfs = text.split("FROM ${UBI_MINIMAL_IMAGE} AS rpm-rootfs", 1)[1].split(
+        "FROM ${UBI_MINIMAL_IMAGE} AS dev-rootfs", 1
+    )[0]
+    require("microdnf install" not in rpm_rootfs, "rpm-rootfs must not install builder Python through microdnf")
+    require("tools/rpmlock.py" not in rpm_rootfs, "rpm-rootfs must not consume rpmlock.py in this increment")
+    require(
+        rpm_rootfs.index("bash /tmp/fetch-builder-rpms.sh") < rpm_rootfs.index("mkdir -p /rootfs"),
+        "builder Python must be installed before any /rootfs assembly",
+    )
+
+    builder_fetch = read("tools/fetch-builder-rpms.sh")
+    for marker in [
+        "https://cdn-ubi.redhat.com/",
+        "sha256sum",
+        'sig_output="$(rpm -K',
+        "digests signatures OK",
+        "rpm -qp --qf '%{NEVRA}|%{NAME}|%{EPOCHNUM}|%{VERSION}|%{RELEASE}|%{ARCH}|%{SHA256HEADER}|%{SIGMD5}'",
+    ]:
+        require(marker in builder_fetch, f"builder RPM fetch helper missing pin-discipline marker: {marker}")
+    require("microdnf" not in builder_fetch, "builder RPM fetch helper must not use microdnf")
+
+    floor_guard = read("tools/assert-builder-toolchain-floor.sh")
+    for package in ["rpm", "rpm-libs", "sqlite-libs", "glibc", "glibc-common"]:
+        require(package in floor_guard, f"builder toolchain floor guard missing package: {package}")
+    require("moved: before=" in floor_guard, "builder toolchain floor guard must name moved packages")
 
     from_lines = [line for line in text.splitlines() if line.startswith("FROM ")]
     require(from_lines, "Dockerfile must contain FROM lines")
@@ -1633,12 +1717,12 @@ def check_sbom_assertion_script() -> None:
         require(marker in phantom, f"phantom package guard missing marker: {marker}")
 
 
-def rpmlock_summary(relative_path: str, platform_arch: str) -> dict[str, Any]:
+def rpmlock_summary(relative_path: str, platform_arch: str, *, builder: bool = False) -> dict[str, Any]:
     result = subprocess.run(
         [
             sys.executable,
             str(ROOT / "tools/rpmlock.py"),
-            "summary",
+            "builder-summary" if builder else "summary",
             "--lockfile",
             str(ROOT / relative_path),
             "--arch",
@@ -1743,6 +1827,40 @@ def check_rpm_locks() -> None:
 
         final_names = {row["name"] for row in rows if row["final_rpmdb"] == "yes"}
         require(final_names == required_final, f"{relative_path}: final rpmdb set mismatch: {sorted(final_names)}")
+
+    expected_builder_names = {
+        "expat",
+        "libnsl2",
+        "libtirpc",
+        "mpdecimal",
+        "python3.12",
+        "python3.12-libs",
+        "python3.12-pip-wheel",
+    }
+    gitignore = read(".gitignore")
+    for platform_arch in expected_arch:
+        relative_path = f"rpm-lock/builder.{platform_arch}.txt"
+        require(f"!/{relative_path}" in gitignore, f".gitignore must allowlist builder lock: {relative_path}")
+        summary = rpmlock_summary(relative_path, platform_arch, builder=True)
+        rows = summary_records(summary, "rows", relative_path)
+        direct_rows = summary_records(summary, "direct_rpms", relative_path)
+        packages = [row["package"] for row in rows]
+        names = {row["name"] for row in rows}
+        require(names == expected_builder_names, f"{relative_path}: unexpected builder Python closure: {sorted(names)}")
+        require(
+            len(packages) == len(set(packages)) == 7,
+            f"{relative_path}: builder closure must contain 7 unique RPMs",
+        )
+        require(len(direct_rows) == 7, f"{relative_path}: every builder RPM must have a direct pin")
+        for direct in direct_rows:
+            require(
+                direct["url"].startswith("https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/"),
+                f"{relative_path}: builder RPM URL must use the Red Hat UBI CDN",
+            )
+            require(
+                len(direct["sha256"]) == 64 and all(character in "0123456789abcdef" for character in direct["sha256"]),
+                f"{relative_path}: invalid builder RPM sha256 for {direct['package']}",
+            )
 
 
 def check_scanner_install_scripts() -> None:
@@ -2142,7 +2260,10 @@ def check_decision_records() -> None:
     for number, (relative_path, title) in zip(expected_numbers, REPO_ADRS, strict=True):
         text = read(relative_path)
         require(text.startswith(f"# ADR-{number}: {title}\n"), f"{relative_path} has wrong ADR heading")
-        expected_date = "2026-06-25" if number in {"0012", "0013"} else "2026-06-21"
+        if number == "0014":
+            expected_date = "2026-07-10"
+        else:
+            expected_date = "2026-06-25" if number in {"0012", "0013"} else "2026-06-21"
         for marker in [
             "- Status: Accepted",
             f"- Date: {expected_date}",
@@ -2727,6 +2848,7 @@ def main() -> int:
         check_renovate_config,
         check_dockerfile,
         check_dockerfile_forbidden_scan_self_test,
+        check_builder_toolchain_floor_self_test,
         check_rpm_locks,
         check_workflow,
         check_supply_chain_workflows,

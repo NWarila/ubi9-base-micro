@@ -145,10 +145,15 @@ ARG OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64
 ARG OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64
 ARG SOURCE_DATE_EPOCH
 
+COPY rpm-lock/builder.amd64.txt rpm-lock/builder.arm64.txt /tmp/rpm-lock/
 COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/
+COPY tools/assert-builder-toolchain-floor.sh /tmp/assert-builder-toolchain-floor.sh
 COPY tools/assert-rpm-lock-hashes.sh /tmp/assert-rpm-lock-hashes.sh
+COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh
 COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh
 
+# Install the direct-CDN-pinned Python closure into this discarded stage's own
+# root before creating /rootfs. Guard the rpmdb-writing toolchain across it.
 # Assemble the runtime rootfs with a raw rpm transaction (rpm --initdb + rpm -Uvh)
 # over the fetched, sha256+GPG-verified local RPM paths in lockfile (LC_ALL=C)
 # order -- no microdnf/metadata resolution; the lockfile is the complete
@@ -160,11 +165,37 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     set -eux; \
     export SOURCE_DATE_EPOCH; \
     case "${TARGETARCH}" in \
-      amd64) rpm_arch="x86_64"; runtime_lockfile="/tmp/rpm-lock/runtime.amd64.txt" ;; \
-      arm64) rpm_arch="aarch64"; runtime_lockfile="/tmp/rpm-lock/runtime.arm64.txt" ;; \
+      amd64) rpm_arch="x86_64"; builder_lockfile="/tmp/rpm-lock/builder.amd64.txt"; runtime_lockfile="/tmp/rpm-lock/runtime.amd64.txt" ;; \
+      arm64) rpm_arch="aarch64"; builder_lockfile="/tmp/rpm-lock/builder.arm64.txt"; runtime_lockfile="/tmp/rpm-lock/runtime.arm64.txt" ;; \
       *) echo "unsupported TARGETARCH for RPM lockfile: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
+    test -s "${builder_lockfile}" || { echo "builder RPM lockfile missing: ${builder_lockfile}" >&2; exit 1; }; \
     test -s "${runtime_lockfile}" || { echo "runtime RPM lockfile missing: ${runtime_lockfile}" >&2; exit 1; }; \
+    builder_rpm_paths=(); \
+    while IFS='|' read -r package name epoch version release arch sha256_header sigmd5; do \
+      case "${package}" in ""|\#*) continue ;; esac; \
+      test -n "${name}" && test -n "${epoch}" && test -n "${version}" && test -n "${release}" && test -n "${arch}" && test -n "${sha256_header}" && test -n "${sigmd5}"; \
+      case "${arch}" in noarch|"${rpm_arch}") ;; *) echo "locked builder package ${package} has wrong arch ${arch} for ${TARGETARCH}" >&2; exit 1 ;; esac; \
+      builder_rpm_paths+=("/tmp/builder-rpms/${name}-${version}-${release}.${arch}.rpm"); \
+    done < "${builder_lockfile}"; \
+    test "${#builder_rpm_paths[@]}" -eq 7 || { echo "builder RPM lockfile must yield exactly 7 packages" >&2; exit 1; }; \
+    snapshot_builder_toolchain() { \
+      snapshot="$1"; \
+      : > "${snapshot}"; \
+      for package in rpm rpm-libs sqlite-libs glibc glibc-common; do \
+        nevra="$(rpm -q --qf '%{NEVRA}\n' "${package}")"; \
+        printf '%s|%s\n' "${package}" "${nevra}" >> "${snapshot}"; \
+      done; \
+    }; \
+    snapshot_builder_toolchain /tmp/builder-toolchain.before; \
+    mkdir -p /tmp/builder-rpms; \
+    bash /tmp/fetch-builder-rpms.sh --targetarch "${TARGETARCH}" --lockfile "${builder_lockfile}" --dest /tmp/builder-rpms; \
+    echo "installing locked builder Python RPM transaction"; \
+    rpm -Uvh --oldpackage --replacepkgs --excludedocs "${builder_rpm_paths[@]}"; \
+    snapshot_builder_toolchain /tmp/builder-toolchain.after; \
+    bash /tmp/assert-builder-toolchain-floor.sh --before /tmp/builder-toolchain.before --after /tmp/builder-toolchain.after; \
+    python3.12 -c 'import sys; print(sys.version)'; \
+    rm -rf /tmp/builder-rpms /tmp/builder-toolchain.before /tmp/builder-toolchain.after; \
     locked_packages=(); \
     locked_rpm_paths=(); \
     while IFS='|' read -r package final_rpmdb name epoch version release arch sha256_header sigmd5; do \
@@ -557,7 +588,7 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
         echo "trimmed executable ${trimmed_executable} survived in runtime image" >&2; exit 1; \
       fi; \
     done; \
-    for executable in sh bash dash ash busybox ksh zsh tcsh csh dnf microdnf rpm yum; do if [ -e "/usr/bin/${executable}" ] || [ -e "/usr/sbin/${executable}" ] || [ -e "/bin/${executable}" ] || [ -e "/sbin/${executable}" ]; then echo "forbidden executable ${executable} survived in runtime image" >&2; exit 1; fi; done; \
+    for executable in sh bash dash ash busybox ksh zsh tcsh csh dnf microdnf rpm yum python python3 python3.12; do if [ -e "/usr/bin/${executable}" ] || [ -e "/usr/sbin/${executable}" ] || [ -e "/bin/${executable}" ] || [ -e "/sbin/${executable}" ]; then echo "forbidden executable ${executable} survived in runtime image" >&2; exit 1; fi; done; \
     test -s /var/lib/rpm/rpmdb.sqlite || test -s /var/lib/rpm/Packages
 
 USER 65532:65532
