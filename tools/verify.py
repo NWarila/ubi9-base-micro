@@ -581,12 +581,14 @@ def check_required_files() -> None:
         "tools/run-test-gates.sh",
         "tools/assert-footprint.py",
         "tools/assert-builder-toolchain-floor.sh",
+        "tools/build-runtime-rootfs.py",
         "tools/assert-no-phantom-packages.py",
         "tools/assert-reproducible.py",
         "tools/assert-rpm-lock-hashes.sh",
         "tools/fetch-runtime-rpms.sh",
         "tools/fetch-builder-rpms.sh",
         "tools/rpmlock.py",
+        "tools/tests/test_build_runtime_rootfs.py",
         "tools/tests/test_rpmlock.py",
         "tools/generate-rpm-lock.sh",
         "tools/install-syft.sh",
@@ -841,7 +843,7 @@ def check_renovate_config() -> None:
 
 
 def collect_dockerfile_forbidden_sources(root: Path = ROOT) -> list[tuple[str, str]]:
-    paths = [root / "containers/Dockerfile"]
+    paths = [root / "containers/Dockerfile", root / "tools/build-runtime-rootfs.py"]
     scripts_dir = root / "containers/scripts"
     if scripts_dir.is_dir():
         paths.extend(sorted(scripts_dir.glob("*.sh")))
@@ -866,14 +868,21 @@ def check_dockerfile_forbidden_scan_self_test() -> None:
         tmp_path = Path(tmp)
         dockerfile = tmp_path / "containers/Dockerfile"
         script = tmp_path / "containers/scripts/strip.sh"
+        helper = tmp_path / "tools/build-runtime-rootfs.py"
         script.parent.mkdir(parents=True)
+        helper.parent.mkdir(parents=True)
         dockerfile.parent.mkdir(parents=True, exist_ok=True)
         dockerfile.write_text("FROM scratch\n", encoding="utf-8")
         script.write_text("rm -rf /rootfs/var/lib/rpm\n", encoding="utf-8")
+        helper.write_text("rm -rf /rootfs/var/lib/rpm\n", encoding="utf-8")
         findings = find_dockerfile_forbidden_markers(collect_dockerfile_forbidden_sources(tmp_path))
     require(
-        findings == ["containers/scripts/strip.sh: rm -rf /rootfs/var/lib/rpm"],
-        "forbidden marker scan must cover containers/scripts/*.sh fixtures",
+        findings
+        == [
+            "tools/build-runtime-rootfs.py: rm -rf /rootfs/var/lib/rpm",
+            "containers/scripts/strip.sh: rm -rf /rootfs/var/lib/rpm",
+        ],
+        "forbidden marker scan must cover runtime-rootfs helper and shell-script fixtures",
     )
 
 
@@ -948,10 +957,10 @@ def check_dockerfile() -> None:
         "bash /tmp/assert-builder-toolchain-floor.sh --before /tmp/builder-toolchain.before",
         "python3.12 -c 'import sys; print(sys.version)'",
         "python python3 python3.12",
-        'expected_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}"',
         "COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/",
         "COPY tools/assert-builder-toolchain-floor.sh /tmp/assert-builder-toolchain-floor.sh",
         "COPY tools/assert-rpm-lock-hashes.sh /tmp/assert-rpm-lock-hashes.sh",
+        "COPY tools/build-runtime-rootfs.py /tmp/build-runtime-rootfs.py",
         "COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh",
         "COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh",
         "dnf_repo_args=()",
@@ -960,9 +969,16 @@ def check_dockerfile() -> None:
         "locked_rpm_paths=()",
         'locked_packages+=("${package}")',
         'locked_rpm_paths+=("/tmp/runtime-rpms/${name}-${version}-${release}.${arch}.rpm")',
-        "final runtime RPM lock floor verified",
         "bash /tmp/assert-rpm-lock-hashes.sh --root /rootfs --lockfile",
         "--direct-rpm-dir /tmp/runtime-rpms",
+        "python3.12 /tmp/build-runtime-rootfs.py build",
+        '--runtime-lockfile "${runtime_lockfile}"',
+        "--fips-proof /tmp/fips-proof",
+        "--fips-openssl /tmp/fips-openssl",
+        "--fips-lib64 /tmp/fips-lib64",
+        '--target-arch "${TARGETARCH}"',
+        '--provider-nevra "${OPENSSL_FIPS_PROVIDER_NEVRA}"',
+        '--module-version "${OPENSSL_FIPS_MODULE_VERSION}"',
         'find /rootfs -xdev -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +',
         "rpm --root=/rootfs -Uvh --oldpackage --replacepkgs --excludedocs",
         '"${locked_rpm_paths[@]}"',
@@ -996,15 +1012,6 @@ def check_dockerfile() -> None:
         "/fips-proof/expected-provider.nevra",
         "/fips-proof/libs.nevra",
         "/fips-proof/fips.so.sha256",
-        "rpm --root=/rootfs -q --qf '%{NEVRA}\\n' openssl-fips-provider-so",
-        "shipped_libs_nevra",
-        "ldd-protected FIPS/glibc runtime dependency paths:",
-        'rpm --root=/rootfs -e --nodeps --noscripts "${removable_packages[@]}"',
-        "ldconfig -r /rootfs",
-        "/rootfs/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
-        "/rootfs/usr/lib/locale/C.utf8",
-        "/rootfs/usr/share/zoneinfo/Etc/UTC",
-        "openssl verify",
         "alternatives",
         "update-alternatives",
         "/usr/sbin/*",
@@ -1013,7 +1020,6 @@ def check_dockerfile() -> None:
         "/usr/lib64/libpcre2-posix.so*",
         "/usr/lib64/libpanel*.so*",
         "/usr/lib64/libpanelw*.so*",
-        "ln -sfn usr/lib64 /rootfs/lib64",
     ]
     missing = [marker for marker in required if marker not in text]
     require(not missing, "Dockerfile missing required markers: " + ", ".join(missing))
@@ -1026,6 +1032,48 @@ def check_dockerfile() -> None:
     require(
         rpm_rootfs.index("bash /tmp/fetch-builder-rpms.sh") < rpm_rootfs.index("mkdir -p /rootfs"),
         "builder Python must be installed before any /rootfs assembly",
+    )
+    runtime_install = 'rpm --root=/rootfs -Uvh --oldpackage --replacepkgs --excludedocs "${locked_rpm_paths[@]}"'
+    helper_invocation = "python3.12 /tmp/build-runtime-rootfs.py build"
+    terminal_touch = 'find /rootfs -xdev -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +'
+    require(
+        rpm_rootfs.index(runtime_install) < rpm_rootfs.index(helper_invocation) < rpm_rootfs.index(terminal_touch),
+        "runtime install, Python build helper, and terminal touch must retain their order",
+    )
+    require(rpm_rootfs.count(helper_invocation) == 1, "rpm-rootfs must invoke the production build helper exactly once")
+    require(
+        "/rootfs" not in rpm_rootfs.split(terminal_touch, 1)[1],
+        "the inline terminal touch must be the last rpm-rootfs mutation",
+    )
+
+    rootfs_helper = read("tools/build-runtime-rootfs.py")
+    for marker in [
+        "def strip_packages(rootfs: Path) -> list[str]:",
+        "STRIP_CANDIDATES: Final",
+        "check=True",
+        "if not os.path.exists(rooted):",
+        '_rpm(rootfs, ["-e", "--nodeps", "--noscripts", *removable])',
+        '_run(["ldconfig", "-r", str(rootfs)])',
+        '_run(["cp", "-a", str(zoneinfo / "UTC"), str(zone_tmp / "UTC")])',
+        "raw_zone_tmp = tempfile.mkdtemp()",
+        "zone_tmp.rename(zoneinfo)",
+        "strip_packages(rootfs)",
+        "_verify_runtime_lock_floor(rootfs, runtime_lockfile)",
+        "_verify_fips(",
+        "_trim_filesystem(rootfs, fips_openssl=fips_openssl, fips_lib64=fips_lib64)",
+        'build_parser.add_argument("--runtime-lockfile", type=Path, required=True)',
+        'build_parser.add_argument("--fips-proof", type=Path, required=True)',
+        'build_parser.add_argument("--fips-openssl", type=Path, required=True)',
+    ]:
+        require(marker in rootfs_helper, f"runtime-rootfs helper missing locked marker: {marker}")
+    require("--source-date-epoch" not in rootfs_helper, "runtime-rootfs helper must not own the terminal touch")
+    build_body = rootfs_helper.split("def build(\n", 1)[1].split("\ndef _parser()", 1)[0]
+    require(
+        build_body.index("strip_packages(rootfs)")
+        < build_body.index("_verify_runtime_lock_floor(rootfs, runtime_lockfile)")
+        < build_body.index("_verify_fips(")
+        < build_body.index("_trim_filesystem("),
+        "production build helper must run strip, lock floor, FIPS cross-checks, then filesystem trims",
     )
 
     builder_fetch = read("tools/fetch-builder-rpms.sh")
@@ -2777,14 +2825,17 @@ def check_lint_setup() -> None:
         "id: rpmlock-pytest",
         "name: rpmlock pytest",
         "entry: python -m pytest tools/tests/test_rpmlock.py -q",
+        "id: build-runtime-rootfs-pytest",
+        "name: build runtime rootfs pytest",
+        "entry: python -m pytest tools/tests/test_build_runtime_rootfs.py -q",
         "language: python",
         "always_run: true",
     ]:
         require(marker in precommit, f".pre-commit-config.yaml missing marker: {marker}")
     require(precommit.count("repo: local") == 1, ".pre-commit-config.yaml must carry exactly one local hook block")
     require(
-        precommit.count("pass_filenames: false") >= 2,
-        ".pre-commit-config.yaml must keep mypy and rpmlock pytest filename-independent",
+        precommit.count("pass_filenames: false") >= 3,
+        ".pre-commit-config.yaml must keep mypy and both pytest hooks filename-independent",
     )
 
     lint = read(".github/workflows/lint.yaml")
