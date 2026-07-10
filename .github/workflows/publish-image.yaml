@@ -27,7 +27,8 @@ env:
   SLSA_GENERATOR_TAG_SHA: "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a"
   SYFT_VERSION: "1.45.1"
   TRIVY_VERSION: "0.71.0"
-  GRYPE_VERSION: "0.87.0"
+  GRYPE_VERSION: "0.115.0"
+  SCANNER_DB_MAX_AGE_DAYS: "7"
   UBI_MINIMAL_IMAGE: registry.access.redhat.com/ubi9/ubi-minimal@sha256:ae09ecc3d754bc1726cbda3e2599cc7839e09fe1cc547ce173cf669b645be3cc
   UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:b498b3ea26111ab4b81d65139f2ebd2ef9a2abb7a4588b7fdcc54889f95e9caa
   OPENSSL_FIPS_MODULE_VERSION: "3.0.7-395c1a240fbfffd8"
@@ -215,6 +216,31 @@ jobs:
 
       - name: Install Grype for vulnerability gates
         run: bash tools/install-grype.sh
+
+      - name: Assert scanner DB freshness
+        run: |
+          set -euo pipefail
+
+          scanner_db_max_age_days="${SCANNER_DB_MAX_AGE_DAYS}"
+          case "${scanner_db_max_age_days}" in
+            "" | *[!0-9]*)
+              echo "SCANNER_DB_MAX_AGE_DAYS must be a positive integer, got: ${scanner_db_max_age_days}" >&2
+              exit 1
+              ;;
+          esac
+          if (( scanner_db_max_age_days < 1 )); then
+            echo "SCANNER_DB_MAX_AGE_DAYS must be at least 1" >&2
+            exit 1
+          fi
+
+          dist/tools/trivy image --download-db-only
+          dist/tools/grype db update
+          python tools/assert-scanner-db-freshness.py --max-age-days "${scanner_db_max_age_days}"
+
+          {
+            printf 'GRYPE_DB_VALIDATE_AGE=true\n'
+            printf 'GRYPE_DB_MAX_ALLOWED_BUILT_AGE=%sh\n' "$((scanner_db_max_age_days * 24))"
+          } >> "${GITHUB_ENV}"
 
       - name: Install OpenSCAP STIG tooling
         run: bash tools/install-openscap.sh

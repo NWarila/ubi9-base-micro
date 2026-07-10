@@ -582,6 +582,7 @@ def check_required_files() -> None:
         "tools/install-syft.sh",
         "tools/install-trivy.sh",
         "tools/install-grype.sh",
+        "tools/assert-scanner-db-freshness.py",
         "tools/assert-sbom-rpms.py",
         "tools/assert-vex.py",
         "tools/assert-no-rootfs-secrets.py",
@@ -1020,6 +1021,7 @@ def check_workflow() -> None:
         "tools/assert-reproducible.py --self-test",
         "bash tools/assert-rpm-lock-hashes.sh --self-test",
         "bash tools/generate-rpm-lock.sh --self-test",
+        "tools/assert-scanner-db-freshness.py --self-test",
         "tools/assert-vex.py --self-test",
         "tools/assert-no-rootfs-secrets.py --self-test",
         "tools/generate-nist-800-190-predicate.py --self-test",
@@ -1033,7 +1035,8 @@ def check_workflow() -> None:
         "bash -n tools/generate-rpm-lock.sh",
         "UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:",
         'TRIVY_VERSION: "0.71.0"',
-        'GRYPE_VERSION: "0.87.0"',
+        'GRYPE_VERSION: "0.115.0"',
+        'SCANNER_DB_MAX_AGE_DAYS: "7"',
         'SSG_VERSION: "0.1.81"',
         (
             'SSG_TARBALL_SHA512: "11e26cfa96a6f1bd98b3a131837e2f86c9a9851239337d86d624b01627faf10'
@@ -1063,12 +1066,14 @@ def check_workflow() -> None:
         "cancel-in-progress: false",
         "tools/verify.py",
         "bash tools/generate-rpm-lock.sh --self-test",
+        "tools/assert-scanner-db-freshness.py --self-test",
         "bash -n tools/run-test-gates.sh",
         "bash -n tools/fetch-runtime-rpms.sh",
         "bash -n tools/generate-rpm-lock.sh",
         "UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:",
         'TRIVY_VERSION: "0.71.0"',
-        'GRYPE_VERSION: "0.87.0"',
+        'GRYPE_VERSION: "0.115.0"',
+        'SCANNER_DB_MAX_AGE_DAYS: "7"',
         'SSG_VERSION: "0.1.81"',
         (
             'SSG_TARBALL_SHA512: "11e26cfa96a6f1bd98b3a131837e2f86c9a9851239337d86d624b01627faf10'
@@ -1136,6 +1141,12 @@ def check_workflow() -> None:
         "bash tools/install-syft.sh",
         "bash tools/install-trivy.sh",
         "bash tools/install-grype.sh",
+        "SCANNER_DB_MAX_AGE_DAYS",
+        "dist/tools/trivy image --download-db-only",
+        "dist/tools/grype db update",
+        "tools/assert-scanner-db-freshness.py",
+        "GRYPE_DB_VALIDATE_AGE=true",
+        "GRYPE_DB_MAX_ALLOWED_BUILT_AGE",
         "bash tools/install-openscap.sh",
         "bash tools/build-stig-datastream.sh",
         "bash tools/build.sh",
@@ -1174,6 +1185,17 @@ def check_workflow() -> None:
             marker in gate_runner or marker in read("containers/Dockerfile"),
             f"test gate runner missing marker: {marker}",
         )
+
+    freshness_index = gate_runner.find("tools/assert-scanner-db-freshness.py")
+    first_trivy_scan_index = gate_runner.find("--ignore-unfixed")
+    first_grype_scan_index = gate_runner.find("--only-fixed --fail-on high")
+    require(freshness_index >= 0, "test gate runner must invoke scanner DB freshness gate")
+    require(first_trivy_scan_index >= 0, "test gate runner must keep Trivy fixable scan")
+    require(first_grype_scan_index >= 0, "test gate runner must keep Grype fixable scan")
+    require(
+        freshness_index < first_trivy_scan_index and freshness_index < first_grype_scan_index,
+        "scanner DB freshness gate must run before vulnerability scans",
+    )
 
     forbidden = [
         "NWarila/.github/.github/workflows/",
@@ -1356,7 +1378,8 @@ def check_publish_workflow() -> None:
         'OCI_CREATED: "2024-01-01T00:00:00Z"',
         'SYFT_VERSION: "1.45.1"',
         'TRIVY_VERSION: "0.71.0"',
-        'GRYPE_VERSION: "0.87.0"',
+        'GRYPE_VERSION: "0.115.0"',
+        'SCANNER_DB_MAX_AGE_DAYS: "7"',
         "tools/build-stig-datastream.sh",
         "tools/run-stig-arf.sh",
         f'NIST_800_190_PREDICATE_TYPE: "{predicate_type("nist_800_190")}"',
@@ -1366,6 +1389,13 @@ def check_publish_workflow() -> None:
         "tools/install-syft.sh",
         "tools/install-trivy.sh",
         "tools/install-grype.sh",
+        "Assert scanner DB freshness",
+        "dist/tools/trivy image --download-db-only",
+        "dist/tools/grype db update",
+        "tools/assert-scanner-db-freshness.py",
+        "GRYPE_DB_VALIDATE_AGE=true",
+        "GRYPE_DB_MAX_ALLOWED_BUILT_AGE",
+        "${GITHUB_ENV}",
         "docker buildx imagetools inspect --raw",
         "steps.platform_digests.outputs.amd64_digest",
         "steps.platform_digests.outputs.arm64_digest",
@@ -1434,6 +1464,14 @@ def check_publish_workflow() -> None:
     ]
     missing = [marker for marker in required if marker not in text]
     require(not missing, "publish workflow missing required marker(s): " + ", ".join(missing))
+    freshness_index = text.find("Assert scanner DB freshness")
+    first_trivy_scan_index = text.find("Run Trivy fixable vulnerability gates")
+    first_grype_scan_index = text.find("Run Grype fixable vulnerability gates")
+    require(freshness_index >= 0, "publish workflow must assert scanner DB freshness")
+    require(
+        freshness_index < first_trivy_scan_index and freshness_index < first_grype_scan_index,
+        "publish workflow scanner DB freshness gate must run before vulnerability scans",
+    )
 
     forbidden = [
         "-regexp",
@@ -1655,7 +1693,7 @@ def check_scanner_install_scripts() -> None:
 
     grype = read("tools/install-grype.sh")
     for marker in [
-        "GRYPE_VERSION:-0.87.0",
+        "GRYPE_VERSION:-0.115.0",
         "github.com/anchore/grype/releases/download/v${version}",
         "grype_${version}_checksums.txt",
         "sha256sum -c -",
@@ -1663,6 +1701,20 @@ def check_scanner_install_scripts() -> None:
         "tar xzf",
     ]:
         require(marker in grype, f"Grype installer missing marker: {marker}")
+
+    freshness = read("tools/assert-scanner-db-freshness.py")
+    for marker in [
+        "DEFAULT_MAX_AGE_DAYS = 7",
+        "MIN_GRYPE_SCHEMA_MAJOR = 6",
+        "grype db status",
+        "DownloadedAt",
+        "NextUpdate",
+        "--grype-status-json",
+        "--trivy-metadata-json",
+        "--self-test",
+        "scanner DB freshness self-test: ok",
+    ]:
+        require(marker in freshness, f"scanner DB freshness helper missing marker: {marker}")
 
 
 def check_fips_config() -> None:
@@ -1799,6 +1851,7 @@ def check_helper_self_tests() -> None:
         "tools/assert-footprint.py",
         "tools/assert-no-phantom-packages.py",
         "tools/assert-reproducible.py",
+        "tools/assert-scanner-db-freshness.py",
         "tools/assert-cosign-rekor.py",
         "tools/assert-slsa-builder-id.py",
         "tools/assert-stig-tailoring.py",
@@ -2133,6 +2186,10 @@ def check_docs() -> None:
         "Refresh runtime RPM lockfiles",
         "direct CDN RPM URLs",
         "rpm -Uvh",
+        "Vulnerability Database Freshness",
+        "deliberately non-hermetic",
+        "DB freshness, not DB pinning",
+        "tools/assert-scanner-db-freshness.py",
     ]:
         require(marker in reproducibility_doc, f"docs/explanation/reproducibility.md missing marker: {marker}")
     require(
@@ -2197,6 +2254,7 @@ def check_docs() -> None:
         'cosign download sbom "${IMAGE_REF}" | grep -q glibc',
         "Trivy",
         "Grype",
+        "tools/assert-scanner-db-freshness.py",
         "OpenVEX default-deny",
         f"cosign verify-attestation --type {slsa_attestation_type()}",
         "STIG ARF",
@@ -2216,6 +2274,7 @@ def check_docs() -> None:
     for marker in [
         "tools/assert-reproducible.py",
         "tools/assert-rpm-lock-hashes.sh",
+        "tools/assert-scanner-db-freshness.py",
         "tools/assert-no-rootfs-secrets.py",
         "tools/assert-stig-arf.py",
         "tools/generate-stig-arf-predicate.py",

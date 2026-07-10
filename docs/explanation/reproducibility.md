@@ -87,6 +87,24 @@ The rpmdb remains present and valid because SBOM and scanner truthfulness depend
 on it. Differences in `/var/lib/rpm/rpmdb.sqlite` are gate failures; the rpmdb is
 not deleted, normalized away, or excluded from the rootfs comparison.
 
+## Vulnerability Database Freshness
+
+The vulnerability scanner databases are deliberately non-hermetic. Trivy and
+Grype are pinned scanner binaries, but their vulnerability data must move as
+vendors publish new CVEs and fixes. Pinning a scanner database would make a
+single scan reproducible while making the nightly sentinel blind to newly
+published vulnerabilities against the same frozen image.
+
+The invariant is DB freshness, not DB pinning. `tools/run-test-gates.sh` and the
+publish workflow explicitly download the scanner databases, run
+`tools/assert-scanner-db-freshness.py`, and only then accept Trivy or Grype scan
+results. The helper fails closed when metadata is missing, unreadable,
+malformed, stale, expired, or when Grype reports a schema below the required
+floor. Grype's native DB age validation is also enabled for the later Grype scan
+invocations. A changed scanner finding on tomorrow's nightly run is expected
+behavior: the image may be byte-identical while the vulnerability knowledge base
+has legitimately changed.
+
 ## RPM Lock Refresh Loop
 
 The lockfiles deliberately pin RPM NEVRAs and content hashes, so patched Red Hat
