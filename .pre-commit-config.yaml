@@ -70,4 +70,4 @@ repos:
         additional_dependencies: [pytest==8.4.1]
         pass_filenames: false
         always_run: true
-        files: ^(tools/rpmlock\.py|tools/tests/test_rpmlock\.py|rpm-lock/runtime\.(amd64|arm64)\.txt)$
+        files: ^(tools/rpmlock\.py|tools/tests/test_rpmlock\.py|rpm-lock/(builder|runtime)\.(amd64|arm64)\.txt)$

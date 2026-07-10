@@ -9,7 +9,9 @@
 !containers/fips/
 !containers/fips/openssl.cnf
 !tools/
+!tools/assert-builder-toolchain-floor.sh
 !tools/assert-rpm-lock-hashes.sh
+!tools/fetch-builder-rpms.sh
 !tools/fetch-openssl-fips-provider-rpms.sh
 !tools/fetch-runtime-rpms.sh
 !rpm-lock/

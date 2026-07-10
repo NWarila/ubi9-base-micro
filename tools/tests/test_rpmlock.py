@@ -17,6 +17,8 @@ from tools import rpmlock
 ROOT = Path(__file__).resolve().parents[2]
 AMD64_LOCK = ROOT / "rpm-lock" / "runtime.amd64.txt"
 ARM64_LOCK = ROOT / "rpm-lock" / "runtime.arm64.txt"
+BUILDER_AMD64_LOCK = ROOT / "rpm-lock" / "builder.amd64.txt"
+BUILDER_ARM64_LOCK = ROOT / "rpm-lock" / "builder.arm64.txt"
 EXPECTED_FINAL_NAMES = [
     "basesystem",
     "ca-certificates",
@@ -49,6 +51,10 @@ def _validate_text(tmp_path: Path, text: str, arch: str = "amd64") -> None:
 
 def _lock_text() -> str:
     return AMD64_LOCK.read_text(encoding="utf-8")
+
+
+def _builder_lock_text() -> str:
+    return BUILDER_AMD64_LOCK.read_text(encoding="utf-8")
 
 
 def _replace_first_data_row(text: str, replacement: list[str]) -> str:
@@ -104,6 +110,19 @@ def test_committed_lockfiles_parse_and_validate(arch: str, path: Path) -> None:
     assert lockfile.headers["arch"] == arch
     assert len(lockfile.rows) == 38
     assert len(lockfile.direct_entries) == len(lockfile.rows)
+
+
+@pytest.mark.parametrize(
+    ("arch", "path"),
+    [("amd64", BUILDER_AMD64_LOCK), ("arm64", BUILDER_ARM64_LOCK)],
+)
+def test_committed_builder_lockfiles_parse_and_validate(arch: str, path: Path) -> None:
+    lockfile = rpmlock.parse_builder(path)
+    rpmlock.validate_builder(lockfile, arch=arch)
+
+    assert lockfile.headers == {"arch": arch, "columns": rpmlock.BUILDER_COLUMNS}
+    assert [row.name for row in lockfile.rows] == list(rpmlock.BUILDER_PYTHON_NAMES)
+    assert len(lockfile.direct_entries) == len(lockfile.rows) == 7
 
 
 def test_floor_extracts_final_packages_in_input_order() -> None:
@@ -331,6 +350,39 @@ def test_rejects_provider_pin_mismatch(tmp_path: Path) -> None:
         _validate_text(tmp_path, mutated)
 
 
+def test_builder_lock_rejects_degenerate_runtime_grammar(tmp_path: Path) -> None:
+    path = tmp_path / "builder.txt"
+    path.write_text(
+        _builder_lock_text().replace(rpmlock.BUILDER_COLUMNS, rpmlock.COLUMNS, 1),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(rpmlock.LockError, match="invalid columns header"):
+        rpmlock.validate_builder(rpmlock.parse_builder(path), arch="amd64")
+
+
+def test_builder_lock_rejects_incomplete_closure(tmp_path: Path) -> None:
+    path = tmp_path / "builder.txt"
+    lines = [line for line in _builder_lock_text().splitlines() if "python3.12-pip-wheel" not in line]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(rpmlock.LockError, match="builder Python closure must contain exactly"):
+        rpmlock.validate_builder(rpmlock.parse_builder(path), arch="amd64")
+
+
+def test_builder_lock_rejects_package_field_that_is_not_row_nevra(tmp_path: Path) -> None:
+    path = tmp_path / "builder.txt"
+    lines = _builder_lock_text().splitlines()
+    row_index = next(index for index, line in enumerate(lines) if line and not line.startswith("#"))
+    parts = lines[row_index].split("|")
+    parts[0] = "expat-0-0.x86_64"
+    lines[row_index] = "|".join(parts)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(rpmlock.LockError, match="package field does not match builder row NEVRA"):
+        rpmlock.validate_builder(rpmlock.parse_builder(path), arch="amd64")
+
+
 def test_cli_validate_and_summary() -> None:
     command = [
         sys.executable,
@@ -348,3 +400,24 @@ def test_cli_validate_and_summary() -> None:
     assert len(cast(list[object], summary["rows"])) == 38
     assert len(cast(list[object], summary["direct_rpms"])) == 38
     assert len(cast(list[object], summary["floor"])) == 15
+
+
+def test_cli_builder_validate_and_summary() -> None:
+    validate_command = [
+        sys.executable,
+        str(ROOT / "tools" / "rpmlock.py"),
+        "builder-validate",
+        "--lockfile",
+        str(BUILDER_AMD64_LOCK),
+        "--arch",
+        "amd64",
+    ]
+    validate_result = subprocess.run(validate_command, cwd=ROOT, text=True, capture_output=True, check=False)
+    assert validate_result.returncode == 0, validate_result.stderr
+
+    summary_command = [*validate_command[:2], "builder-summary", *validate_command[3:]]
+    summary_result = subprocess.run(summary_command, cwd=ROOT, text=True, capture_output=True, check=False)
+    assert summary_result.returncode == 0, summary_result.stderr
+    summary = cast(dict[str, Any], json.loads(summary_result.stdout))
+    assert len(cast(list[object], summary["rows"])) == 7
+    assert len(cast(list[object], summary["direct_rpms"])) == 7
