@@ -75,6 +75,10 @@ ARG OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64
 ARG OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64
 ARG SOURCE_DATE_EPOCH
 
+COPY rpm-lock/builder.amd64.txt rpm-lock/builder.arm64.txt /tmp/rpm-lock/
+COPY tools/assert-builder-toolchain-floor.sh /tmp/assert-builder-toolchain-floor.sh
+COPY tools/build-runtime-rootfs.py /tmp/build-runtime-rootfs.py
+COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh
 COPY fetch-openssl-fips-provider-rpms.sh /usr/local/bin/fetch-openssl-fips-provider-rpms.sh
 
 RUN <<'CAPTURE'
@@ -84,6 +88,11 @@ case "${TARGETARCH}" in
   amd64) rpm_arch="x86_64" ;;
   arm64) rpm_arch="aarch64" ;;
   *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;;
+esac
+case "${TARGETARCH}" in
+  amd64) builder_lockfile="/tmp/rpm-lock/builder.amd64.txt" ;;
+  arm64) builder_lockfile="/tmp/rpm-lock/builder.arm64.txt" ;;
+  *) echo "unsupported TARGETARCH for builder RPM lockfile: ${TARGETARCH}" >&2; exit 1 ;;
 esac
 openssl_fips_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA}"
 fips_provider_nvr="${openssl_fips_provider_nevra#openssl-fips-provider-so-}"
@@ -130,6 +139,43 @@ if [[ -n "${DNF_REPOS}" ]]; then
   dnf_repo_args=(--disablerepo='*' "--enablerepo=${DNF_REPOS}")
 fi
 
+test -s "${builder_lockfile}" || {
+  echo "builder RPM lockfile missing: ${builder_lockfile}" >&2
+  exit 1
+}
+builder_rpm_paths=()
+while IFS='|' read -r package name epoch version release arch sha256_header sigmd5; do
+  case "${package}" in ""|\#*) continue ;; esac
+  test -n "${name}" && test -n "${epoch}" && test -n "${version}" && test -n "${release}" &&
+    test -n "${arch}" && test -n "${sha256_header}" && test -n "${sigmd5}"
+  case "${arch}" in
+    noarch|"${rpm_arch}") ;;
+    *) echo "locked builder package ${package} has wrong arch ${arch} for ${TARGETARCH}" >&2; exit 1 ;;
+  esac
+  builder_rpm_paths+=("/tmp/builder-rpms/${name}-${version}-${release}.${arch}.rpm")
+done < "${builder_lockfile}"
+test "${#builder_rpm_paths[@]}" -eq 7 || {
+  echo "builder RPM lockfile must yield exactly 7 packages" >&2
+  exit 1
+}
+snapshot_builder_toolchain() {
+  snapshot="$1"
+  : > "${snapshot}"
+  for package in rpm rpm-libs sqlite-libs glibc glibc-common; do
+    nevra="$(rpm -q --qf '%{NEVRA}\n' "${package}")"
+    printf '%s|%s\n' "${package}" "${nevra}" >> "${snapshot}"
+  done
+}
+snapshot_builder_toolchain /tmp/builder-toolchain.before
+mkdir -p /tmp/builder-rpms
+bash /tmp/fetch-builder-rpms.sh --targetarch "${TARGETARCH}" --lockfile "${builder_lockfile}" --dest /tmp/builder-rpms
+echo "installing locked builder Python RPM transaction"
+rpm -Uvh --oldpackage --replacepkgs --excludedocs "${builder_rpm_paths[@]}"
+snapshot_builder_toolchain /tmp/builder-toolchain.after
+bash /tmp/assert-builder-toolchain-floor.sh --before /tmp/builder-toolchain.before --after /tmp/builder-toolchain.after
+python3.12 -c 'import sys; print(sys.version)'
+rm -rf /tmp/builder-rpms /tmp/builder-toolchain.before /tmp/builder-toolchain.after
+
 mkdir -p /rootfs /out /tmp/fips-provider-rpms
 OPENSSL_FIPS_PROVIDER_NEVRA="${OPENSSL_FIPS_PROVIDER_NEVRA}" \
 OPENSSL_FIPS_PROVIDER_RPM_BASE_URL="${OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}" \
@@ -157,99 +203,7 @@ rpm --root=/rootfs -qa \
   --qf '%{NEVRA}|%{NAME}|%{EPOCHNUM}|%{VERSION}|%{RELEASE}|%{ARCH}|%{SHA256HEADER}|%{SIGMD5}\n' \
   | LC_ALL=C sort > /tmp/runtime.full.tsv
 
-if rpm --root=/rootfs -q bash >/dev/null 2>&1; then
-  rpm --root=/rootfs -e --nodeps --noscripts bash
-fi
-
-for executable in sh bash dash ash busybox ksh zsh tcsh csh dnf microdnf rpm yum; do
-  rm -f "/rootfs/usr/bin/${executable}" "/rootfs/usr/sbin/${executable}" \
-    "/rootfs/bin/${executable}" "/rootfs/sbin/${executable}"
-done
-for executable in sh bash dash ash busybox ksh zsh tcsh csh dnf microdnf rpm yum; do
-  if [[ -e "/rootfs/usr/bin/${executable}" || -e "/rootfs/usr/sbin/${executable}" ||
-        -e "/rootfs/bin/${executable}" || -e "/rootfs/sbin/${executable}" ]]; then
-    echo "forbidden executable '${executable}' survived in generated runtime rootfs" >&2
-    exit 1
-  fi
-done
-
-test -s /rootfs/var/lib/rpm/rpmdb.sqlite || test -s /rootfs/var/lib/rpm/Packages || {
-  echo "rpm database missing from generated rootfs" >&2
-  exit 1
-}
-test -e /rootfs/etc/pki/tls/certs/ca-bundle.crt || {
-  echo "RHEL CA bundle path missing from generated rootfs" >&2
-  exit 1
-}
-test -s /rootfs/usr/lib64/ossl-modules/fips.so || {
-  echo "OpenSSL FIPS provider missing from generated rootfs" >&2
-  exit 1
-}
-test -s /rootfs/usr/lib64/libcrypto.so.3 || {
-  echo "OpenSSL libcrypto missing from generated rootfs" >&2
-  exit 1
-}
-
-protected_deps="$(mktemp)"
-for object in \
-  /rootfs/usr/lib64/libcrypto.so.3 \
-  /rootfs/usr/lib64/libssl.so.3 \
-  /rootfs/usr/lib64/ossl-modules/fips.so \
-  /rootfs/usr/lib64/libc.so.6; do
-  test -e "${object}" || {
-    echo "required ldd root missing: ${object}" >&2
-    exit 1
-  }
-  realpath "${object}" >> "${protected_deps}"
-  LD_LIBRARY_PATH=/rootfs/usr/lib64 ldd "${object}" |
-    awk '/=> \// { print $3 } /^[[:space:]]*\// { print $1 }' |
-    while IFS= read -r dep; do
-      case "${dep}" in
-        /rootfs/*) test -e "${dep}" && realpath "${dep}" ;;
-        /usr/lib64/* | /lib64/*) test -e "/rootfs${dep}" && realpath "/rootfs${dep}" ;;
-      esac
-    done >> "${protected_deps}"
-done
-for loader in /rootfs/usr/lib64/ld-linux*.so.* /rootfs/lib64/ld-linux*.so.*; do
-  [[ -e "${loader}" ]] && realpath "${loader}" >> "${protected_deps}"
-done
-sort -u -o "${protected_deps}" "${protected_deps}"
-
-removable_packages=()
-for candidate in \
-  coreutils-single coreutils findutils grep sed p11-kit p11-kit-trust \
-  libsepol libselinux gmp pcre2 pcre libpcre ncurses-libs ncurses-base \
-  libsigsegv libffi libtasn1 libacl libattr libcap coreutils-common pcre2-syntax \
-  alternatives; do
-  if rpm --root=/rootfs -q "${candidate}" >/dev/null 2>&1; then
-    candidate_nevra="$(rpm --root=/rootfs -q --qf '%{NEVRA}\n' "${candidate}")"
-    protected_owned=""
-    while IFS= read -r owned_path; do
-      root_owned="/rootfs${owned_path}"
-      [[ -e "${root_owned}" ]] || continue
-      owned_real="$(realpath "${root_owned}" 2>/dev/null || true)"
-      if [[ -n "${owned_real}" ]] && grep -Fxq "${owned_real}" "${protected_deps}"; then
-        protected_owned="${owned_path}"
-        break
-      fi
-    done < <(rpm --root=/rootfs -ql "${candidate}")
-    if [[ -n "${protected_owned}" ]]; then
-      echo "strip candidate ${candidate_nevra} owns protected runtime dependency ${protected_owned}" >&2
-      exit 1
-    fi
-    removable_packages+=("${candidate}")
-  fi
-done
-
-if (( ${#removable_packages[@]} > 0 )); then
-  rpm --root=/rootfs -e --nodeps --noscripts "${removable_packages[@]}"
-  for removed_package in "${removable_packages[@]}"; do
-    if rpm --root=/rootfs -q "${removed_package}" >/dev/null 2>&1; then
-      echo "runtime package survived rpm removal: ${removed_package}" >&2
-      exit 1
-    fi
-  done
-fi
+python3.12 /tmp/build-runtime-rootfs.py strip-packages --rootfs /rootfs
 
 rpm --root=/rootfs -qa --qf '%{NEVRA}\n' | LC_ALL=C sort > /tmp/runtime.final.nevras
 actual_final_count="$(wc -l < /tmp/runtime.final.nevras | tr -d '[:space:]')"
@@ -359,8 +313,11 @@ generate_one() {
   trap 'rm -rf "${tmpdir:-}"' RETURN
 
   write_capture_dockerfile "${tmpdir}/Dockerfile"
+  mkdir -p "${tmpdir}/rpm-lock" "${tmpdir}/tools" "${tmpdir}/out"
+  cp "${repo_root}/rpm-lock/builder.amd64.txt" "${repo_root}/rpm-lock/builder.arm64.txt" "${tmpdir}/rpm-lock/"
+  cp "${repo_root}/tools/assert-builder-toolchain-floor.sh" "${repo_root}/tools/build-runtime-rootfs.py" \
+    "${repo_root}/tools/fetch-builder-rpms.sh" "${tmpdir}/tools/"
   cp "${repo_root}/tools/fetch-openssl-fips-provider-rpms.sh" "${tmpdir}/fetch-openssl-fips-provider-rpms.sh"
-  mkdir -p "${tmpdir}/out"
 
   docker buildx build \
     --progress plain \
