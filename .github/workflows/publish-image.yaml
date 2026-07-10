@@ -243,6 +243,9 @@ jobs:
             printf 'GRYPE_DB_MAX_ALLOWED_BUILT_AGE=%sh\n' "$((scanner_db_max_age_days * 24))"
           } >> "${GITHUB_ENV}"
 
+      - name: Assert fixable-CVE ignore scope
+        run: python tools/assert-ignore-scope.py
+
       - name: Install OpenSCAP STIG tooling
         run: bash tools/install-openscap.sh
 
@@ -382,7 +385,8 @@ jobs:
               --platform "${platform}" \
               --vuln-type os,library \
               --ignore-unfixed \
-              --severity HIGH,CRITICAL \
+              --severity MEDIUM,HIGH,CRITICAL \
+              --ignorefile security/cve-ignore.trivyignore.yaml \
               --exit-code 1 \
               "${image_ref}"
           done
@@ -395,6 +399,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          mkdir -p dist/vuln
           for arch in amd64 arm64; do
             case "${arch}" in
               amd64) digest="${AMD64_DIGEST}" ;;
@@ -406,7 +411,15 @@ jobs:
             esac
 
             image_ref="${IMAGE}@${digest}"
-            dist/tools/grype "${image_ref}" --only-fixed --fail-on high
+            grype_gate_json="dist/vuln/base-micro.${arch}.grype.gate.json"
+            dist/tools/grype "${image_ref}" \
+              --only-fixed \
+              --fail-on medium \
+              -c security/cve-ignore.grype.yaml \
+              --show-suppressed \
+              -o json \
+              --file "${grype_gate_json}"
+            python tools/assert-ignore-scope.py --grype-report "${grype_gate_json}"
           done
 
       - name: Run OpenVEX default-deny gates

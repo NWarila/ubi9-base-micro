@@ -7,7 +7,7 @@ it.
 | Path | Enforces |
 | --- | --- |
 | `tools/verify.py` | Repository contract checks: required files, pinned workflow inputs, deny-all ignore allowlists, documentation markers, Diataxis layout, ADR inventory, lint setup, helper self-tests, and attribution-residue denial. |
-| `tools/run-test-gates.sh` | Local orchestration for the image gate set: build, hardening, FIPS, footprint, STIG, SBOM, scanners, OpenVEX, rootfs secret scan, NIST SP 800-190 predicate validation, SLSA builder assertion, and Rekor assertion helpers. |
+| `tools/run-test-gates.sh` | Local orchestration for the image gate set: build, hardening, FIPS, footprint, STIG, SBOM, fixable MEDIUM+ scanners, OpenVEX, rootfs secret scan, NIST SP 800-190 predicate validation, SLSA builder assertion, and Rekor assertion helpers. |
 | `tools/assert-reproducible.py` | Builds the same runtime twice for a platform, exports both rootfs tar streams, reports canonical rootfs and rpmdb digests, fails on any byte, metadata, ownership, type, mtime, or presence difference when `--assert-byte-identical` is set, and fails when `--expect-from-contract` values from `contracts/image-manifest.json` do not match. |
 | `tools/assert-footprint.py` | Exports the runtime rootfs and fails when regular-file bytes exceed the configured H2 limit. |
 | `tools/assert-no-phantom-packages.py` | Compares rpmdb-declared payloads with the exported rootfs so stripped files cannot leave scanner-visible packages with missing shippable payload. |
@@ -16,6 +16,7 @@ it.
 | `tools/fetch-runtime-rpms.sh` | Fetches locked runtime RPMs from pinned Red Hat UBI CDN URLs, verifies whole-RPM SHA-256 values, and verifies Red Hat RPM signatures before installation. |
 | `tools/assert-sbom-rpms.py` | Confirms Syft rpmdb-derived SBOM output enumerates required runtime RPMs before SPDX and CycloneDX evidence is attested. |
 | `tools/assert-scanner-db-freshness.py` | Parses Grype DB status and Trivy DB metadata, then fails if either scanner database is missing, malformed, stale, expired, or below the required Grype schema floor. |
+| `tools/assert-ignore-scope.py` | Rejects missing, malformed, widened, version-unpinned, or expired fixable-CVE ignores and requires Grype gate evidence to contain exactly the two approved runtime suppressions. |
 | `tools/assert-vex.py` | Fails unless every unfixed HIGH or CRITICAL scanner finding has a matching reviewed OpenVEX statement under the CODEOWNERS-gated `vex/` path. |
 | `tools/assert-no-rootfs-secrets.py` | Scans the exported runtime rootfs for high-confidence clear-text credential patterns before NIST SP 800-190 evidence can be generated. |
 | `tools/generate-nist-800-190-predicate.py` | Generates and validates the NIST SP 800-190 section 4.1 image-control predicate. |
@@ -35,3 +36,11 @@ it.
 The local gates are intentionally fail-closed: a helper failure, parse failure,
 missing input, or unhandled evidence shape is treated as a failing gate rather
 than a skipped or advisory result.
+
+The fixable scanner gate rejects MEDIUM, HIGH, and CRITICAL findings. TD-6
+temporarily excuses only `CVE-2026-31790` on the two held FIPS provider packages
+at `3.0.7-8.el9`, with a review date of 2026-10-10. The scanner report pass is
+unfiltered and the separate unfixed OpenVEX default-deny scope remains HIGH and
+CRITICAL. On the current image, the threshold catches two findings and TD-6
+excuses the same two, so the immediate enforcement delta is zero; the
+forward-looking change blocks any other fixable Medium.

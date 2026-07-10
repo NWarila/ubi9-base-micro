@@ -546,6 +546,8 @@ def check_required_files() -> None:
         "contracts/examples/fips-status.arm64.json",
         "rpm-lock/runtime.amd64.txt",
         "rpm-lock/runtime.arm64.txt",
+        "security/cve-ignore.trivyignore.yaml",
+        "security/cve-ignore.grype.yaml",
         "docs/README.md",
         "docs/TECH-DEBT.md",
         "docs/compliance/README.md",
@@ -582,6 +584,7 @@ def check_required_files() -> None:
         "tools/install-syft.sh",
         "tools/install-trivy.sh",
         "tools/install-grype.sh",
+        "tools/assert-ignore-scope.py",
         "tools/assert-scanner-db-freshness.py",
         "tools/assert-sbom-rpms.py",
         "tools/assert-vex.py",
@@ -1168,11 +1171,17 @@ def check_workflow() -> None:
         "--expect-absent coreutils-common",
         "--expect-absent pcre2-syntax",
         "--expect-absent alternatives",
+        "tools/assert-ignore-scope.py",
         "dist/tools/trivy image",
         "--ignore-unfixed",
-        "--severity HIGH,CRITICAL",
+        "--severity MEDIUM,HIGH,CRITICAL",
+        "--ignorefile security/cve-ignore.trivyignore.yaml",
         "--exit-code 1",
-        'dist/tools/grype "${runtime_image}" --only-fixed --fail-on high',
+        "--only-fixed",
+        "--fail-on medium",
+        "-c security/cve-ignore.grype.yaml",
+        "--show-suppressed",
+        '--grype-report "${grype_gate_json}"',
         "--format json",
         '--file "${grype_json}"',
         "tools/assert-vex.py",
@@ -1187,15 +1196,39 @@ def check_workflow() -> None:
         )
 
     freshness_index = gate_runner.find("tools/assert-scanner-db-freshness.py")
+    ignore_scope_index = gate_runner.find("python tools/assert-ignore-scope.py")
     first_trivy_scan_index = gate_runner.find("--ignore-unfixed")
-    first_grype_scan_index = gate_runner.find("--only-fixed --fail-on high")
+    first_grype_scan_index = gate_runner.find("--only-fixed")
     require(freshness_index >= 0, "test gate runner must invoke scanner DB freshness gate")
+    require(ignore_scope_index >= 0, "test gate runner must invoke fixable-CVE ignore scope gate")
     require(first_trivy_scan_index >= 0, "test gate runner must keep Trivy fixable scan")
     require(first_grype_scan_index >= 0, "test gate runner must keep Grype fixable scan")
     require(
         freshness_index < first_trivy_scan_index and freshness_index < first_grype_scan_index,
         "scanner DB freshness gate must run before vulnerability scans",
     )
+    require(
+        ignore_scope_index < first_trivy_scan_index and ignore_scope_index < first_grype_scan_index,
+        "fixable-CVE ignore scope gate must run before vulnerability scans",
+    )
+
+    report_start = gate_runner.find('trivy_json="dist/vuln/base-micro.${arch}.trivy.all.json"')
+    vex_start = gate_runner.find("python tools/assert-vex.py")
+    require(
+        report_start >= 0 and vex_start > report_start, "test gate runner must keep an identifiable VEX report pass"
+    )
+    gate_pass = gate_runner[:report_start]
+    report_pass = gate_runner[report_start:vex_start]
+    require(
+        "--ignorefile security/cve-ignore.trivyignore.yaml" in gate_pass
+        and "-c security/cve-ignore.grype.yaml" in gate_pass,
+        "fixable scanner gate pass must use both explicit non-default ignore files",
+    )
+    require(
+        "--ignorefile" not in report_pass and "-c security/cve-ignore.grype.yaml" not in report_pass,
+        "VEX report pass must remain unfiltered",
+    )
+    require("--severity HIGH,CRITICAL" in report_pass, "Trivy VEX report severity scope must remain HIGH,CRITICAL")
 
     forbidden = [
         "NWarila/.github/.github/workflows/",
@@ -1396,6 +1429,8 @@ def check_publish_workflow() -> None:
         "GRYPE_DB_VALIDATE_AGE=true",
         "GRYPE_DB_MAX_ALLOWED_BUILT_AGE",
         "${GITHUB_ENV}",
+        "Assert fixable-CVE ignore scope",
+        "tools/assert-ignore-scope.py",
         "docker buildx imagetools inspect --raw",
         "steps.platform_digests.outputs.amd64_digest",
         "steps.platform_digests.outputs.arm64_digest",
@@ -1408,10 +1443,15 @@ def check_publish_workflow() -> None:
         "Run Trivy fixable vulnerability gates",
         "dist/tools/trivy image",
         "--ignore-unfixed",
-        "--severity HIGH,CRITICAL",
+        "--severity MEDIUM,HIGH,CRITICAL",
+        "--ignorefile security/cve-ignore.trivyignore.yaml",
         "--exit-code 1",
         "Run Grype fixable vulnerability gates",
-        "--only-fixed --fail-on high",
+        "--only-fixed",
+        "--fail-on medium",
+        "-c security/cve-ignore.grype.yaml",
+        "--show-suppressed",
+        '--grype-report "${grype_gate_json}"',
         "Run OpenVEX default-deny gates",
         "--format json",
         '--file "${grype_json}"',
@@ -1465,13 +1505,38 @@ def check_publish_workflow() -> None:
     missing = [marker for marker in required if marker not in text]
     require(not missing, "publish workflow missing required marker(s): " + ", ".join(missing))
     freshness_index = text.find("Assert scanner DB freshness")
+    ignore_scope_index = text.find("Assert fixable-CVE ignore scope")
     first_trivy_scan_index = text.find("Run Trivy fixable vulnerability gates")
     first_grype_scan_index = text.find("Run Grype fixable vulnerability gates")
     require(freshness_index >= 0, "publish workflow must assert scanner DB freshness")
+    require(ignore_scope_index >= 0, "publish workflow must assert fixable-CVE ignore scope")
     require(
         freshness_index < first_trivy_scan_index and freshness_index < first_grype_scan_index,
         "publish workflow scanner DB freshness gate must run before vulnerability scans",
     )
+    require(
+        ignore_scope_index < first_trivy_scan_index and ignore_scope_index < first_grype_scan_index,
+        "publish workflow fixable-CVE ignore scope gate must run before vulnerability scans",
+    )
+
+    trivy_gate = text[first_trivy_scan_index:first_grype_scan_index]
+    vex_report_index = text.find("Run OpenVEX default-deny gates")
+    require(vex_report_index > first_grype_scan_index, "publish workflow must keep an identifiable VEX report pass")
+    grype_gate = text[first_grype_scan_index:vex_report_index]
+    report_pass = text[vex_report_index:]
+    require(
+        "--ignorefile security/cve-ignore.trivyignore.yaml" in trivy_gate,
+        "publish Trivy fixable gate must use the explicit non-default ignore file",
+    )
+    require(
+        "-c security/cve-ignore.grype.yaml" in grype_gate,
+        "publish Grype fixable gate must use the explicit non-default ignore file",
+    )
+    require(
+        "--ignorefile" not in report_pass and "-c security/cve-ignore.grype.yaml" not in report_pass,
+        "publish VEX report pass must remain unfiltered",
+    )
+    require("--severity HIGH,CRITICAL" in report_pass, "publish Trivy VEX report scope must remain HIGH,CRITICAL")
 
     forbidden = [
         "-regexp",
@@ -1717,6 +1782,57 @@ def check_scanner_install_scripts() -> None:
         require(marker in freshness, f"scanner DB freshness helper missing marker: {marker}")
 
 
+def check_cve_ignore_policy() -> None:
+    gitignore = read(".gitignore")
+    for marker in [
+        "!/security/",
+        "!/security/cve-ignore.trivyignore.yaml",
+        "!/security/cve-ignore.grype.yaml",
+    ]:
+        require(marker in gitignore, f".gitignore must allowlist CVE ignore path: {marker}")
+
+    helper = read("tools/assert-ignore-scope.py")
+    for marker in [
+        'ALLOWED_CVE = "CVE-2026-31790"',
+        '"openssl-fips-provider"',
+        '"openssl-fips-provider-so"',
+        'ALLOWED_VERSION = "3.0.7-8.el9"',
+        "REVIEW_DATE = date(2026, 10, 10)",
+        "appliedIgnoreRules",
+        "--grype-report",
+        "--self-test",
+    ]:
+        require(marker in helper, f"CVE ignore scope helper missing marker: {marker}")
+
+    trivy_ignore = read("security/cve-ignore.trivyignore.yaml")
+    grype_ignore = read("security/cve-ignore.grype.yaml")
+    require("\n    purls:\n" in trivy_ignore, "Trivy ignore must use the plural purls key")
+    require("\n    purl:" not in trivy_ignore, "Trivy ignore must never use the singular purl key")
+    require("expired_at: 2026-10-10" in trivy_ignore, "Trivy ignore must pin the TD-6 review date")
+    require(
+        grype_ignore.count("review-by 2026-10-10") == 2,
+        "each Grype ignore must pin the TD-6 review date in its reason",
+    )
+
+    vex_helper = read("tools/assert-vex.py")
+    require(
+        'HIGH_CRITICAL = {"HIGH", "CRITICAL"}' in vex_helper,
+        "OpenVEX default-deny scope must remain HIGH/CRITICAL",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "tools/assert-ignore-scope.py")],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    require(
+        result.returncode == 0,
+        f"committed CVE ignore scope validation failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
+    )
+
+
 def check_fips_config() -> None:
     text = read("containers/fips/openssl.cnf")
     for marker in [
@@ -1851,6 +1967,7 @@ def check_helper_self_tests() -> None:
         "tools/assert-footprint.py",
         "tools/assert-no-phantom-packages.py",
         "tools/assert-reproducible.py",
+        "tools/assert-ignore-scope.py",
         "tools/assert-scanner-db-freshness.py",
         "tools/assert-cosign-rekor.py",
         "tools/assert-slsa-builder-id.py",
@@ -2022,6 +2139,7 @@ def check_docs() -> None:
     readme = read("README.md")
     acceptance = read("docs/compliance/acceptance.md")
     fips = read("docs/compliance/fips.md")
+    tech_debt = read("docs/TECH-DEBT.md")
     docs_index = read("docs/README.md")
     verify = read("docs/reference/verify.md")
     gates = read("docs/reference/gates.md")
@@ -2164,6 +2282,34 @@ def check_docs() -> None:
         "CODEOWNERS-gated" in vex_doc and f"cosign attest --type {predicate_type('openvex')}" in vex_doc,
         "docs/compliance/vex.md must describe VEX review and attestation flow",
     )
+    for source, source_text in [
+        ("docs/TECH-DEBT.md", tech_debt),
+        ("docs/reference/gates.md", gates),
+        ("docs/compliance/vex.md", vex_doc),
+    ]:
+        for marker in [
+            "CVE-2026-31790",
+            "3.0.7-8.el9",
+            "2026-10-10",
+            "MEDIUM",
+            "HIGH",
+            "CRITICAL",
+            "delta is zero",
+            "forward-looking",
+        ]:
+            require(marker in source_text, f"{source} missing fixable-CVE policy marker: {marker}")
+    for marker in [
+        "## TD-6:",
+        "CVSS 3.1 base score of 5.9",
+        "CVE-2026-2673",
+        "CVE-2026-5435",
+        "CVE-2026-5928",
+        "CVE-2026-6238",
+        "openssl-libs",
+        "glibc-common",
+        "glibc-minimal-langpack",
+    ]:
+        require(marker in tech_debt, f"docs/TECH-DEBT.md missing TD-6 marker: {marker}")
     for marker in [
         "SOURCE_DATE_EPOCH=1704067200",
         "tools/assert-reproducible.py --assert-byte-identical",
@@ -2503,6 +2649,7 @@ def main() -> int:
         check_hardening_script,
         check_sbom_assertion_script,
         check_scanner_install_scripts,
+        check_cve_ignore_policy,
         check_fips_config,
         check_fips_script,
         check_vex,
