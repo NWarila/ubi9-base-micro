@@ -922,6 +922,76 @@ def check_builder_toolchain_floor_self_test() -> None:
         )
 
 
+def check_rpm_lock_generator() -> None:
+    text = read("tools/generate-rpm-lock.sh")
+    capture = text.split("write_capture_dockerfile() {", 1)[1].split("\nvalidate_lockfile()", 1)[0]
+    pre_strip_snapshot = (
+        "rpm --root=/rootfs -qa \\\n"
+        "  --qf '%{NEVRA}|%{NAME}|%{EPOCHNUM}|%{VERSION}|%{RELEASE}|%{ARCH}|%{SHA256HEADER}|%{SIGMD5}\\n' \\\n"
+        "  | LC_ALL=C sort > /tmp/runtime.full.tsv"
+    )
+    strip_invocation = "python3.12 /tmp/build-runtime-rootfs.py strip-packages --rootfs /rootfs"
+    post_strip_snapshot = "rpm --root=/rootfs -qa --qf '%{NEVRA}\\n' | LC_ALL=C sort > /tmp/runtime.final.nevras"
+    count_floor = 'if [[ "${actual_final_count}" != "15" ]]; then'
+    required_names_floor = 'for package_name in "${required_final_names[@]}"; do'
+    classification = 'status = ($1 in final) ? "yes" : "no"'
+
+    for marker in [
+        pre_strip_snapshot,
+        strip_invocation,
+        post_strip_snapshot,
+        count_floor,
+        required_names_floor,
+        classification,
+    ]:
+        require(marker in capture, f"RPM lock generator missing capture-stage marker: {marker}")
+    require(text.count(strip_invocation) == 1, "RPM lock generator must invoke strip-packages exactly once")
+
+    pre_index = capture.index(pre_strip_snapshot)
+    strip_index = capture.index(strip_invocation)
+    post_index = capture.index(post_strip_snapshot)
+    require(
+        pre_index < strip_index < post_index,
+        "RPM lock generator must snapshot the full RPM set before stripping and the final RPM set after stripping",
+    )
+    require(
+        strip_index < capture.index(count_floor) < capture.index(required_names_floor) < capture.index(classification),
+        "RPM lock generator count floor, required-name floor, and classification must remain below stripping",
+    )
+
+    for marker in [
+        "protected_deps",
+        "removable_packages",
+        "coreutils-single coreutils findutils grep sed",
+        "LD_LIBRARY_PATH=/rootfs/usr/lib64 ldd",
+    ]:
+        require(marker not in text, f"RPM lock generator retains shadow strip marker: {marker}")
+
+    for marker in [
+        "COPY rpm-lock/builder.amd64.txt rpm-lock/builder.arm64.txt /tmp/rpm-lock/",
+        "COPY tools/assert-builder-toolchain-floor.sh /tmp/assert-builder-toolchain-floor.sh",
+        "COPY tools/build-runtime-rootfs.py /tmp/build-runtime-rootfs.py",
+        "COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh",
+    ]:
+        require(marker in capture, f"RPM lock generator missing capture-stage builder input: {marker}")
+
+    builder_fetch = "bash /tmp/fetch-builder-rpms.sh"
+    builder_install = 'rpm -Uvh --oldpackage --replacepkgs --excludedocs "${builder_rpm_paths[@]}"'
+    builder_floor = "bash /tmp/assert-builder-toolchain-floor.sh --before"
+    rootfs_assembly = "mkdir -p /rootfs /out /tmp/fips-provider-rpms"
+    runtime_install = "microdnf install -y --installroot=/rootfs"
+    for marker in [builder_fetch, builder_install, builder_floor, rootfs_assembly, runtime_install]:
+        require(marker in capture, f"RPM lock generator missing capture-stage builder ordering marker: {marker}")
+    require(
+        capture.index(builder_fetch)
+        < capture.index(builder_install)
+        < capture.index(builder_floor)
+        < capture.index(rootfs_assembly)
+        < capture.index(runtime_install),
+        "RPM lock generator must install and floor-check builder Python before /rootfs assembly",
+    )
+
+
 def check_dockerfile() -> None:
     text = read("containers/Dockerfile")
     required = [
@@ -2898,6 +2968,7 @@ def main() -> int:
         check_community_profile,
         check_renovate_config,
         check_dockerfile,
+        check_rpm_lock_generator,
         check_dockerfile_forbidden_scan_self_test,
         check_builder_toolchain_floor_self_test,
         check_rpm_locks,
