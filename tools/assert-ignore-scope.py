@@ -494,15 +494,30 @@ def run_self_test() -> None:
                 "      - pkg:rpm/redhat/openssl-fips-provider-so@3.0.7-8.el9\n",
                 "",
             ),
-            "singular trivy purl": TRIVY_FIXTURE.replace("    purls:\n      - ", "    purl: ", 1),
+            "singular trivy purl": TRIVY_FIXTURE.replace(
+                "    purls:\n      - pkg:rpm/redhat/openssl-fips-provider@3.0.7-8.el9\n"
+                "      - pkg:rpm/redhat/openssl-fips-provider-so@3.0.7-8.el9\n",
+                "    purl: pkg:rpm/redhat/not-the-provider@3.0.7-8.el9\n",
+            ),
+            "unknown trivy top-level key": TRIVY_FIXTURE + "zzzfoo: junk\n",
             "unknown trivy key": TRIVY_FIXTURE.replace(
                 "    expired_at: 2026-10-10", "    expired_at: 2026-10-10\n    zzzfoo: junk"
             ),
-            "extra trivy CVE": TRIVY_FIXTURE.replace(ALLOWED_CVE, "CVE-2099-0001", 1),
+            "extra trivy CVE": TRIVY_FIXTURE.replace(
+                "vulnerabilities:\n",
+                "vulnerabilities:\n"
+                "  - id: CVE-2099-0001\n"
+                "    purls:\n"
+                "      - pkg:rpm/redhat/openssl-fips-provider@3.0.7-8.el9\n"
+                '    statement: "mutation"\n'
+                "    expired_at: 2026-10-10\n",
+                1,
+            ),
             "extra trivy package": TRIVY_FIXTURE.replace("openssl-fips-provider-so", "openssl-libs"),
             "wildcard trivy package": TRIVY_FIXTURE.replace("openssl-fips-provider-so", "openssl-*"),
             "wrong trivy version": TRIVY_FIXTURE.replace(ALLOWED_VERSION, "3.0.7-9.el9", 1),
             "expired trivy date": TRIVY_FIXTURE.replace("2026-10-10", "2020-01-01"),
+            "unparseable trivy date": TRIVY_FIXTURE.replace("2026-10-10", "not-a-date"),
             "malformed trivy YAML": "vulnerabilities:\n   - id: CVE-2026-31790\n",
         }
         for name, content in mutations.items():
@@ -522,6 +537,7 @@ def run_self_test() -> None:
         grype.write_text(GRYPE_FIXTURE, encoding="utf-8")
 
         expect_failure("missing trivy file", lambda: validate_ignore_files(root / "missing.yaml", grype, today))
+        expect_failure("unreadable trivy path", lambda: validate_ignore_files(root, grype, today))
         expect_failure("review date elapsed", lambda: validate_ignore_files(trivy, grype, date(2026, 10, 11)))
         report.write_text(json.dumps(grype_report_fixture(extra=True)), encoding="utf-8")
         expect_failure("extra runtime suppression", lambda: validate_grype_report(report))
