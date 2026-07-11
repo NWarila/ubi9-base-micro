@@ -38,6 +38,48 @@ EXPECTED_FINAL_NAMES = [
 ]
 
 
+def _policy_cli_args(policy: rpmlock.LockPolicy) -> list[str]:
+    return [
+        "--source-date-epoch",
+        policy.source_date_epoch,
+        "--openssl-fips-provider-nevra",
+        policy.openssl_fips_provider_nevra,
+        "--openssl-fips-provider-rpm-base-url",
+        policy.openssl_fips_provider_rpm_base_url,
+        "--openssl-fips-provider-rpm-sha256-x86-64",
+        policy.openssl_fips_provider_rpm_sha256_x86_64,
+        "--openssl-fips-provider-rpm-sha256-aarch64",
+        policy.openssl_fips_provider_rpm_sha256_aarch64,
+        "--openssl-fips-provider-so-rpm-sha256-x86-64",
+        policy.openssl_fips_provider_so_rpm_sha256_x86_64,
+        "--openssl-fips-provider-so-rpm-sha256-aarch64",
+        policy.openssl_fips_provider_so_rpm_sha256_aarch64,
+    ]
+
+
+def _expected_rpm_filename_bytes(path: Path) -> bytes:
+    filenames: list[bytes] = []
+    for line in path.read_bytes().splitlines():
+        if not line or line.startswith(b"#"):
+            continue
+        columns = line.split(b"|")
+        filenames.append(b"-".join((columns[2], columns[4], columns[5])) + b"." + columns[6] + b".rpm")
+    return b"\n".join(filenames) + b"\n"
+
+
+def _rpm_filenames_command(path: Path, arch: str, policy: rpmlock.LockPolicy) -> list[str]:
+    return [
+        sys.executable,
+        str(ROOT / "tools" / "rpmlock.py"),
+        "rpm-filenames",
+        "--lockfile",
+        str(path),
+        "--arch",
+        arch,
+        *_policy_cli_args(policy),
+    ]
+
+
 def _write_lock(tmp_path: Path, text: str) -> Path:
     path = tmp_path / "runtime.txt"
     path.write_text(text, encoding="utf-8")
@@ -140,6 +182,68 @@ def test_rpm_filename_derivation_omits_epoch() -> None:
     assert row.epoch == "1"
     assert row.package.startswith("findutils-1:")
     assert rpmlock.rpm_filename(row) == "findutils-4.8.0-7.el9.x86_64.rpm"
+
+
+@pytest.mark.parametrize(("arch", "path"), [("amd64", AMD64_LOCK), ("arm64", ARM64_LOCK)])
+def test_cli_rpm_filenames_matches_independent_lock_projection(arch: str, path: Path) -> None:
+    result = subprocess.run(
+        _rpm_filenames_command(path, arch, rpmlock.LockPolicy.from_repo()),
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr.decode()
+    assert result.stdout == _expected_rpm_filename_bytes(path)
+    assert len(result.stdout.splitlines()) == 38
+
+
+def test_cli_rpm_filenames_includes_final_row_without_terminal_lf(tmp_path: Path) -> None:
+    path = tmp_path / "runtime.amd64.txt"
+    path.write_bytes(AMD64_LOCK.read_bytes().removesuffix(b"\n"))
+
+    result = subprocess.run(
+        _rpm_filenames_command(path, "amd64", rpmlock.LockPolicy.from_repo()),
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr.decode()
+    assert result.stdout == _expected_rpm_filename_bytes(path)
+    assert result.stdout.splitlines()[-1] == _expected_rpm_filename_bytes(path).splitlines()[-1]
+
+
+def test_cli_full_explicit_policy_bypasses_repo_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
+    policy = rpmlock.LockPolicy.from_repo()
+
+    def fail_from_repo(_cls: type[rpmlock.LockPolicy], _repo_root: Path | None = None) -> rpmlock.LockPolicy:
+        raise AssertionError("LockPolicy.from_repo must not run for a fully explicit policy")
+
+    monkeypatch.setattr(rpmlock.LockPolicy, "from_repo", classmethod(fail_from_repo))
+
+    assert rpmlock.main(_rpm_filenames_command(AMD64_LOCK, "amd64", policy)[2:]) == 0
+
+
+def test_cli_incomplete_policy_uses_and_enforces_repo_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    mismatched_policy = rpmlock.LockPolicy.from_repo().with_overrides(source_date_epoch="1")
+    calls = 0
+
+    def fallback_policy(_cls: type[rpmlock.LockPolicy], _repo_root: Path | None = None) -> rpmlock.LockPolicy:
+        nonlocal calls
+        calls += 1
+        return mismatched_policy
+
+    monkeypatch.setattr(rpmlock.LockPolicy, "from_repo", classmethod(fallback_policy))
+
+    result = rpmlock.main(["validate", "--lockfile", str(AMD64_LOCK), "--arch", "amd64"])
+
+    assert result == 1
+    assert calls == 1
+    assert "invalid source_date_epoch header" in capsys.readouterr().err
 
 
 def test_direct_rpms_parse_and_preserve_order() -> None:

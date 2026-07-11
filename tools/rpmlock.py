@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # Purpose: Canonical parser and validator for runtime and discarded-stage builder RPM lockfiles.
 # Role: tooling
-# Micro-container candidate: gate-adjacent - host/CI lockfile contract validation, not copied into image stages.
-# Build-process: no - validates generated lock artifacts; not executed inside image builds.
+# Micro-container candidate: gate-adjacent - host/CI validation and discarded-stage filename emission.
+# Build-process: yes - validates locks and emits runtime RPM filenames in the rpm-rootfs build stage.
 
 """Parse and validate runtime and builder RPM lockfiles."""
 
@@ -650,6 +650,25 @@ def direct_rpms(lockfile: Lockfile) -> list[tuple[str, str, str]]:
 
 
 def _policy_from_args(args: argparse.Namespace) -> LockPolicy:
+    explicit_values = (
+        args.source_date_epoch,
+        args.openssl_fips_provider_nevra,
+        args.openssl_fips_provider_rpm_base_url,
+        args.openssl_fips_provider_rpm_sha256_x86_64,
+        args.openssl_fips_provider_rpm_sha256_aarch64,
+        args.openssl_fips_provider_so_rpm_sha256_x86_64,
+        args.openssl_fips_provider_so_rpm_sha256_aarch64,
+    )
+    if all(value is not None for value in explicit_values):
+        return LockPolicy(
+            source_date_epoch=cast(str, args.source_date_epoch),
+            openssl_fips_provider_nevra=cast(str, args.openssl_fips_provider_nevra),
+            openssl_fips_provider_rpm_base_url=cast(str, args.openssl_fips_provider_rpm_base_url),
+            openssl_fips_provider_rpm_sha256_x86_64=cast(str, args.openssl_fips_provider_rpm_sha256_x86_64),
+            openssl_fips_provider_rpm_sha256_aarch64=cast(str, args.openssl_fips_provider_rpm_sha256_aarch64),
+            openssl_fips_provider_so_rpm_sha256_x86_64=cast(str, args.openssl_fips_provider_so_rpm_sha256_x86_64),
+            openssl_fips_provider_so_rpm_sha256_aarch64=cast(str, args.openssl_fips_provider_so_rpm_sha256_aarch64),
+        )
     return LockPolicy.from_repo().with_overrides(
         source_date_epoch=args.source_date_epoch,
         openssl_fips_provider_nevra=args.openssl_fips_provider_nevra,
