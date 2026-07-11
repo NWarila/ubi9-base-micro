@@ -20,6 +20,102 @@ in approved mode, and removes runtime shell/package-manager entry points. The
 leaf image or application still owns app-specific minimization such as Java
 `jdeps`/`jlink`, Python stdlib pruning, and application dependency trimming.
 
+## Verify From a Clean Machine (No Auth)
+
+Anyone can cryptographically verify the published
+`ghcr.io/nwarila/ubi9-base-micro:base-micro` image with no registry
+authentication. The prerequisites are `cosign`, `crane`, `jq`, and
+`slsa-verifier`.
+
+Resolve the moving `base-micro` tag once, then anchor every child lookup to the
+resolved index so a concurrent publish cannot mix index and child generations:
+
+```sh
+IMAGE="ghcr.io/nwarila/ubi9-base-micro"
+TAG="base-micro"
+INDEX_DIGEST="$(crane digest "${IMAGE}:${TAG}")"
+INDEX_REF="${IMAGE}@${INDEX_DIGEST}"
+CHILD_DIGEST="$(crane digest --platform linux/amd64 "${INDEX_REF}")"
+CHILD_REF="${IMAGE}@${CHILD_DIGEST}"
+PUBLISH_REF="refs/heads/main"
+```
+
+Verify the index signature:
+
+```sh
+cosign verify "${INDEX_REF}" \
+  --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+```
+
+Verify the SPDX and CycloneDX attestations on the selected platform child:
+
+```sh
+cosign verify-attestation --type spdxjson "${CHILD_REF}" \
+  --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+```
+
+```sh
+cosign verify-attestation --type cyclonedx "${CHILD_REF}" \
+  --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+```
+
+Check the verified SPDX predicate for the required glibc package:
+
+```sh
+cosign verify-attestation --type spdxjson "${CHILD_REF}" \
+  --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  | jq -r '.payload | @base64d | fromjson | .predicate.packages[].name' | grep -q glibc
+```
+
+When a `vex/*.json` file exists in the publishing commit, verify the OpenVEX
+attestation on the selected platform child:
+
+```sh
+cosign verify-attestation --type openvex "${CHILD_REF}" \
+  --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+```
+
+Verify the NIST SP 800-190 section 4.1 image-control predicate:
+
+```sh
+cosign verify-attestation --type https://nwarila.dev/attestations/nist-sp-800-190-image/v1 "${CHILD_REF}" \
+  --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+```
+
+Verify the tailored RHEL9 STIG ARF predicate:
+
+```sh
+cosign verify-attestation --type https://nwarila.dev/attestations/stig-arf/v1 "${CHILD_REF}" \
+  --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+```
+
+Finally, verify the index-bound SLSA provenance with both verifiers:
+
+```sh
+cosign verify-attestation --type slsaprovenance "${INDEX_REF}" \
+  --certificate-identity "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+```
+
+```sh
+slsa-verifier verify-image "${INDEX_REF}" \
+  --source-uri github.com/NWarila/ubi9-base-micro \
+  --builder-id "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0"
+```
+
+[`docs/reference/verify.md`](docs/reference/verify.md) is the authoritative full
+contract, including rationale and edge cases. See also the
+[`docs/how-to/verify-a-published-image.md`](docs/how-to/verify-a-published-image.md)
+task flow. `gh attestation verify` is not part of this repository's
+published-image contract.
+
 ## Image Family
 
 Only `ubi9-base-micro` exists in this repository today; the language variants
@@ -71,15 +167,6 @@ The repository namespace for publish work is:
 ```text
 ghcr.io/nwarila/ubi9-base-micro
 ```
-
-## Verify a Published Digest
-
-Published digest verification uses `cosign verify`, `cosign verify-attestation`,
-and `slsa-verifier verify-image` against exact GitHub Actions OIDC identities.
-Use [`docs/reference/verify.md`](docs/reference/verify.md) for the copy-paste
-contract and [`docs/how-to/verify-a-published-image.md`](docs/how-to/verify-a-published-image.md)
-for the task flow. `gh attestation verify` is not part of this repository's
-published-image contract.
 
 ## Security and Compliance Posture
 
