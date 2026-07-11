@@ -2531,7 +2531,8 @@ def check_docs() -> None:
     verify_hero_start = readme.index(verify_hero_heading)
     verify_hero_tail = readme[verify_hero_start + len(verify_hero_heading) :]
     verify_hero_end_match = re.search(r"^## ", verify_hero_tail, re.MULTILINE)
-    require(verify_hero_end_match is not None, "README.md verify hero must be followed by another section")
+    if verify_hero_end_match is None:
+        raise VerifyError("README.md verify hero must be followed by another section")
     verify_hero_end = verify_hero_start + len(verify_hero_heading) + verify_hero_end_match.start()
     verify_hero = readme[verify_hero_start:verify_hero_end]
     for marker in [
