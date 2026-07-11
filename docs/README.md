@@ -34,13 +34,13 @@ Documentation for this repository follows the Diataxis framework.
 ## Explanation
 
 - [`reproducibility.md`](explanation/reproducibility.md) - F3 byte-for-byte harness, deterministic epoch, direct-CDN runtime RPM sourcing, rpmdb determinism, refresh loop, and build-failing hard gate.
-- [`footprint.md`](explanation/footprint.md) - runtime footprint measurement contract, STEP024 H2 rationale, and current amd64 evidence.
+- [`footprint.md`](explanation/footprint.md) - runtime footprint measurement contract, the 25 MiB ceiling rationale, and current amd64 evidence.
 - [`fips-mechanism.md`](explanation/fips-mechanism.md) - config-only approved-mode mechanism and per-architecture #4857 scope.
 
 ## Compliance
 
 - [`README.md`](compliance/README.md) - compliance documentation index.
-- [`acceptance.md`](compliance/acceptance.md) - copied base-image Definition of Done with this repository's namespace note and current FIPS mechanism corrections.
+- [`acceptance.md`](compliance/acceptance.md) - repository-native runtime-image acceptance criteria and their enforcement boundaries.
 - [`fips.md`](compliance/fips.md) - OpenSSL FIPS-provider ledger, family CMVP context, out-of-scope certificates, approved-mode mechanism, per-architecture validation scope, and non-FIPS-host scope.
 - [`nist-800-190.md`](compliance/nist-800-190.md) - section 4.1 image-control predicate URI, control mapping, and not-CIS-Docker scope.
 - [`stig.md`](compliance/stig.md) - image-scoped RHEL9 STIG tailoring, mass-N/A guard, ARF predicate type, and scan scope.

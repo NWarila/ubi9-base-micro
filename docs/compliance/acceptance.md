@@ -1,132 +1,59 @@
-# Repository Namespace Note
+# Acceptance Criteria
 
-This repository publishes under `ghcr.io/nwarila/ubi9-base-micro`. Any copied acceptance-spec references to `ghcr.io/nwarila-platform/*` are superseded for this repository by the own-account namespace above.
+This document states the acceptance policy for the image produced by this
+repository. Command-level consumer verification is canonical in
+[`../how-to/verify-a-published-image.md`](../how-to/verify-a-published-image.md)
+and [`../reference/verify.md`](../reference/verify.md); the separation between
+pull-request, publish, and post-publish proof is summarized in
+[`../reference/verification-contract.md`](../reference/verification-contract.md).
 
-## `ubi9-base` — Definition of Done (Phase-1 Acceptance Spec)
+## Scope and enforcement boundaries
 
-> **Status:** the formal, objective acceptance gate for the platform's first repo, `ubi9-base`.
-> **Enforced two ways:** (1) **in-CI** — the publish workflow fails the build if a gating criterion is unmet; (2) **independent post-publish audit** — from a clean, unauthenticated machine, every published image is pulled and verified. A criterion is "done" only when *both* pass.
-> **Companion docs:** the platform architecture, rockcraft-parity rationale, and org-wide audit live outside this repository; this copy keeps only the base-image acceptance contract that this repository enforces.
-> This file ships into the repo (e.g. `docs/compliance/acceptance.md`) so CI and the audit enforce the same spec.
+The published artifact is the `base-micro` runtime image at
+`ghcr.io/nwarila/ubi9-base-micro`. The publish workflow creates one OCI index
+with `linux/amd64` and `linux/arm64` children. The `base-micro-dev` target is
+built for local and pull-request tests but is not published, signed, attested,
+or covered by the post-publish claims below.
 
-## The one-line DoD
+Pull-request checks prove only pre-publication properties. Publication evidence
+is produced only on pushes to `main` and `v*` tags, and anonymous verification
+is a separate post-publish check against immutable digests. The repository runs
+the named checks when their workflows are triggered, but required status checks
+are not enforced; these checks are not claimed to block merges.
 
-> An unrelated person, on a clean machine, can **anonymously pull all 8 images by digest** and have **`cosign` + `slsa-verifier` + every attestation check pass against the exact signer identity**; CI's **hardening + per-variant STIG-ARF + dual-scanner CVE + OpenVEX-default-deny** gates are green; the **FIPS/CMVP evidence is recorded truthfully** (proven or honestly scoped); **nightly rebuild is proven**; and **each variant meets-or-beats its Canonical rock on security while landing within its documented footprint target** — shipping STIG ARF + CMVP FIPS + SLSA L3 that rocks don't.
+## Criteria and gates
 
-## Scope — the 8 images
+| Criterion | Accepted state | Enforcing gate |
+| --- | --- | --- |
+| Multi-architecture runtime publication | The runtime target publishes as an OCI index with `linux/amd64` and `linux/arm64` children. The development target remains built-not-published. | `.github/workflows/publish-image.yaml` builds and pushes only the `runtime` target, then resolves both platform child digests. |
+| Signed publication, contract assertion, and transparency evidence | The publish workflow signs the index first. It then exports each published child and requires its canonical rootfs digest and rpmdb digest to match `contracts/image-manifest.json` before producing repository attestations, SLSA provenance, and the Rekor roll-up. Known residual: because the signature is written before the published-rootfs assertion, a later assertion failure stops all later evidence but cannot retract the already-written signature. | `publish-image.yaml`; `tools/assert-reproducible.py --expect-from-contract`; `tools/assert-cosign-rekor.py`. |
+| Anonymous consumer verification | A clean, unauthenticated consumer resolves one immutable index, verifies the Cosign signature on that index, verifies SPDX, CycloneDX, NIST SP 800-190, tailored STIG ARF, and any published OpenVEX attestations on each platform child, then verifies both the `slsaprovenance` attestation and `slsa-verifier` result on the index against exact identities. | The post-publish procedure in [`../reference/verify.md`](../reference/verify.md), reached through [`../how-to/verify-a-published-image.md`](../how-to/verify-a-published-image.md). The authenticated SBOM content check is summarized below; an attached-BuildKit-SBOM download path is not part of this contract. |
+| Byte-for-byte reproducibility | **Byte-for-byte reproducible (HARD gate):** two builds from identical inputs must export byte-identical rootfs archives independently for `linux/amd64` and `linux/arm64`. The rpmdb remains in scope; byte differences are failures, with no normalization or retraction escape. Each published child must also match the per-architecture rootfs and rpmdb contract. | `.github/workflows/build.yaml` and `.github/workflows/nightly.yaml` run `tools/assert-reproducible.py --assert-byte-identical` for both architectures; `publish-image.yaml` runs the published-child `--expect-from-contract` assertion. |
+| Runtime hardening | The runtime has no shell or package-manager executable, runs as UID 65532, retains a valid rpmdb, contains the CA bundle, and preserves the declared runtime identity and ownership constraints. | `tests/hardening.sh`, `tools/assert-rootfs-identity.py`, and `tools/assert-no-phantom-packages.py`, orchestrated by `tools/run-test-gates.sh` in `.github/workflows/build.yaml` and `.github/workflows/nightly.yaml`. |
+| Fixable vulnerability policy | Trivy and Grype independently reject fixable MEDIUM, HIGH, and CRITICAL findings. The only exception is the repository's `TD-6`: `CVE-2026-31790` on exactly `openssl-fips-provider` and `openssl-fips-provider-so` at exactly `3.0.7-8.el9`, expiring on `2026-10-10`; both scanner configurations and `tools/assert-ignore-scope.py` enforce that two-package, version-pinned boundary. | `tools/run-test-gates.sh`, `security/cve-ignore.trivyignore.yaml`, `security/cve-ignore.grype.yaml`, and the equivalent per-child scanner steps in `publish-image.yaml`. |
+| Unfixed vulnerability policy | Separately from the fixable gate, every unfixed HIGH or CRITICAL finding from either scanner is default-denied unless a reviewed OpenVEX statement has an accepted clearing status and matches the product. The live `CVE-2026-31790` statement is `affected`; it is disclosure only and clears nothing. | `tools/assert-vex.py`, the CODEOWNERS-gated `vex/` documents, and the per-child scan and OpenVEX steps in `tools/run-test-gates.sh` and `publish-image.yaml`. |
+| Scanner database freshness | Trivy metadata and Grype database status must be parseable, schema-compatible, and no older than the configured maximum age before either scanner result is accepted. | `tools/assert-scanner-db-freshness.py` in `tools/run-test-gates.sh` and `publish-image.yaml`. |
+| Child SBOM evidence | Each published child has rpmdb-derived SPDX and CycloneDX attestations. A gate-only Syft inventory and both emitted formats must contain the required RPM floor and a nontrivial package count; phantom-package checks corroborate the inventory against exported runtime content and the rpmdb. | `tools/assert-sbom-rpms.py`, `tools/assert-no-phantom-packages.py`, and the per-child SBOM generation, attestation, and verified-payload checks in `publish-image.yaml`. |
+| Rootfs secret exclusion | The exported runtime rootfs must pass the secret scan before NIST evidence is generated. | `tools/assert-no-rootfs-secrets.py` precedes `tools/generate-nist-800-190-predicate.py` in `tools/run-test-gates.sh` and `publish-image.yaml`. |
+| Tailored STIG evidence | The pinned RHEL 9 ComplianceAsCode datastream and committed tailoring must produce a parseable ARF with no applicable failures at the configured threshold, no unaccounted mass-N/A omissions, and deterministic coverage for selected identity and ownership rules. Each child receives the tailored STIG ARF attestation. | `tools/assert-stig-tailoring.py`, `tools/assert-stig-arf.py`, `tools/assert-rootfs-identity.py`, `tools/run-stig-arf.sh`, and the per-child attestation steps in `publish-image.yaml`. |
+| NIST SP 800-190 evidence | Each child receives the repository's validated NIST SP 800-190 section 4.1 image-control predicate, backed by the rootfs secret report and the other recorded image-control evidence. This is image evidence, not a CIS Docker host claim. | `tools/generate-nist-800-190-predicate.py` in `tools/run-test-gates.sh`; per-child generation, attestation, and verification in `publish-image.yaml`. |
+| Per-architecture FIPS scope | Both architectures ship `openssl-fips-provider-so-3.0.7-8.el9`, configure the Red Hat OpenSSL provider in approved mode, run the provider self-test, reject MD5, and record the same module version. Only `linux/amd64` is within certificate #4857's validated operational environments. `linux/arm64` is approved-mode configured and self-test passing but explicitly is not a CMVP-validated configuration. Claims remain module-scoped and approved-mode-scoped as defined in [`fips.md`](fips.md). | The build-stage FIPS verification, `tests/fips.sh`, per-architecture status artifacts and manifest assertions, `tools/run-test-gates.sh`, and `publish-image.yaml`. |
+| Runtime footprint | The `linux/amd64` runtime's exported-rootfs regular-file total must not exceed 25 MiB (26,214,400 bytes). No both-architecture footprint ceiling is claimed. | `tools/assert-footprint.py` through the default `linux/amd64` invocation of `tools/run-test-gates.sh`; measurement details are in [`../explanation/footprint.md`](../explanation/footprint.md). |
+| Scheduled sentinel capability | A daily scheduled workflow can rerun repository verification, both-architecture byte reproducibility, and the default `linux/amd64` gate harness. It does not publish, prove a historical green streak, promise future currency, or block merges. | `.github/workflows/nightly.yaml`. |
 
-**Topology (validated 2026-06-17): POLYREPO** — **four repos** (`ubi9-base-micro` root + `ubi9-base-python`/`-node`/`-java`, each `FROM ubi9-base-micro@digest`) publish **4 runtime variants** + **4 `-dev` siblings** to `ghcr.io/nwarila-platform/*`. **This DoD applies per-repo:** the `ubi9-base-micro` DoD is the full A–H below; each variant repo inherits A–H and adds (a) its `FROM ubi9-base-micro@digest` pin is the *current* micro digest, (b) its own incremental signed STIG ARF + 800-190, (c) its CMVP delta (python rides #4857 / node OpenSSL-linkage-or-VOID / java FIPS = Keycloak-leaf), (d) its own exact per-repo signer identity. The **family-coherence gate (A5)** binds them. Per the topology decision, the variant tables below describe the 4 variants regardless of repo:
+## SBOM content verification
 
-| Runtime variant | `-dev` sibling | Runtime serves |
-|---|---|---|
-| `base-micro` (glibc + ca, no shell) | `base-micro-dev` | static / CGO / glibc-dynamic apps |
-| `base-python` (CPython 3.12) | `base-python-dev` | interpreter-required Python |
-| `base-node` (Node 22 LTS, RHEL nodejs:22 RPM) | `base-node-dev` | all JS/TS |
-| `base-java` (OpenJDK 21 **headless JRE**) | `base-java-dev` (JDK 21) | JVM — **Keycloak** + future JVM |
-
-**Applicability:** Sections **B** (distroless hardening) and **H** (footprint ceilings) apply to the **4 runtime variants only** — the `-dev` siblings legitimately carry a shell + toolchain. The **supply-chain evidence in C** (sign/SBOM/scan/attest) applies to **all 8 images** (a poisoned builder is a supply-chain risk too); `-dev` images need not be distroless or hit a footprint ceiling.
-
-## Responsibility boundary (governs the whole spec)
-
-The platform owns the **hardened base floor**: the standard runtime (full CPython / Node / headless JRE), minimized only by **standard RPM hygiene** (`install_weak_deps=0`, `--nodocs`, locale/man + binary strip, shell removed, builder discarded), **rpmdb preserved**. There is **no Chisel-equivalent** (Chisel can't run on RPM anyway). **Any app-specific minimization — `jlink`/`jdeps` for Java, stdlib pruning for Python — is the leaf/user's job** in their own Dockerfile. The footprint delta this leaves vs a fully-sliced/`jlink`'d rock is **by design**, never a base failure.
-
----
-
-## A. Artifacts exist & are correctly shaped
-
-- **A1.** All **8 images** publish to `ghcr.io/nwarila-platform/*` and are addressable by digest. *(check: `docker buildx imagetools inspect <img>@<digest>`)*
-- **A2.** Each image is **multi-arch** (`linux/amd64` + `linux/arm64`) — the digest resolves to an OCI index with both platforms.
-- **A3.** Runtime versions assert: `base-python`→Python 3.12.x, `base-node`→Node 22.x, `base-java`→OpenJDK 21.x. *(check: run the runtime with `--version`)*
-- **A4.** Footprint of each runtime variant is **recorded** (compressed registry-layer sum **and** uncompressed unpacked rootfs, single-arch amd64) as build evidence, per the §H measurement protocol.
-- **A5. Family coherence (polyrepo gate):** each variant repo's `FROM ubi9-base-micro@sha256:…` equals the **current published `ubi9-base-micro` digest**. A coherence check fails the build / flags drift if a variant lags micro (this is how the polyrepo family stays coherent without monorepo co-location).
-
-## B. Runtime hardening — **runtime variants only** (gating)
-
-- **B1. No shell:** `/bin/sh`, `/bin/bash`, busybox, etc. do not resolve. *(check: `docker run --rm --entrypoint /bin/sh <img>@<digest>` exits non-zero / not-found)*
-- **B2. No package manager:** no `dnf`/`microdnf`/`rpm`/`apt`/`dpkg` executable; the builder stage is discarded.
-- **B3. Non-root:** image config `User` = `65532` (non-zero); never `0:0`.
-- **B4. rpmdb preserved & valid:** `/var/lib/rpm` is present and a native scanner enumerates the installed RPMs (this is what makes scanning *truthful* — see H).
-- **B5. CA bundle present** at the RHEL path(s).
-- **B6.** The repo's `tests/hardening.sh` runs B1–B5 as a **build-failing gate**.
-
-## C. Supply-chain evidence — **all 8 images**, **per image** (gating)
-
-- **C1. cosign keyless signature** present; verifies with an **exact** `--certificate-identity` = the **SLSA generator workflow ref** + `--certificate-oidc-issuer=https://token.actions.githubusercontent.com`. A wildcard/regex identity is a **FAIL**.
-- **C2. SLSA L3 provenance** present; `slsa-verifier` confirms `builderID` = the **trusted `slsa-github-generator`** (proves L3, not L2 `attest-build-provenance`).
-- **C3. SBOM** (SPDX **and** CycloneDX), **generated from the rpmdb**, attached as an attestation, and enumerating real packages. *(check: `cosign download sbom <img>@<digest> | grep <a known RHEL rpm>` succeeds; a near-empty SBOM is a FAIL)*
-- **C4. CVE gate:** **0 fixable HIGH/CRITICAL** under **both Trivy and Grype** (disagreement → fail-if-either); every **unfixed** HIGH/CRIT carries a **signed OpenVEX** statement (un-vexed unfixed crit = **hard FAIL**). VEX docs live under a CODEOWNERS-gated `vex/` path and are cosign-signed.
-- **C5. Per-variant signed STIG ARF:** tailored OpenSCAP GPOS-SRG scan, **0 applicable-rule failures**, ARF attached as a signed attestation; the **XCCDF tailoring file is committed + reviewed** with documented per-check N/A (a mass-N/A scan with no justification is a FAIL).
-- **C6. NIST 800-190 §4.1** image-control attestation present (the correct *image* evidence; **not** CIS-Docker, which is host/daemon).
-- **C7. FIPS evidence (container-level, kernel-independent):** each runtime variant bakes in its module's **approved-mode config** + a captured **build-time self-test PASS** probe — OpenSSL variants: config-only RHEL provider model with `/etc/pki/tls/openssl-fips.cnf`, `default_properties=fips=yes`, and `OPENSSL_CONF`/`OPENSSL_MODULES` ENV; no `openssl fipsinstall` or `fipsmodule.cnf` is used because the RHEL OpenSSL **FIPS provider** self-verifies when loaded (*not* kernel-triggered `crypto-policies`, which is inert at `fips_enabled=0`); Go-static: `GOFIPS140=v1.0.0` build + `GODEBUG=fips140=on`; Java/Keycloak (leaf): pinned BC-FIPS jars + `java.security` (BCFIPS first) + `--fips-mode=strict`. CMVP ledger committed (G2). Runtime `fips_enabled` is explicitly **= 0 (Talos-kernel property)**, never inherited from the image — host is non-FIPS by decision.
-- **C7a. Module-version pin gate (build-failing):** shipped module version == the cert's validated version — OpenSSL `3.0.7-395c1a240fbfffd8` (#4857), Go module `v1.0.0` (#5247), BC-FJA `2.0.0` (#4743). Drift fails the build.
-- **C7b. `base-node` linkage gate (build-failing):** `ldd $(which node)` shows **system** `libcrypto.so.3`/`libssl.so.3` from `/usr/lib64`, `node_shared_openssl==true`, `process.versions.openssl` is system 3.0.x; launch `--force-fips` and assert `crypto.getFips()===1`. A vendored OpenSSL **voids the Node FIPS claim** → FAIL.
-- **C7c. Negative-test gate:** OpenSSL variants — `openssl list -providers` shows fips+base active AND a non-approved op (`openssl md5`) fails; Go — `go version -m` shows `GOFIPS140=v1.0.0`; Node — `getFips()===1`; Keycloak — startup log shows `BCFIPS … Approved Mode`.
-- **C8.** All attestations are **cosign keyless DSSE, logged in Rekor**.
-
-## D. A consumer can verify it (gating, post-publish)
-
-- **D1.** From a **clean machine with no auth**, anonymous `docker pull <runtime>@<digest>` succeeds for every runtime variant (public GHCR).
-- **D2.** The full chain passes **anonymously**: `cosign verify` (C1) + `slsa-verifier verify-image` (C2) + `cosign verify-attestation` for each predicate type (sbom / vuln / stig-arf / 800-190 / openvex) — all success against the exact signer identity. (`gh attestation verify` is intentionally NOT in the contract: it verifies GitHub-native Artifact Attestations, not the cosign OCI attestation `generator_container_slsa3.yml` writes — see PLAN STEP006 rev. b.)
-
-## E. Build integrity & discipline (gating)
-
-- **E1. Signed builds ran on GitHub-hosted ephemeral runners** via the trusted generator (confirmed by the provenance `builderID`); not self-hosted.
-- **E2. One self-owned workflow** in the repo; **no `uses:` into any NWarila-owned/internal shared reusable-workflow repo** (copy-and-own). **Exception:** the external **SLSA trusted-builder generator** reusable required by E1 — that trusted, audited, L3-built reusable IS the provenance mechanism, not an internal-coupling smell.
-- **E3.** Every `uses:` is a **40-char commit SHA**; `actionlint` is clean. **Exception (owner-ratified 2026-06-18; named MANDATE §6 exception — TECH-DEBT TD-1):** SLSA trusted reusable workflows (e.g. `generator_container_slsa3.yml`) are pinned by semantic-version **tag** `@vX.Y.Z` (upstream mandates a tag ref) + a CI **tag→SHA integrity guard** asserting the tag resolves to the audited commit; the EXACT `--certificate-identity` is the tag ref.
-- **E4. PR builds are test-only** (build + hardening + scan, **no push/sign/attest**); publish happens only on `push:main` + `v*` tags.
-- **E5.** The UBI `FROM` lines are **digest-pinned** (`@sha256:`) with Renovate annotations.
-
-## F. Operational (gating)
-
-- **F1. Nightly + on-CVE rebuild** workflow exists and has run **green** at least once.
-- **F2.** The repo is wired into the **shared Renovate preset** (base-digest bump cascades downstream; the SLSA signer-identity ref pin rides the cascade).
-- **F3. Byte-for-byte reproducible (HARD gate):** a rebuild-from-identical-inputs check produces a byte-identical exported rootfs per architecture (`linux/amd64` and `linux/arm64`) and is enforced as a build-failing CI gate with `tools/assert-reproducible.py --assert-byte-identical`. The rpmdb remains present and valid; differences in `/var/lib/rpm/rpmdb.sqlite` are failures, not ignored or normalized away. Runtime RPM lockfiles enforce exact NEVRA plus `%{SHA256HEADER}` and `%{SIGMD5}` for every locked package so a same-NEVRA byte rebuild fails closed.
-
-## G. Evidence honesty & docs (gating — the showcase bar)
-
-- **G1.** README/docs make the **4-variant set + the per-image evidence obvious** (transparency relocates to the repo), and **document the responsibility boundary** (base = standard hardened floor; leaf owns `jlink`/stdlib trimming).
-- **G2. CMVP module ledger committed** (real, verified): **RHEL 9 OpenSSL FIPS Provider #4857 ACTIVE** (corrects the earlier #4754) backing OpenSSL/C, Python `ssl`, and Node; **Go Cryptographic Module v1.0.0 #5247 ACTIVE** for Go-static; **BC-FJA v2.0.0 #4743 ACTIVE** for Java/Keycloak; **Node = no own cert, FIPS via the linked OpenSSL #4857** (contingent on C7b). Current repository ledger: [fips.md](fips.md).
-- **G2a. Out-of-scope certs flagged** (never cite unless that exact version ships): RHEL 9.0 OpenSSL #4746; BC-FJA 2.1.0 interim #4943; Go module v1.26.0 (Pending Review). **Owner decision (Keycloak leaf):** ship BC-FIPS **2.0.0** (ACTIVE #4743) or accept Keycloak-26-default **2.1.x** (interim #4943).
-- **G3. FIPS claims scoped honestly:** the published claim is **module-scoped + approved-mode-scoped, never OS/host/container-scoped** ("containers use FIPS-validated modules in approved mode," not "FIPS-compliant system"). **`base-python` is explicitly bounded to TLS/OpenSSL-routed crypto** — hashlib built-ins (md5/sha1/sha2/sha3/blake2) bypass the provider, so "Python in FIPS mode" is never claimed (app-code algorithm discipline required). The non-FIPS-host limitation is stated verbatim. Publish the exact statement from [fips.md](fips.md).
-
-## H. Rockcraft parity — footprint targets + the parity verdict (gating where noted)
-
-*Security parity is already enforced by B + C (we match-or-beat the rock's distroless posture and exceed it on scanner-truthfulness, RHSA/OVAL lineage, SLSA L3, STIG ARF, CMVP FIPS). Section H adds the **footprint** ceilings + the parity bookkeeping. Current repository rationale + measurement protocol: [../explanation/footprint.md](../explanation/footprint.md).*
-
-- **H1. Measurement protocol (mandatory):** same-runtime / same-date, **single-arch amd64**, compressed (registry-layer sum) **and** uncompressed (unpacked rootfs) stated separately — never subtract one unit from the other; never use a vendor "vs full distro" headline as the denominator. Scanner run is **native** (no manifest-bridge shim).
-- **H2. `base-micro`:** uncompressed **<= 25 MiB(u)** (rpmdb retained, FIPS library closure preserved); the STEP022/STEP023 sweep proved <=16 MiB(u) infeasible with OpenSSL #4857 plus rpmdb, and STEP024 gates the stripped runtime at <=25 MiB(u) = 26,214,400 bytes. **FAIL above 25 MiB(u) without justification.**
-- **H3. `base-python`:** **MUST beat** stock `ubi9/python-312-minimal` (181 MB(u)) by **≥2×** (target ≤ 70 MB(u)); the ~2–3× premium vs the ~18.7 MB(c) rock is recorded as justified (RPM granularity). **FAIL if ≥ stock minimal.**
-- **H4. `base-node`:** compressed **≤ 55 MB(c)** (same band as the ~41–46 MB(c) rock); **MUST beat** stock `nodejs-22-minimal` (86.7 MB(c)). Comparator is the published **Node-18** rock (no first-party Node 22 rock exists) — recorded as such. **FAIL above 55 MB(c) (or above stock minimal at all) without justification.**
-- **H5. `base-java`:** **MUST beat** stock `ubi9/openjdk-21-runtime` (376 MB(u)) **decisively**; record compressed + uncompressed. **No fixed sub-rock ceiling at the base** — the `jlink` delta to the ~53 MB(c) rock is **leaf-owned** (Keycloak runs `jdeps`→`jlink`), explicitly **not** a base FAIL.
-- **H6. "Where we exceed" recorded per variant:** native scanner truthfulness (rpmdb vs chisel's stripped DB / unmerged manifest analyzer), per-package RHSA/OVAL CVE accountability, RHEL ~10-yr lifecycle, SLSA L3 + cosign keyless + per-variant STIG ARF + CMVP FIPS — none shipped by a stock rock.
-
----
-
-## Dependency caveats (true before this DoD can be hit)
-
-- **Phase-0 prerequisites must exist** for C/D/E: the **public GHCR namespace**, the **SLSA `generator_container_slsa3` wired** into the hosted build path, and the **GitHub-hosted runner path**. `ubi9-base` cannot reach its DoD before these.
-- **FIPS residuals #1–#3 RESOLVED (2026-06-17):** #1 Go module = **#5247 ACTIVE**; #2 Node FIPS = **in**, via linked OpenSSL #4857 (contingent on the C7b linkage gate); #3 Talos kernel FIPS = **no** (non-FIPS host; module-scoped container claim only). `base-micro` currently holds `openssl-fips-provider-so-3.0.7-8.el9` with `fips.so` version `3.0.7-395c1a240fbfffd8`; amd64 is the #4857-validated approved-mode configuration and arm64 is explicitly not a #4857-validated OE. Variant-specific BC-FIPS, Go, and Node linkage decisions remain owned by their future repositories.
-- **`-dev` images** are signed/SBOM'd/scanned/attested (C) but exempt from B and H (they are builders, not shipped runtimes).
-
-## Acceptance command sketch (independent audit, anonymous)
+Package content is read only from a successfully verified SPDX attestation:
 
 ```sh
-D=ghcr.io/nwarila-platform/base-micro@sha256:...          # repeat per runtime variant
-GEN='https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/vX.Y.Z'
-
-docker pull "$D"                                            # D1 (anonymous)
-cosign verify "$D" --certificate-identity="$GEN" \
-  --certificate-oidc-issuer=https://token.actions.githubusercontent.com   # C1/D2
-slsa-verifier verify-image "$D" --source-uri github.com/NWarila/ubi9-base # C2 (builderID=generator ⇒ L3)
-# (gh attestation verify removed rev. b — wrong mechanism for a cosign OCI attestation; contract = cosign verify + slsa-verifier + cosign verify-attestation)                  # D2
-cosign verify-attestation "$D" --type spdxjson  --certificate-identity="$GEN" --certificate-oidc-issuer=...  # C3
-cosign verify-attestation "$D" --type openvex   --certificate-identity="$GEN" --certificate-oidc-issuer=...  # C4
-cosign verify-attestation "$D" --type <stig-arf> --certificate-identity="$GEN" --certificate-oidc-issuer=... # C5
-cosign download sbom "$D" | grep -q glibc                  # C3 (rpmdb-derived, non-empty)
-docker run --rm --entrypoint /bin/sh "$D"; test $? -ne 0   # B1 (no shell ⇒ must fail)
-trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$D"  # C4 (0 fixable)
-grype "$D" --only-fixed --fail-on high                     # C4 (cross-check)
-openssl list -providers | grep -q fips                     # C7/C7c (OpenSSL variants: fips provider active)
-node --force-fips -e 'process.exit(crypto.getFips()?0:1)'  # C7b (base-node: getFips()===1)
-go version -m "$BIN" | grep -q 'GOFIPS140=v1.0.0'          # C7c (Go-static leaves)
+cosign verify-attestation --type spdxjson "${CHILD_REF}" \
+  --certificate-identity "${CERTIFICATE_IDENTITY}" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  | jq -r '.payload | @base64d | fromjson | .predicate.packages[].name' \
+  | grep -q glibc
 ```
+
+Every workflow gate above fails its workflow when the assertion cannot run or
+the accepted state is not met. Post-publish signature, attestation, provenance,
+transparency-log, and anonymous-pull claims require evidence from an actual
+completed publish; pull-request success alone does not prove them.
