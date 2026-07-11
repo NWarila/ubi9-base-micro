@@ -30,21 +30,22 @@ themselves transfer substantive policy into shell.
 
 Three boundary classes may retain inline shell:
 
-1. **Bootstrap before Python.** The `fips-verify` and `rpm-rootfs` builder loops
-   in `containers/Dockerfile:52-75` and `containers/Dockerfile:138-175` must
-   install the locked interpreter before a Python parser can run. ADR-0014
+1. **Bootstrap before Python.** The named `fips-verify` and `rpm-rootfs` stage
+   bootstrap loops in `containers/Dockerfile` must install the locked interpreter
+   before a Python parser can run. ADR-0014
    ratified those two loops. This decision extends the same rationale to the
    generated capture-stage bootstrap in `tools/generate-rpm-lock.sh:142-177`;
    ADR-0014 did not cover that generated stage. The bootstrap-bound snapshot
    comparison in `tools/assert-builder-toolchain-floor.sh` remains shell for the
    same reason.
-2. **Terminal reproducibility normalization.** The final rootfs timestamp command
-   at `containers/Dockerfile:205` remains inline and last in the production
-   rootfs assembly so no later helper invocation can introduce metadata drift.
-3. **Final shell removal.** The deletion and survivor checks in
-   `containers/Dockerfile:299-350` remain inline because that block removes the
-   shell used to execute the `RUN` instruction and verifies that shell, package
-   managers, and Python do not survive in the runtime.
+2. **Terminal reproducibility normalization.** The terminal
+   `find /rootfs -xdev … touch` command in the `rpm-rootfs` stage's rootfs-assembly
+   `RUN` remains inline and last so no later helper invocation can introduce
+   metadata drift.
+3. **Final shell removal.** The deletion and survivor checks in the
+   `runtime-common` stage's shell-removal `RUN` block remain inline because that
+   block removes the shell used to execute the instruction and verifies that
+   shell, package managers, and Python do not survive in the runtime.
 
 Source classification comments are working design metadata. Shell sources carry
 the applicable `Role`, `Python-convertible`, `Micro-container candidate`, and
@@ -56,10 +57,10 @@ fields. `tools/verify.py` does not enforce an annotation schema.
 The test layout follows the same ownership rule: `tests/*.sh` are external
 black-box gate drivers against a built image, while `tools/tests/test_*.py` are
 unit tests for repository Python helpers. The two shell gates and four current
-Python unit suites are required by `tools/verify.py:578-596`, and the Python
-suites are wired independently in `.pre-commit-config.yaml:66-97`. This describes
-the current semantic split; it does not constrain every future test to those
-directories.
+Python unit suites are named in the required-files manifest in `tools/verify.py`,
+and the Python suites are wired independently by the pytest hooks in
+`.pre-commit-config.yaml`. This describes the current semantic split; it does not
+constrain every future test to those directories.
 
 The current-state ledger is:
 
