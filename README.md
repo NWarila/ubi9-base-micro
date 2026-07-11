@@ -116,6 +116,52 @@ contract, including rationale and edge cases. See also the
 task flow. `gh attestation verify` is not part of this repository's
 published-image contract.
 
+## Supply Chain Pipeline
+
+```mermaid
+flowchart TB
+  subgraph dockerfile["Dockerfile stage DAG"]
+    FIPS["fips-verify"] -->|"proof + binaries"| RPM["rpm-rootfs"]
+    FIPS -->|"proof"| COMMON["runtime-common"]
+    RPM -->|"/rootfs"| COMMON
+    COMMON --> AMD["runtime-amd64"]
+    COMMON --> ARM["runtime-arm64"]
+    AMD --> TARGET["runtime-${TARGETARCH}"]
+    ARM --> TARGET
+    DEVROOT["dev-rootfs"] --> DEV["dev<br/>defined but NOT published<br/>(build target = runtime)"]
+  end
+
+  subgraph publish["publish — push to main/tag only"]
+    BUILD["build + push by digest<br/>recursive cosign sign"] --> EVIDENCE["resolve children<br/>tailored STIG ARF + rpmdb SBOMs<br/>scanner freshness + Trivy + Grype + OpenVEX<br/>secret scan + NIST"]
+    EVIDENCE --> ATTEST["attest evidence per child"]
+  end
+
+  TARGET --> BUILD
+  TAG["slsa-generator-tag-integrity"] --> BUILD
+  ATTEST --> SLSA["slsa-provenance<br/>SLSA L3 on index<br/>push to main/tag only"]
+  ATTEST --> REKOR["rekor-rollup<br/>full split evidence set<br/>push to main/tag only"]
+  SLSA --> REKOR
+```
+
+Pull requests exercise the tag-integrity job but do not publish, attest, or run
+the Rekor roll-up.
+
+## Comparison at a Glance
+
+| Dimension | `ubi9-base-micro` | Stock `ubi9/ubi-micro` | Chainguard | Canonical rocks |
+| --- | --- | --- | --- | --- |
+| Package inventory | Retained RPM rpmdb, rpmdb-derived SPDX and CycloneDX SBOMs, and a no-phantom-package guard. | Retained RPM rpmdb, matching the same UBI base ecosystem. | APK/Wolfi ecosystem with signed SBOMs and no RPM rpmdb. | dpkg/Chisel ecosystem with no RPM rpmdb; Chisel's `manifest.wall` supplies package, slice, and file metadata to scanners. |
+| Signing, SBOM, provenance / SLSA | Cosign keyless signature, per-child SPDX and CycloneDX SBOMs, and index-bound SLSA L3 provenance. | Artifact-level signing, SBOM, and provenance evidence depends on the selected digest and publication channel. | Signed images and SBOMs with SLSA 3 provenance. | The OCI factory produces SBOMs and provenance; exact signing and SLSA mechanisms vary by rock and channel. |
+| STIG evidence | Tailored RHEL9 STIG ARF, evaluated fail-closed and signed per platform child. | RHEL9 STIG content is available; artifact-specific ARF evidence depends on the selected digest and channel. | GPOS-SRG STIG profile and STIG-hardened images. | Ubuntu DISA-STIG material is available; per-rock evidence varies. |
+| CMVP FIPS | RHEL OpenSSL provider #4857 in approved mode on amd64; arm64 runs the same provider and self-tests but is not a validated operational environment. | RHEL FIPS modules are available under Red Hat certificates; exact provider and configuration evidence is artifact-specific. | Approved-only FIPS images use other validated modules, including OpenSSL #4282. | Ubuntu FIPS modules and containers operate under Canonical certificates and their documented runtime conditions. |
+| Byte reproducibility | Fail-closed two-build identity for both architectures, with exported-rootfs, contract-digest, and rpmdb assertions. | Artifact-level reproducibility evidence depends on the selected digest and publication pipeline. | Bit-for-bit reproduction from signed apko configuration. | Reproducibility varies by rock and build pipeline. |
+| Footprint | 22.74 MiB (23,840,723 B) for the amd64 regular-file rootfs, gated at 25 MiB. | 21.93 MiB (22,995,384 B) by the same method, about 0.81 MiB smaller. | Varies by image and package set. | Varies by rock and slice selection. |
+
+Signing, SBOMs, SLSA, STIG hardening, FIPS, and reproducibility exist across
+these families; this table highlights this repository's specific, verifiable
+mechanisms: RPM rpmdb evidence, the #4857 approved-mode provider, a tailored
+RHEL9 STIG ARF attestation, and a fail-closed byte-for-byte digest gate.
+
 ## Image Family
 
 Only `ubi9-base-micro` exists in this repository today; the language variants

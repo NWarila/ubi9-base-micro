@@ -2552,6 +2552,25 @@ def check_docs() -> None:
         "docs/reference/verify.md",
     ]:
         require(marker in verify_hero, f"README.md verify hero missing or misrouting marker: {marker}")
+    pipeline_heading = "## Supply Chain Pipeline"
+    comparison_heading = "## Comparison at a Glance"
+    image_family_heading = "## Image Family"
+    pipeline_start = readme.index(pipeline_heading, verify_hero_end)
+    image_family_start = readme.index(image_family_heading, pipeline_start)
+    showcase = readme[pipeline_start:image_family_start]
+    require(
+        showcase.count("```mermaid") == 1,
+        "README.md supply-chain showcase must contain exactly one Mermaid fence",
+    )
+    for marker in [
+        pipeline_heading,
+        comparison_heading,
+        "`ubi9-base-micro`",
+        "Stock `ubi9/ubi-micro`",
+        "Chainguard",
+        "Canonical rocks",
+    ]:
+        require(marker in showcase, f"README.md supply-chain showcase missing marker: {marker}")
     require(legacy_namespace in acceptance, "acceptance copy should preserve source DoD text")
     require("superseded for this repository" in acceptance, "acceptance.md must flag the legacy platform namespace")
     require("Byte-for-byte reproducible (HARD gate)" in acceptance, "acceptance.md must carry hard F3 wording")
