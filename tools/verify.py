@@ -588,9 +588,11 @@ def check_required_files() -> None:
         "tools/fetch-runtime-rpms.sh",
         "tools/fetch-builder-rpms.sh",
         "tools/rpmlock.py",
+        "tools/verify-fips-provider.py",
         "tools/write-fips-status.py",
         "tools/tests/test_build_runtime_rootfs.py",
         "tools/tests/test_rpmlock.py",
+        "tools/tests/test_verify_fips_provider.py",
         "tools/tests/test_write_fips_status.py",
         "tools/generate-rpm-lock.sh",
         "tools/install-syft.sh",
@@ -621,16 +623,27 @@ def check_required_files() -> None:
     ]:
         require((ROOT / relative_path).is_file(), f"missing required file: {relative_path}")
     dockerignore = read(".dockerignore")
-    dockerignore_lines = dockerignore.splitlines()
+    dockerignore_lines = set(dockerignore.splitlines())
+    for marker in [
+        "!tools/assert-builder-toolchain-floor.sh",
+        "!tools/assert-rpm-lock-hashes.sh",
+        "!tools/build-runtime-rootfs.py",
+        "!tools/fetch-builder-rpms.sh",
+        "!tools/fetch-runtime-rpms.sh",
+        "!tools/rpmlock.py",
+        "!tools/verify-fips-provider.py",
+        "!tools/write-fips-status.py",
+    ]:
+        require(marker in dockerignore_lines, f".dockerignore must exactly allowlist Dockerfile tool input: {marker}")
+    for marker in ["!tools", "!tools/", "!tools/*"]:
+        require(
+            marker not in dockerignore_lines,
+            f".dockerignore must not re-include the whole tools subtree: {marker}",
+        )
     require(
-        "!tools/fetch-runtime-rpms.sh" in dockerignore,
-        ".dockerignore must allowlist runtime direct-CDN RPM fetch helper",
+        "!contracts/image-manifest.json" in dockerignore_lines,
+        ".dockerignore must allowlist the image contract input",
     )
-    require("!tools/rpmlock.py" in dockerignore, ".dockerignore must allowlist the in-stage RPM lock parser")
-    for marker in ["!tools/assert-builder-toolchain-floor.sh", "!tools/fetch-builder-rpms.sh"]:
-        require(marker in dockerignore, f".dockerignore must allowlist builder Python input: {marker}")
-    for marker in ["!tools/write-fips-status.py", "!contracts/image-manifest.json"]:
-        require(marker in dockerignore_lines, f".dockerignore must allowlist FIPS status writer input: {marker}")
     require(
         "!contracts/" not in dockerignore_lines,
         ".dockerignore must not re-include the bare contracts/ directory because it exposes the whole subtree",
@@ -862,6 +875,7 @@ def collect_dockerfile_forbidden_sources(root: Path = ROOT) -> list[tuple[str, s
         root / "containers/Dockerfile",
         root / "tools/build-runtime-rootfs.py",
         root / "tools/write-fips-status.py",
+        root / "tools/verify-fips-provider.py",
     ]
     scripts_dir = root / "containers/scripts"
     if scripts_dir.is_dir():
@@ -889,6 +903,7 @@ def check_dockerfile_forbidden_scan_self_test() -> None:
         script = tmp_path / "containers/scripts/strip.sh"
         helper = tmp_path / "tools/build-runtime-rootfs.py"
         writer = tmp_path / "tools/write-fips-status.py"
+        verifier = tmp_path / "tools/verify-fips-provider.py"
         script.parent.mkdir(parents=True)
         helper.parent.mkdir(parents=True)
         dockerfile.parent.mkdir(parents=True, exist_ok=True)
@@ -896,12 +911,14 @@ def check_dockerfile_forbidden_scan_self_test() -> None:
         script.write_text("rm -rf /rootfs/var/lib/rpm\n", encoding="utf-8")
         helper.write_text("rm -rf /rootfs/var/lib/rpm\n", encoding="utf-8")
         writer.write_text("rm -rf /rootfs/var/lib/rpm\n", encoding="utf-8")
+        verifier.write_text("rm -rf /rootfs/var/lib/rpm\n", encoding="utf-8")
         findings = find_dockerfile_forbidden_markers(collect_dockerfile_forbidden_sources(tmp_path))
     require(
         findings
         == [
             "tools/build-runtime-rootfs.py: rm -rf /rootfs/var/lib/rpm",
             "tools/write-fips-status.py: rm -rf /rootfs/var/lib/rpm",
+            "tools/verify-fips-provider.py: rm -rf /rootfs/var/lib/rpm",
             "containers/scripts/strip.sh: rm -rf /rootfs/var/lib/rpm",
         ],
         "forbidden marker scan must cover rootfs-writing helpers and shell-script fixtures",
@@ -1057,6 +1074,7 @@ def check_dockerfile() -> None:
         "COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh",
         "COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh",
         "COPY tools/rpmlock.py /tmp/rpmlock.py",
+        "COPY tools/verify-fips-provider.py /tmp/verify-fips-provider.py",
         "COPY tools/write-fips-status.py /tmp/write-fips-status.py",
         "dnf_repo_args=()",
         '"${dnf_repo_args[@]}"',
@@ -1113,8 +1131,6 @@ def check_dockerfile() -> None:
         "/etc/nwarila/fips-status.json",
         "/fips-proof/provider.nevra",
         "/fips-proof/expected-provider.nevra",
-        "/fips-proof/libs.nevra",
-        "/fips-proof/fips.so.sha256",
         "alternatives",
         "update-alternatives",
         "/usr/sbin/*",
@@ -1126,6 +1142,77 @@ def check_dockerfile() -> None:
     ]
     missing = [marker for marker in required if marker not in text]
     require(not missing, "Dockerfile missing required markers: " + ", ".join(missing))
+
+    fips_verify = text.split("FROM ${UBI_MINIMAL_IMAGE} AS fips-verify", 1)[1].split(
+        "FROM ${UBI_MINIMAL_IMAGE} AS rpm-rootfs", 1
+    )[0]
+    fips_bootstrap_array = "builder_rpm_paths=()"
+    fips_bootstrap_count = 'test "${#builder_rpm_paths[@]}" -eq 7'
+    fips_builder_fetch = "bash /tmp/fetch-builder-rpms.sh"
+    fips_builder_install = 'rpm -Uvh --oldpackage --replacepkgs --excludedocs "${builder_rpm_paths[@]}"'
+    fips_python_sanity = "python3.12 -c 'import sys; print(sys.version)'"
+    fips_builder_cleanup = "rm -rf /tmp/builder-rpms"
+    fips_runtime_fetch = "bash /tmp/fetch-runtime-rpms.sh"
+    fips_microdnf_install = "microdnf install -y --releasever=9"
+    fips_provider_install = '"/tmp/runtime-rpms/openssl-fips-provider-${fips_provider_nvr}.${rpm_arch}.rpm"'
+    fips_microdnf_clean = "microdnf clean all"
+    fips_verifier_invocation = "python3.12 /tmp/verify-fips-provider.py"
+    for marker in [
+        "COPY rpm-lock/builder.amd64.txt rpm-lock/builder.arm64.txt /tmp/rpm-lock/",
+        "COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh",
+        "COPY tools/verify-fips-provider.py /tmp/verify-fips-provider.py",
+        "# The builder loop below bootstraps python, so it cannot use rpmlock.py (ADR-0014).",
+        fips_bootstrap_array,
+        fips_bootstrap_count,
+        fips_builder_fetch,
+        fips_builder_install,
+        fips_python_sanity,
+        fips_builder_cleanup,
+        fips_runtime_fetch,
+        fips_microdnf_install,
+        fips_provider_install,
+        fips_microdnf_clean,
+        fips_verifier_invocation,
+        '--target-arch "${TARGETARCH}"',
+        '--provider-nevra "${OPENSSL_FIPS_PROVIDER_NEVRA}"',
+        '--module-version "${OPENSSL_FIPS_MODULE_VERSION}"',
+        '--expected-fips-so-sha256 "${expected_fips_so_sha256}"',
+        "--openssl-cnf /tmp/openssl-fips.cnf",
+        "--modules-dir /usr/lib64/ossl-modules",
+        "--proof-dir /fips-proof",
+    ]:
+        require(marker in fips_verify, f"fips-verify stage missing locked orchestration marker: {marker}")
+    require(
+        fips_verify.index(fips_bootstrap_array)
+        < fips_verify.index(fips_bootstrap_count)
+        < fips_verify.index(fips_builder_fetch)
+        < fips_verify.index(fips_builder_install)
+        < fips_verify.index(fips_python_sanity)
+        < fips_verify.index(fips_builder_cleanup)
+        < fips_verify.index(fips_runtime_fetch)
+        < fips_verify.index(fips_microdnf_install)
+        < fips_verify.index(fips_provider_install)
+        < fips_verify.index(fips_microdnf_clean)
+        < fips_verify.index(fips_verifier_invocation),
+        "fips-verify must install builder Python first, retain provider orchestration, then invoke the verifier",
+    )
+    require(
+        fips_verify.count(fips_verifier_invocation) == 1,
+        "fips-verify must invoke verify-fips-provider.py exactly once",
+    )
+    for marker in [
+        "providers_verbose=",
+        "grep -A8",
+        "openssl dgst -md5",
+        "openssl dgst -sha256",
+        "openssl enc -aes-256-cbc",
+        "mkdir -p /fips-proof",
+    ]:
+        require(marker not in fips_verify, f"fips-verify retains extracted inline verification marker: {marker}")
+    require(
+        re.search(r">{1,2}\s*/fips-proof/[^\s;\\]+", fips_verify) is None,
+        "fips-verify must not redirect to individual proof files",
+    )
 
     rpm_rootfs = text.split("FROM ${UBI_MINIMAL_IMAGE} AS rpm-rootfs", 1)[1].split(
         "FROM ${UBI_MINIMAL_IMAGE} AS dev-rootfs", 1
@@ -1255,6 +1342,28 @@ def check_dockerfile() -> None:
         "output.read_bytes()",
     ]:
         require(marker in status_writer, f"FIPS status writer missing locked marker: {marker}")
+
+    fips_verifier = read("tools/verify-fips-provider.py")
+    for marker in [
+        "def parse_providers(transcript: bytes) -> dict[str, ProviderInfo]:",
+        "duplicate OpenSSL provider",
+        "duplicate {key} field in OpenSSL provider",
+        "def raw_provider_slice(transcript: bytes, provider_name: str) -> bytes:",
+        'return b"".join(lines[start_index : start_index + 9])',
+        "env = os.environ.copy()",
+        'env["OPENSSL_CONF"] = str(openssl_cnf)',
+        'env["OPENSSL_MODULES"] = str(modules_dir)',
+        "stderr=subprocess.STDOUT",
+        "if md5.returncode == 0:",
+        "md5 unexpectedly succeeded under OpenSSL FIPS approved mode",
+        'raw_provider_slice(providers_verbose, "fips")',
+        'raw_provider_slice(providers_verbose, "base")',
+        'b"md5 failure:\\n"',
+        'b"sha256 success:\\n"',
+        "actual == PROOF_FILES",
+        "path.is_file() and path.stat().st_size > 0",
+    ]:
+        require(marker in fips_verifier, f"FIPS provider verifier missing locked marker: {marker}")
 
     builder_fetch = read("tools/fetch-builder-rpms.sh")
     for marker in [
@@ -3097,13 +3206,16 @@ def check_lint_setup() -> None:
         "id: write-fips-status-pytest",
         "name: write FIPS status pytest",
         "entry: python -m pytest tools/tests/test_write_fips_status.py -q",
+        "id: verify-fips-provider-pytest",
+        "name: verify FIPS provider pytest",
+        "entry: python -m pytest tools/tests/test_verify_fips_provider.py -q",
         "language: python",
         "always_run: true",
     ]:
         require(marker in precommit, f".pre-commit-config.yaml missing marker: {marker}")
     require(precommit.count("repo: local") == 1, ".pre-commit-config.yaml must carry exactly one local hook block")
     require(
-        precommit.count("pass_filenames: false") >= 4,
+        precommit.count("pass_filenames: false") >= 5,
         ".pre-commit-config.yaml must keep mypy and all pytest hooks filename-independent",
     )
     status_hook = precommit.split("- id: write-fips-status-pytest", 1)[1]
@@ -3120,6 +3232,18 @@ def check_lint_setup() -> None:
         ),
     ]:
         require(marker in status_hook, f"FIPS status pytest hook missing locked marker: {marker}")
+
+    verifier_hook = precommit.split("- id: verify-fips-provider-pytest", 1)[1]
+    for marker in [
+        "name: verify FIPS provider pytest",
+        "entry: python -m pytest tools/tests/test_verify_fips_provider.py -q",
+        "language: python",
+        "additional_dependencies: [pytest==8.4.1]",
+        "pass_filenames: false",
+        "always_run: true",
+        ("files: ^(tools/verify-fips-provider\\.py|tools/tests/test_verify_fips_provider\\.py|containers/Dockerfile)$"),
+    ]:
+        require(marker in verifier_hook, f"FIPS provider pytest hook missing locked marker: {marker}")
 
     lint = read(".github/workflows/lint.yaml")
     for marker in [

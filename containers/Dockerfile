@@ -42,18 +42,38 @@ ARG OPENSSL_FIPS_SO_SHA256_ARM64
 ARG SOURCE_DATE_EPOCH
 
 COPY containers/fips/openssl.cnf /tmp/openssl-fips.cnf
+COPY rpm-lock/builder.amd64.txt rpm-lock/builder.arm64.txt /tmp/rpm-lock/
 COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/
+COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh
 COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh
+COPY tools/verify-fips-provider.py /tmp/verify-fips-provider.py
 
 # The FIPS provider NEVRA is asserted after install; this verification stage does not ship directly.
+# The builder loop below bootstraps python, so it cannot use rpmlock.py (ADR-0014).
 # hadolint ignore=DL3041
 RUN set -eux; \
     export SOURCE_DATE_EPOCH; \
     case "${TARGETARCH}" in \
-      amd64) rpm_arch="x86_64"; runtime_lockfile="/tmp/rpm-lock/runtime.amd64.txt"; expected_fips_so_sha256="${OPENSSL_FIPS_SO_SHA256_AMD64}" ;; \
-      arm64) rpm_arch="aarch64"; runtime_lockfile="/tmp/rpm-lock/runtime.arm64.txt"; expected_fips_so_sha256="${OPENSSL_FIPS_SO_SHA256_ARM64}" ;; \
+      amd64) rpm_arch="x86_64"; builder_lockfile="/tmp/rpm-lock/builder.amd64.txt"; runtime_lockfile="/tmp/rpm-lock/runtime.amd64.txt"; expected_fips_so_sha256="${OPENSSL_FIPS_SO_SHA256_AMD64}" ;; \
+      arm64) rpm_arch="aarch64"; builder_lockfile="/tmp/rpm-lock/builder.arm64.txt"; runtime_lockfile="/tmp/rpm-lock/runtime.arm64.txt"; expected_fips_so_sha256="${OPENSSL_FIPS_SO_SHA256_ARM64}" ;; \
       *) echo "unsupported TARGETARCH for FIPS provider pin: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
+    test -s "${builder_lockfile}" || { echo "builder RPM lockfile missing: ${builder_lockfile}" >&2; exit 1; }; \
+    test -s "${runtime_lockfile}" || { echo "runtime RPM lockfile missing: ${runtime_lockfile}" >&2; exit 1; }; \
+    builder_rpm_paths=(); \
+    while IFS='|' read -r package name epoch version release arch sha256_header sigmd5; do \
+      case "${package}" in ""|\#*) continue ;; esac; \
+      test -n "${name}" && test -n "${epoch}" && test -n "${version}" && test -n "${release}" && test -n "${arch}" && test -n "${sha256_header}" && test -n "${sigmd5}"; \
+      case "${arch}" in noarch|"${rpm_arch}") ;; *) echo "locked builder package ${package} has wrong arch ${arch} for ${TARGETARCH}" >&2; exit 1 ;; esac; \
+      builder_rpm_paths+=("/tmp/builder-rpms/${name}-${version}-${release}.${arch}.rpm"); \
+    done < "${builder_lockfile}"; \
+    test "${#builder_rpm_paths[@]}" -eq 7 || { echo "builder RPM lockfile must yield exactly 7 packages" >&2; exit 1; }; \
+    mkdir -p /tmp/builder-rpms; \
+    bash /tmp/fetch-builder-rpms.sh --targetarch "${TARGETARCH}" --lockfile "${builder_lockfile}" --dest /tmp/builder-rpms; \
+    echo "installing locked builder Python RPM transaction"; \
+    rpm -Uvh --oldpackage --replacepkgs --excludedocs "${builder_rpm_paths[@]}"; \
+    python3.12 -c 'import sys; print(sys.version)'; \
+    rm -rf /tmp/builder-rpms; \
     fips_provider_nvr="${OPENSSL_FIPS_PROVIDER_NEVRA#openssl-fips-provider-so-}"; \
     test "${fips_provider_nvr}" != "${OPENSSL_FIPS_PROVIDER_NEVRA}" || { echo "invalid FIPS provider NEVRA pin: ${OPENSSL_FIPS_PROVIDER_NEVRA}" >&2; exit 1; }; \
     mkdir -p /tmp/runtime-rpms; \
@@ -71,62 +91,14 @@ RUN set -eux; \
       "/tmp/runtime-rpms/openssl-fips-provider-${fips_provider_nvr}.${rpm_arch}.rpm" \
       "/tmp/runtime-rpms/${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}.rpm"; \
     microdnf clean all; \
-    provider_nevra="$(rpm -q --qf '%{NEVRA}\n' openssl-fips-provider-so)"; \
-    libs_nevra="$(rpm -q --qf '%{NEVRA}\n' openssl-libs)"; \
-    fips_so_sha256="$(sha256sum /usr/lib64/ossl-modules/fips.so | awk '{print $1}')"; \
-    expected_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}"; \
-    echo "openssl-fips-provider-so NEVRA=${provider_nevra}"; \
-    echo "openssl-libs NEVRA=${libs_nevra}"; \
-    echo "openssl-fips-provider-so fips.so sha256=${fips_so_sha256}"; \
-    test "${provider_nevra}" = "${expected_provider_nevra}" || { \
-      echo "unexpected openssl-fips-provider-so NEVRA: ${provider_nevra}" >&2; exit 1; \
-    }; \
-    test "${fips_so_sha256}" = "${expected_fips_so_sha256}" || { \
-      echo "unexpected openssl-fips-provider-so fips.so sha256: ${fips_so_sha256}" >&2; exit 1; \
-    }; \
-    providers_verbose="$(OPENSSL_CONF=/tmp/openssl-fips.cnf OPENSSL_MODULES=/usr/lib64/ossl-modules openssl list -providers -verbose 2>&1)"; \
-    printf '%s\n' "${providers_verbose}"; \
-    printf '%s\n' "${providers_verbose}" | grep -q '^  fips$'; \
-    printf '%s\n' "${providers_verbose}" | grep -q '^  base$'; \
-    if printf '%s\n' "${providers_verbose}" | grep -q '^  default$'; then \
-      echo "default OpenSSL provider unexpectedly active" >&2; exit 1; \
-    fi; \
-    module_version="$(printf '%s\n' "${providers_verbose}" | grep -A8 '^  fips$' | sed -n 's/^[[:space:]]*version: //p' | head -n1)"; \
-    test "${module_version}" = "${OPENSSL_FIPS_MODULE_VERSION}" || { \
-      echo "unexpected OpenSSL FIPS provider module version: ${module_version}" >&2; exit 1; \
-    }; \
-    printf '%s\n' "${providers_verbose}" | grep -A8 '^  fips$' | grep -q 'status: active'; \
-    if printf x | OPENSSL_CONF=/tmp/openssl-fips.cnf OPENSSL_MODULES=/usr/lib64/ossl-modules openssl dgst -md5 > /tmp/fips-md5.out 2>&1; then \
-      cat /tmp/fips-md5.out; \
-      echo "md5 unexpectedly succeeded under OpenSSL FIPS approved mode" >&2; exit 1; \
-    fi; \
-    cat /tmp/fips-md5.out; \
-    printf x | OPENSSL_CONF=/tmp/openssl-fips.cnf OPENSSL_MODULES=/usr/lib64/ossl-modules openssl dgst -sha256 | tee /tmp/fips-sha256.out; \
-    printf x | OPENSSL_CONF=/tmp/openssl-fips.cnf OPENSSL_MODULES=/usr/lib64/ossl-modules openssl enc -aes-256-cbc -pbkdf2 -pass pass:test -out /tmp/fips-aes.out; \
-    test -s /tmp/fips-aes.out; \
-    mkdir -p /fips-proof; \
-    printf '%s\n' "${provider_nevra}" > /fips-proof/provider.nevra; \
-    printf '%s\n' "${expected_provider_nevra}" > /fips-proof/expected-provider.nevra; \
-    printf '%s\n' "${libs_nevra}" > /fips-proof/libs.nevra; \
-    printf '%s\n' "${fips_so_sha256}" > /fips-proof/fips.so.sha256; \
-    printf '%s\n' "${module_version}" > /fips-proof/module.version; \
-    { \
-      echo "openssl-fips-provider-so NEVRA=${provider_nevra}"; \
-      echo "openssl-libs NEVRA=${libs_nevra}"; \
-      echo "openssl-fips-provider-so fips.so sha256=${fips_so_sha256}"; \
-      echo "openssl-fips-provider module-version=${module_version}"; \
-      printf '%s\n' "${providers_verbose}" | grep -A8 '^  fips$'; \
-      printf '%s\n' "${providers_verbose}" | grep -A8 '^  base$'; \
-      echo "md5 failure:"; cat /tmp/fips-md5.out; \
-      echo "sha256 success:"; cat /tmp/fips-sha256.out; \
-      echo "aes-256-cbc success bytes=$(wc -c < /tmp/fips-aes.out)"; \
-    } > /fips-proof/proof.txt; \
-    test -s /fips-proof/proof.txt; \
-    test -s /fips-proof/provider.nevra; \
-    test -s /fips-proof/expected-provider.nevra; \
-    test -s /fips-proof/libs.nevra; \
-    test -s /fips-proof/fips.so.sha256; \
-    test -s /fips-proof/module.version
+    python3.12 /tmp/verify-fips-provider.py \
+      --target-arch "${TARGETARCH}" \
+      --provider-nevra "${OPENSSL_FIPS_PROVIDER_NEVRA}" \
+      --module-version "${OPENSSL_FIPS_MODULE_VERSION}" \
+      --expected-fips-so-sha256 "${expected_fips_so_sha256}" \
+      --openssl-cnf /tmp/openssl-fips.cnf \
+      --modules-dir /usr/lib64/ossl-modules \
+      --proof-dir /fips-proof
 
 # UBI build-arg defaults are registry-qualified, digest-pinned, and verified by tools/verify.py.
 # hadolint ignore=DL3026
