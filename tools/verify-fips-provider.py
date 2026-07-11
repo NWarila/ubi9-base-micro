@@ -135,8 +135,7 @@ def _rpm_nevra(package: str) -> str:
     result = subprocess.run(
         ["rpm", "-q", "--qf", "%{NEVRA}\\n", package],
         check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
     if result.returncode != 0:
         detail = _decoded(result.stderr, f"rpm query stderr for {package}").strip()
@@ -183,8 +182,7 @@ def _openssl_split(
         ["openssl", *arguments],
         check=False,
         input=input_bytes,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         env=_openssl_env(openssl_cnf, modules_dir),
     )
 
@@ -202,7 +200,10 @@ def _write_proof(proof_dir: Path, files: Mapping[str, bytes]) -> None:
         (proof_dir / name).write_bytes(content)
 
     actual = {entry.name for entry in proof_dir.iterdir()}
-    _require(actual == PROOF_FILES, f"proof directory entries must be exactly {sorted(PROOF_FILES)}; got {sorted(actual)}")
+    _require(
+        actual == PROOF_FILES,
+        f"proof directory entries must be exactly {sorted(PROOF_FILES)}; got {sorted(actual)}",
+    )
     for name in sorted(PROOF_FILES):
         path = proof_dir / name
         _require(path.is_file() and path.stat().st_size > 0, f"proof file is missing or empty: {path}")

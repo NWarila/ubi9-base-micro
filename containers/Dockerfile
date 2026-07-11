@@ -49,8 +49,8 @@ COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh
 COPY tools/verify-fips-provider.py /tmp/verify-fips-provider.py
 
 # The FIPS provider NEVRA is asserted after install; this verification stage does not ship directly.
-# hadolint ignore=DL3041
 # The builder loop below bootstraps python, so it cannot use rpmlock.py (ADR-0014).
+# hadolint ignore=DL3041
 RUN set -eux; \
     export SOURCE_DATE_EPOCH; \
     case "${TARGETARCH}" in \
