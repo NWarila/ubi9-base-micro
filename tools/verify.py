@@ -594,6 +594,7 @@ def check_required_files() -> None:
         "tools/install-syft.sh",
         "tools/install-trivy.sh",
         "tools/install-grype.sh",
+        "tools/install-crane.sh",
         "tools/assert-ignore-scope.py",
         "tools/assert-scanner-db-freshness.py",
         "tools/assert-sbom-rpms.py",
@@ -1654,6 +1655,7 @@ def check_publish_workflow() -> None:
         'SYFT_VERSION: "1.45.1"',
         'TRIVY_VERSION: "0.71.0"',
         'GRYPE_VERSION: "0.115.0"',
+        'CRANE_VERSION: "v0.21.7"',
         'SCANNER_DB_MAX_AGE_DAYS: "7"',
         "tools/build-stig-datastream.sh",
         "tools/run-stig-arf.sh",
@@ -1664,6 +1666,11 @@ def check_publish_workflow() -> None:
         "tools/install-syft.sh",
         "tools/install-trivy.sh",
         "tools/install-grype.sh",
+        "bash tools/install-crane.sh",
+        'crane export "${IMAGE}@${digest}" "${rootfs_tar}"',
+        "--rootfs-tar",
+        '--arch "${arch}"',
+        "--expect-from-contract contracts/image-manifest.json",
         "Assert scanner DB freshness",
         "dist/tools/trivy image --download-db-only",
         "dist/tools/grype db update",
@@ -2042,6 +2049,17 @@ def check_scanner_install_scripts() -> None:
         "tar xzf",
     ]:
         require(marker in grype, f"Grype installer missing marker: {marker}")
+
+    crane = read("tools/install-crane.sh")
+    for marker in [
+        "CRANE_VERSION:-v0.21.7",
+        "github.com/google/go-containerregistry/releases/download/${version}",
+        "go-containerregistry_${os}_${arch}.tar.gz",
+        "archive_sha256=",
+        "sha256sum -c -",
+        '"${dest}/crane" version',
+    ]:
+        require(marker in crane, f"Crane installer missing marker: {marker}")
 
     freshness = read("tools/assert-scanner-db-freshness.py")
     for marker in [

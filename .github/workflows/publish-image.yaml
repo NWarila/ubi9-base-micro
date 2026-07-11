@@ -28,6 +28,7 @@ env:
   SYFT_VERSION: "1.45.1"
   TRIVY_VERSION: "0.71.0"
   GRYPE_VERSION: "0.115.0"
+  CRANE_VERSION: "v0.21.7"
   SCANNER_DB_MAX_AGE_DAYS: "7"
   UBI_MINIMAL_IMAGE: registry.access.redhat.com/ubi9/ubi-minimal@sha256:ae09ecc3d754bc1726cbda3e2599cc7839e09fe1cc547ce173cf669b645be3cc
   UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:b498b3ea26111ab4b81d65139f2ebd2ef9a2abb7a4588b7fdcc54889f95e9caa
@@ -294,6 +295,38 @@ jobs:
           for arch in ("amd64", "arm64"):
               print(f"{arch}_digest={found[arch]}")
           PY
+
+      - name: Install Crane for published rootfs assertions
+        run: |
+          bash tools/install-crane.sh
+          printf '%s\n' "${PWD}/dist/tools" >> "${GITHUB_PATH}"
+
+      - name: Assert published rootfs contracts
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/published-rootfs
+          for arch in amd64 arm64; do
+            case "${arch}" in
+              amd64) digest="${AMD64_DIGEST}" ;;
+              arm64) digest="${ARM64_DIGEST}" ;;
+              *)
+                echo "unsupported published rootfs architecture: ${arch}" >&2
+                exit 1
+                ;;
+            esac
+
+            rootfs_tar="dist/published-rootfs/base-micro.${arch}.tar"
+            crane export "${IMAGE}@${digest}" "${rootfs_tar}"
+            python3.12 tools/assert-reproducible.py \
+              --rootfs-tar "${rootfs_tar}" \
+              --arch "${arch}" \
+              --expect-from-contract contracts/image-manifest.json
+          done
 
       - name: Run tailored STIG ARF gates
         env:

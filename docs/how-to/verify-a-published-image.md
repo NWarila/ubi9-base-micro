@@ -7,9 +7,11 @@ contract lives in [`../reference/verify.md`](../reference/verify.md).
 
 - `cosign`
 - `crane`
+- Python 3.12
 - `slsa-verifier`
 - Anonymous registry access to `ghcr.io/nwarila/ubi9-base-micro`
 - An immutable per-commit tag for a completed publish
+- A repository checkout at the publishing commit
 
 ## Procedure
 
@@ -26,6 +28,27 @@ PUBLISH_REF="refs/heads/main"
 ```
 
 The moving `base-micro` tag can help discover the latest publish. Resolve it once to `INDEX_REF` and anchor the child lookup to that reference so a concurrent publish cannot mix generations. The platform lookup also filters the index's `unknown/unknown` attestation descriptors.
+
+Export and assert both immutable platform children against the publishing commit's
+rootfs contract:
+
+```sh
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "${tmp_dir}"' EXIT
+
+for ARCH in amd64 arm64; do
+  CHILD_DIGEST="$(crane digest --platform "linux/${ARCH}" "${INDEX_REF}")"
+  ROOTFS_TAR="${tmp_dir}/base-micro.${ARCH}.tar"
+  crane export "${IMAGE}@${CHILD_DIGEST}" "${ROOTFS_TAR}"
+  python3.12 tools/assert-reproducible.py \
+    --rootfs-tar "${ROOTFS_TAR}" \
+    --arch "${ARCH}" \
+    --expect-from-contract contracts/image-manifest.json
+done
+```
+
+Each assertion fails closed unless both `canonical_rootfs_digest` and
+`rpmdb_sha256` match the contract for that architecture.
 
 Verify the canonical image signature on the index:
 

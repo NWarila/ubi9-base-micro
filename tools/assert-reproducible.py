@@ -356,6 +356,27 @@ def assert_expectations(builds: list[dict[str, object]], checks: list[tuple[str,
                 raise ReproError(f"{fact_key} mismatch for {side}: expected {expected} from {source}, actual {actual}")
 
 
+def assert_single_rootfs(rootfs_tar: Path, arch: str, contract: Path) -> None:
+    try:
+        entries = load_tar(rootfs_tar)
+    except FileNotFoundError as exc:
+        raise ReproError(f"missing rootfs tar: {rootfs_tar}") from exc
+    except (OSError, tarfile.TarError) as exc:
+        raise ReproError(f"could not read rootfs tar {rootfs_tar}: {exc}") from exc
+
+    facts = rootfs_facts(entries)
+    build: dict[str, object] = {"side": f"single rootfs linux/{arch}", **facts}
+    assert_expectations([build], read_contract_expectations(contract, f"linux/{arch}"))
+
+    rootfs_digest = facts["rootfs_digest"]
+    rpmdb_sha256 = facts["rpmdb_sha256"]
+    if not isinstance(rootfs_digest, str) or not isinstance(rpmdb_sha256, str):
+        raise ReproError(f"rootfs facts are uncomputable for linux/{arch}")
+    print(f"single-rootfs contract assertion passed for linux/{arch}")
+    print(f"canonical_rootfs_digest: {rootfs_digest} (matched)")
+    print(f"rpmdb_sha256: {rpmdb_sha256} (matched)")
+
+
 def first_diff(left: bytes, right: bytes) -> dict[str, object]:
     limit = min(len(left), len(right))
     offset = limit
@@ -754,6 +775,42 @@ def run_self_test() -> None:
         ):
             raise ReproError("self-test expected contract assertion to pass")
 
+        single_args = [
+            "--rootfs-tar",
+            str(left_tar),
+            "--arch",
+            "amd64",
+            "--expect-from-contract",
+            str(valid_contract),
+        ]
+        if run_main_silently(single_args) != 0:
+            raise ReproError("self-test expected single-rootfs contract assertion to pass")
+        print("single-rootfs contract self-test (positive): ok")
+
+        mutated_contract = tmp_path / "contract.mutated.json"
+        mutated_contract.write_text(
+            json.dumps(
+                {
+                    "reproducibility": {
+                        "canonical_rootfs_digest": {"amd64": rootfs_digest},
+                        "rpmdb_sha256": {"amd64": flipped_sha256(rpmdb_sha256)},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        mutated_args = [
+            "--rootfs-tar",
+            str(left_tar),
+            "--arch",
+            "amd64",
+            "--expect-from-contract",
+            str(mutated_contract),
+        ]
+        if run_main_silently(mutated_args) == 0:
+            raise ReproError("self-test expected mutated single-rootfs contract assertion to fail")
+        print("single-rootfs contract self-test (mutated negative): ok")
+
         if run_main_silently([*common_args, "--expect-rootfs-digest", flipped_sha256(rootfs_digest)]) == 0:
             raise ReproError("self-test expected rootfs digest mismatch to fail")
 
@@ -790,7 +847,7 @@ def run_self_test() -> None:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build runtime twice, export rootfs twice, and report byte differences."
+        description="Assert one exported rootfs against the contract, or build/export two rootfs trees and compare."
     )
     parser.add_argument("--self-test", action="store_true", help="run Docker-free comparison checks")
     parser.add_argument("--assert-byte-identical", action="store_true", help="exit non-zero if any rootfs path differs")
@@ -808,6 +865,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--left-tar", type=Path, help="compare an existing left exported rootfs tar")
     parser.add_argument("--right-tar", type=Path, help="compare an existing right exported rootfs tar")
+    parser.add_argument("--rootfs-tar", type=Path, help="assert one exported rootfs tar against the contract")
+    parser.add_argument("--arch", choices=("amd64", "arm64"), help="contract architecture for --rootfs-tar")
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT, help="write JSON diff report")
     parser.add_argument("--summary", type=Path, default=DEFAULT_SUMMARY, help="write human-readable report")
     parser.add_argument(
@@ -831,6 +890,23 @@ def main(argv: list[str]) -> int:
         if args.self_test:
             run_self_test()
             return 0
+
+        if args.rootfs_tar is not None:
+            if args.left_tar is not None or args.right_tar is not None:
+                raise ReproError("--rootfs-tar cannot be combined with --left-tar or --right-tar")
+            if args.arch is None:
+                raise ReproError("--arch is required with --rootfs-tar")
+            if args.expect_from_contract is None:
+                raise ReproError("--expect-from-contract is required with --rootfs-tar")
+            if args.assert_byte_identical:
+                raise ReproError("--assert-byte-identical cannot be combined with --rootfs-tar")
+            if args.expect_rootfs_digest is not None or args.expect_rpmdb_sha256 is not None:
+                raise ReproError("single-rootfs mode accepts expectations only from --expect-from-contract")
+            assert_single_rootfs(args.rootfs_tar, args.arch, args.expect_from_contract)
+            return 0
+
+        if args.arch is not None:
+            raise ReproError("--arch requires --rootfs-tar")
 
         if bool(args.left_tar) != bool(args.right_tar):
             raise ReproError("--left-tar and --right-tar must be provided together")
