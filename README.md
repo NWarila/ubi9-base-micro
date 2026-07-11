@@ -116,6 +116,47 @@ contract, including rationale and edge cases. See also the
 task flow. `gh attestation verify` is not part of this repository's
 published-image contract.
 
+## Supply Chain Pipeline
+
+```mermaid
+flowchart TB
+  subgraph dockerfile["Dockerfile stage DAG"]
+    FIPS["fips-verify"] -->|"proof + binaries"| RPM["rpm-rootfs"]
+    FIPS -->|"proof"| COMMON["runtime-common"]
+    RPM -->|"/rootfs"| COMMON
+    COMMON --> AMD["runtime-amd64"]
+    COMMON --> ARM["runtime-arm64"]
+    AMD --> TARGET["runtime-${TARGETARCH}"]
+    ARM --> TARGET
+    DEVROOT["dev-rootfs"] --> DEV["dev<br/>defined but NOT published<br/>(build target = runtime)"]
+  end
+
+  subgraph publish["publish — push to main/tag only"]
+    BUILD["build + push by digest<br/>recursive cosign sign"] --> EVIDENCE["resolve children<br/>tailored STIG ARF + rpmdb SBOMs<br/>scanner freshness + Trivy + Grype + OpenVEX<br/>secret scan + NIST"]
+    EVIDENCE --> ATTEST["attest evidence per child"]
+  end
+
+  TARGET --> BUILD
+  TAG["slsa-generator-tag-integrity"] --> BUILD
+  ATTEST --> SLSA["slsa-provenance<br/>SLSA L3 on index<br/>push to main/tag only"]
+  ATTEST --> REKOR["rekor-rollup<br/>full split evidence set<br/>push to main/tag only"]
+  SLSA --> REKOR
+```
+
+Pull requests exercise the tag-integrity job but do not publish, attest, or run
+the Rekor roll-up.
+
+## Comparison at a Glance
+
+| Dimension | `ubi9-base-micro` | Stock `ubi9/ubi-micro` | Chainguard | Canonical rocks |
+| --- | --- | --- | --- | --- |
+| Package/scanner truth | Retained RPM rpmdb, rpmdb-derived SPDX/CycloneDX, and a no-phantom-payload guard (`containers/Dockerfile:159-164,215-230,294-295,387`; `.github/workflows/publish-image.yaml:321-356`) | **Parity on rpmdb presence**, not a differentiator: exporting the exact pinned base from `containers/Dockerfile:10-13` produced `var/lib/rpm/rpmdb.sqlite` | Not RPM-based; Wolfi/APK inventory and signed SBOMs. Say “APK ecosystem / no RPM rpmdb,” never “untruthful” or “SBOM-only” | Not RPM-based; Chisel records package, slice, and file metadata in `manifest.wall` specifically for SBOM generators and scanners. Say “dpkg/Chisel ecosystem / no RPM rpmdb,” never “untruthful” |
+| Signing, SBOM, provenance / SLSA | Cosign keyless signature, per-child SPDX+CycloneDX, and index-bound trusted-generator SLSA L3 (`.github/workflows/publish-image.yaml:196-220,470-545,809-823`) | Do not assert absence without digest-specific vendor evidence | **Parity capability:** all images have signed SPDX and SLSA provenance; Chainguard states SLSA 3 and signs images/attestations | **No negative:** Canonical's public OCI factory generates SBOMs and provenance; exact signing and SLSA level vary by rock/channel and must be verified for a named artifact. Do not show “no SLSA,” “unsigned,” or “no SBOM” |
+| STIG evidence | Committed, tailored RHEL9 profile; fail-closed ARF; signed per-child predicate (`.github/workflows/publish-image.yaml:262-319,689-739`; `docs/compliance/stig.md:15-56`) | Do not claim a stock-image-specific signed ARF without evidence | Not a lack: Chainguard has a GPOS-SRG STIG profile and STIG-hardened FIPS images. The honest distinction is **this repo's tailored RHEL9 ARF attestation**, not “Chainguard lacks STIG” | Ubuntu has DISA-STIG material; rock evidence varies. RHEL9 tailoring is inapplicable, so compare exact evidence only and do not claim Canonical lacks STIG |
+| CMVP FIPS | Exact RHEL OpenSSL provider #4857 in approved mode **on amd64 only**; arm64 ships the same provider/self-tests but is not a validated OE (`containers/Dockerfile:304-335,391-410`; `docs/compliance/fips.md:59-84`) | Do not infer this held provider/config from stock UBI Micro | Not a lack: Chainguard markets FIPS containers using other validated modules (including OpenSSL #4282) and approved-only mode. #4857 plus this repo's architecture-scoped evidence is the distinction | Canonical offers Ubuntu FIPS modules/containers under its own certificates and host/runtime conditions. Do not claim general FIPS absence; only say the compared rock does not establish this exact #4857 mechanism unless verified |
+| Byte reproducibility | Fail-closed, two-build, both-architecture exported-rootfs identity plus contract digest/rpmdb assertions (`docs/explanation/reproducibility.md:3-29,39-52`) | No product-wide negative; mark “not evaluated” unless a digest-specific source is supplied | **Parity capability:** Chainguard documents bit-for-bit reproduction from signed apko configuration. The local differentiator is the explicit canonical-rootfs/rpmdb CI gate, not reproducibility itself | Mark “varies/not established for the named rock”; do not assert non-reproducibility |
+| Footprint | amd64 regular-file rootfs: 23,840,723 B / 22.7363 MiB, gated at 25 MiB (`README.md:198-202`; `docs/explanation/footprint.md:3-24`) | Same-method export of the Dockerfile-pinned stock digest measured 22,995,384 B / 21.9301 MiB; therefore this repo is about 0.81 MiB larger and must not claim it is smaller | Varies by image and package set; no generic number or winner claim | Varies by rock and slices; no generic number or winner claim |
+
 ## Image Family
 
 Only `ubi9-base-micro` exists in this repository today; the language variants
