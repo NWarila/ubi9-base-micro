@@ -621,6 +621,7 @@ def check_required_files() -> None:
     ]:
         require((ROOT / relative_path).is_file(), f"missing required file: {relative_path}")
     dockerignore = read(".dockerignore")
+    dockerignore_lines = dockerignore.splitlines()
     require(
         "!tools/fetch-runtime-rpms.sh" in dockerignore,
         ".dockerignore must allowlist runtime direct-CDN RPM fetch helper",
@@ -628,10 +629,15 @@ def check_required_files() -> None:
     require("!tools/rpmlock.py" in dockerignore, ".dockerignore must allowlist the in-stage RPM lock parser")
     for marker in ["!tools/assert-builder-toolchain-floor.sh", "!tools/fetch-builder-rpms.sh"]:
         require(marker in dockerignore, f".dockerignore must allowlist builder Python input: {marker}")
-    for marker in ["!tools/write-fips-status.py", "!contracts/", "!contracts/image-manifest.json"]:
-        require(marker in dockerignore, f".dockerignore must allowlist FIPS status writer input: {marker}")
+    for marker in ["!tools/write-fips-status.py", "!contracts/image-manifest.json"]:
+        require(marker in dockerignore_lines, f".dockerignore must allowlist FIPS status writer input: {marker}")
     require(
-        "!contracts/examples" not in dockerignore, ".dockerignore must not expose contract examples to image builds"
+        "!contracts/" not in dockerignore_lines,
+        ".dockerignore must not re-include the bare contracts/ directory because it exposes the whole subtree",
+    )
+    require(
+        not any(line.startswith("!contracts/examples") for line in dockerignore_lines),
+        ".dockerignore must not expose contract examples to image builds",
     )
     for relative_path, _ in REPO_ADRS:
         require((ROOT / relative_path).is_file(), f"missing required ADR: {relative_path}")

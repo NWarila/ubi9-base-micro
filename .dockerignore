@@ -8,7 +8,6 @@
 !containers/Dockerfile
 !containers/fips/
 !containers/fips/openssl.cnf
-!contracts/
 !contracts/image-manifest.json
 !tools/
 !tools/assert-builder-toolchain-floor.sh

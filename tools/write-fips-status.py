@@ -122,7 +122,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             module_version=args.module_version,
             output=args.output,
         )
-    except (StatusWriteError, OSError, json.JSONDecodeError) as exc:
+    except (StatusWriteError, OSError, ValueError) as exc:
         print(f"FIPS status write failed: {exc}", file=sys.stderr)
         return 1
     return 0
