@@ -103,3 +103,11 @@ repos:
         pass_filenames: false
         always_run: true
         files: ^(tools/assert-rpm-lock-hashes\.py|tools/rpmlock\.py|tools/tests/test_assert_rpm_lock_hashes\.py)$
+      - id: generate-runtime-lock-pytest
+        name: generate runtime lock pytest
+        entry: python -m pytest tools/tests/test_generate_runtime_lock.py -q
+        language: python
+        additional_dependencies: [pytest==8.4.1]
+        pass_filenames: false
+        always_run: true
+        files: ^(tools/generate-runtime-lock\.py|tools/rpmlock\.py|tools/tests/test_generate_runtime_lock\.py)$

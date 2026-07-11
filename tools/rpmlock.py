@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Purpose: Canonical parser and validator for runtime and discarded-stage builder RPM lockfiles.
+# Purpose: Canonical RPM lock parser/validator plus the public repository Dockerfile ARG-default reader.
 # Role: tooling
 # Micro-container candidate: gate-adjacent - host/CI validation and discarded-stage filename emission.
 # Build-process: yes - validates locks and emits runtime RPM filenames in the rpm-rootfs build stage.
@@ -171,25 +171,25 @@ class LockPolicy:
     def from_repo(cls, repo_root: Path | None = None) -> LockPolicy:
         root = repo_root if repo_root is not None else Path(__file__).resolve().parents[1]
         return cls(
-            source_date_epoch=_dockerfile_arg_default(root, "SOURCE_DATE_EPOCH"),
-            openssl_fips_provider_nevra=_dockerfile_arg_default(root, "OPENSSL_FIPS_PROVIDER_NEVRA"),
-            openssl_fips_provider_rpm_base_url=_dockerfile_arg_default(
+            source_date_epoch=dockerfile_arg_default(root, "SOURCE_DATE_EPOCH"),
+            openssl_fips_provider_nevra=dockerfile_arg_default(root, "OPENSSL_FIPS_PROVIDER_NEVRA"),
+            openssl_fips_provider_rpm_base_url=dockerfile_arg_default(
                 root,
                 "OPENSSL_FIPS_PROVIDER_RPM_BASE_URL",
             ),
-            openssl_fips_provider_rpm_sha256_x86_64=_dockerfile_arg_default(
+            openssl_fips_provider_rpm_sha256_x86_64=dockerfile_arg_default(
                 root,
                 "OPENSSL_FIPS_PROVIDER_RPM_SHA256_X86_64",
             ),
-            openssl_fips_provider_rpm_sha256_aarch64=_dockerfile_arg_default(
+            openssl_fips_provider_rpm_sha256_aarch64=dockerfile_arg_default(
                 root,
                 "OPENSSL_FIPS_PROVIDER_RPM_SHA256_AARCH64",
             ),
-            openssl_fips_provider_so_rpm_sha256_x86_64=_dockerfile_arg_default(
+            openssl_fips_provider_so_rpm_sha256_x86_64=dockerfile_arg_default(
                 root,
                 "OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64",
             ),
-            openssl_fips_provider_so_rpm_sha256_aarch64=_dockerfile_arg_default(
+            openssl_fips_provider_so_rpm_sha256_aarch64=dockerfile_arg_default(
                 root,
                 "OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64",
             ),
@@ -227,7 +227,9 @@ class LockPolicy:
         )
 
 
-def _dockerfile_arg_default(repo_root: Path, name: str) -> str:
+def dockerfile_arg_default(repo_root: Path, name: str) -> str:
+    """Return the first exact Dockerfile ARG default for ``name``."""
+
     dockerfile = repo_root / "containers" / "Dockerfile"
     try:
         text = dockerfile.read_text(encoding="utf-8")
@@ -255,9 +257,22 @@ def _read_lock_text(lock_path: Path) -> str:
     if b"\r" in raw:
         raise LockError(f"{lock_path}: CR characters are not allowed in RPM lockfiles")
     try:
-        return raw.decode("utf-8")
+        text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise LockError(f"{lock_path}: RPM lockfile must be UTF-8") from exc
+    forbidden_separators = {
+        "\v",
+        "\f",
+        "\x1c",
+        "\x1d",
+        "\x1e",
+        "\x85",
+        "\u2028",
+        "\u2029",
+    }
+    if any(separator in text for separator in forbidden_separators):
+        raise LockError(f"{lock_path}: only LF line separators are allowed in RPM lockfiles")
+    return text
 
 
 def _positional_headers(lines: list[str]) -> dict[str, str]:
@@ -823,6 +838,11 @@ def _cmd_builder_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_arg_default(args: argparse.Namespace) -> int:
+    print(dockerfile_arg_default(args.repo_root, args.name))
+    return 0
+
+
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--lockfile", required=True, type=Path)
     parser.add_argument("--arch", required=True, choices=sorted(RPM_ARCH_BY_PLATFORM))
@@ -877,6 +897,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_builder_args(builder_summary_parser)
     builder_summary_parser.set_defaults(handler=_cmd_builder_summary)
+
+    arg_default_parser = subparsers.add_parser(
+        "arg-default",
+        help="print an exact Dockerfile ARG default",
+    )
+    arg_default_parser.add_argument("--repo-root", required=True, type=Path)
+    arg_default_parser.add_argument("--name", required=True)
+    arg_default_parser.set_defaults(handler=_cmd_arg_default)
 
     return parser
 

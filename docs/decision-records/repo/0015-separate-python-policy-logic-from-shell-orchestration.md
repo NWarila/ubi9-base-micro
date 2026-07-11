@@ -56,7 +56,7 @@ fields. `tools/verify.py` does not enforce an annotation schema.
 
 The test layout follows the same ownership rule: `tests/*.sh` are external
 black-box gate drivers against a built image, while `tools/tests/test_*.py` are
-unit tests for repository Python helpers. The one remaining shell gate and five
+unit tests for repository Python helpers. The one remaining shell gate and six
 current Python unit suites are named in the required-files manifest in
 `tools/verify.py`, and the Python suites are wired independently by the pytest
 hooks in `.pre-commit-config.yaml`. This describes the current semantic split; it
@@ -73,6 +73,12 @@ The current-state ledger is:
   `tools/install-trivy.sh` are installer and provisioning glue.
 - `tools/run-stig-arf.sh` and `tools/run-test-gates.sh` orchestrate external tools
   and the repository's gate helpers.
+- `tools/generate-rpm-lock.sh` retains its stable CLI while orchestrating buildx,
+  bootstrap and package-manager commands, network fetch attempts, frozen RPM
+  snapshots, and file comparison. It consumes `rpmlock.py` for Dockerfile ARG
+  defaults and delegates runtime package policy, final-floor validation, ordered
+  CDN candidates, signature-output acceptance, classification, and byte rendering
+  to `generate-runtime-lock.py`.
 - `tests/fips.sh` and `tests/hardening.sh` remain deliberate built-image shell
   entrypoints. Their current policy internals are non-converged as recorded below.
 - After its bootstrap, `rpm-rootfs` uses a thin filename adapter, raw RPM install,
@@ -85,6 +91,11 @@ The current-state ledger is:
   `rpmlock.py` validation seam for lock grammar and cross-row invariants, then owns
   only installed-rpm queries, downloaded-file hashing, and `rpm -K` orchestration.
   Its exhaustive unit suite and small operational self-test both fail closed.
+- `tools/generate-runtime-lock.py` imports the same public seam and owns the
+  capture-stage package policy, snapshot join, required final floor, ordered URL
+  candidates, successful-signature output predicate, and LF-exact lock rendering.
+  Its unit suite proves the full pre-strip row universe and discarded set survive
+  classification in input order.
 
 ### Declared boundaries
 
@@ -105,12 +116,6 @@ The current-state ledger is:
 - `tools/fetch-openssl-fips-provider-rpms.sh:46-68,81-108` mixes architecture and
   pin decisions, hashing, signature assertions, and manifest generation with
   fetch orchestration.
-- `tools/generate-rpm-lock.sh` parses Dockerfile argument defaults at lines 25-38.
-  Its capture heredoc retains architecture and pin decisions at lines 87-140,
-  final-package-floor decisions at lines 208-221, CDN resolution and signature
-  assertions at lines 223-262, and AWK generation and row assertions at lines
-  264-285. The `generate_one`, `run_check`, and command-line driving at lines
-  293-438 are the intended shell orchestration.
 - In `fips-verify`, the bootstrap `RUN` retains inline provider-pin, repository,
   and installation decisions before invoking `verify-fips-provider.py`.
 - The `dev-rootfs` stage mixes shell-owned installation with package parsing,

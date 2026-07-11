@@ -3,10 +3,10 @@
 # set, ldd-protected strip of shells/pkg-managers/unneeded deps, resolve direct CDN URLs) plus host-side
 # lockfile-grammar validation against committed files and Dockerfile ARG pins.
 # Role: tooling
-# Python-convertible: partial — validate_lockfile + the strip/ldd-closure algorithm should be Python; the docker
-# buildx driver + Dockerfile heredoc stay shell glue.
+# Python-convertible: conforming boundary — Python owns parse/decide/render logic; shell retains buildx, package/fetch
+# command orchestration, frozen snapshots, and file plumbing.
 # Micro-container candidate: no — maintainer regeneration tool, not a per-PR gate.
-# Relocate: no — dev/regeneration tool; keep under tools/ (extract the Python validator).
+# Relocate: no — dev/regeneration driver and its Python policy helpers remain under tools/.
 
 set -euo pipefail
 
@@ -24,7 +24,7 @@ EOF
 
 dockerfile_arg_default() {
   local name="$1"
-  sed -n "s/^ARG ${name}=//p" "${repo_root}/containers/Dockerfile" | head -n1
+  python3 "${repo_root}/tools/rpmlock.py" arg-default --repo-root "${repo_root}" --name "${name}"
 }
 
 source_date_epoch="${SOURCE_DATE_EPOCH:-$(dockerfile_arg_default SOURCE_DATE_EPOCH)}"
@@ -80,6 +80,8 @@ COPY tools/assert-builder-toolchain-floor.sh /tmp/assert-builder-toolchain-floor
 COPY tools/build-runtime-rootfs.py /tmp/build-runtime-rootfs.py
 COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh
 COPY fetch-openssl-fips-provider-rpms.sh /usr/local/bin/fetch-openssl-fips-provider-rpms.sh
+COPY tools/rpmlock.py /tmp/rpmlock.py
+COPY tools/generate-runtime-lock.py /tmp/generate-runtime-lock.py
 
 RUN <<'CAPTURE'
 set -euo pipefail
@@ -94,46 +96,6 @@ case "${TARGETARCH}" in
   arm64) builder_lockfile="/tmp/rpm-lock/builder.arm64.txt" ;;
   *) echo "unsupported TARGETARCH for builder RPM lockfile: ${TARGETARCH}" >&2; exit 1 ;;
 esac
-openssl_fips_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA}"
-fips_provider_nvr="${openssl_fips_provider_nevra#openssl-fips-provider-so-}"
-if [[ "${fips_provider_nvr}" == "${openssl_fips_provider_nevra}" ]]; then
-  echo "invalid FIPS provider NEVRA pin: ${openssl_fips_provider_nevra}" >&2
-  exit 1
-fi
-
-runtime_package_specs=(
-  basesystem
-  ca-certificates
-  crypto-policies
-  filesystem
-  glibc
-  glibc-common
-  glibc-minimal-langpack
-  libgcc
-  openssl-libs
-  redhat-release
-  setup
-  tzdata
-  zlib
-)
-required_final_names=(
-  basesystem
-  ca-certificates
-  crypto-policies
-  filesystem
-  glibc
-  glibc-common
-  glibc-minimal-langpack
-  libgcc
-  openssl-fips-provider
-  openssl-fips-provider-so
-  openssl-libs
-  redhat-release
-  setup
-  tzdata
-  zlib
-)
-
 dnf_repo_args=()
 if [[ -n "${DNF_REPOS}" ]]; then
   dnf_repo_args=(--disablerepo='*' "--enablerepo=${DNF_REPOS}")
@@ -176,6 +138,13 @@ bash /tmp/assert-builder-toolchain-floor.sh --before /tmp/builder-toolchain.befo
 python3.12 -c 'import sys; print(sys.version)'
 rm -rf /tmp/builder-rpms /tmp/builder-toolchain.before /tmp/builder-toolchain.after
 
+openssl_fips_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA}"
+fips_provider_nvr="$(
+  python3.12 /tmp/generate-runtime-lock.py provider-nvr --nevra "${openssl_fips_provider_nevra}"
+)"
+python3.12 /tmp/generate-runtime-lock.py package-specs > /tmp/runtime-package-specs
+mapfile -t runtime_package_specs < /tmp/runtime-package-specs
+
 mkdir -p /rootfs /out /tmp/fips-provider-rpms
 OPENSSL_FIPS_PROVIDER_NEVRA="${OPENSSL_FIPS_PROVIDER_NEVRA}" \
 OPENSSL_FIPS_PROVIDER_RPM_BASE_URL="${OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}" \
@@ -206,48 +175,35 @@ rpm --root=/rootfs -qa \
 python3.12 /tmp/build-runtime-rootfs.py strip-packages --rootfs /rootfs
 
 rpm --root=/rootfs -qa --qf '%{NEVRA}\n' | LC_ALL=C sort > /tmp/runtime.final.nevras
-actual_final_count="$(wc -l < /tmp/runtime.final.nevras | tr -d '[:space:]')"
-if [[ "${actual_final_count}" != "15" ]]; then
-  echo "final runtime RPM count mismatch: expected 15, got ${actual_final_count}" >&2
-  cat /tmp/runtime.final.nevras >&2
-  exit 1
-fi
-for package_name in "${required_final_names[@]}"; do
-  if ! rpm --root=/rootfs -q "${package_name}" >/dev/null 2>&1; then
-    echo "expected final runtime RPM missing after strip: ${package_name}" >&2
-    cat /tmp/runtime.final.nevras >&2
-    exit 1
-  fi
-done
+python3.12 /tmp/generate-runtime-lock.py validate-floor \
+  --full-rows /tmp/runtime.full.tsv \
+  --final-nevras /tmp/runtime.final.nevras
 
 rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
 mkdir -p /tmp/direct-runtime-rpms
-: > /tmp/runtime.direct.lock
+: > /tmp/runtime.direct.tsv
+python3.12 /tmp/generate-runtime-lock.py candidates \
+  --full-rows /tmp/runtime.full.tsv \
+  --arch "${TARGETARCH}" \
+  --base-url "${OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}" \
+  > /tmp/runtime.candidates.tsv
 
 fetch_direct_rpm_for_row() {
   local package="$1"
-  local name="$2"
-  local version="$3"
-  local release="$4"
-  local arch="$5"
-  local filename="${name}-${version}-${release}.${arch}.rpm"
-  local first_letter="${name:0:1}"
-  local repo url tmp path actual_sha sig_output
+  local baseos_url="$2"
+  local appstream_url="$3"
+  local url filename tmp path actual_sha
 
-  for repo in baseos appstream; do
-    url="${OPENSSL_FIPS_PROVIDER_RPM_BASE_URL%/}/${rpm_arch}/${repo}/os/Packages/${first_letter}/${filename}"
-    tmp="/tmp/direct-runtime-rpms/${filename}.${repo}.tmp"
+  for url in "${baseos_url}" "${appstream_url}"; do
+    filename="${url##*/}"
+    tmp="/tmp/direct-runtime-rpms/${filename}.tmp"
     if curl -fL --retry 3 --retry-delay 2 --proto '=https' --tlsv1.2 --output "${tmp}" "${url}"; then
       actual_sha="$(sha256sum "${tmp}" | awk '{print $1}')"
       path="/tmp/direct-runtime-rpms/${filename}"
       mv "${tmp}" "${path}"
-      sig_output="$(rpm -K "${path}")"
-      printf '%s\n' "${sig_output}"
-      if [[ "${sig_output}" != *"digests signatures OK"* ]]; then
-        echo "${path}: Red Hat RPM signature verification did not report digests signatures OK" >&2
-        exit 1
-      fi
-      printf '# direct_rpm: %s|%s|%s\n' "${package}" "${url}" "${actual_sha}" >> /tmp/runtime.direct.lock
+      rpm -K "${path}" | tee /tmp/runtime.signature-output
+      python3.12 /tmp/generate-runtime-lock.py signature-output --output /tmp/runtime.signature-output
+      printf '%s|%s|%s\n' "${package}" "${url}" "${actual_sha}" >> /tmp/runtime.direct.tsv
       return 0
     fi
     rm -f "${tmp}"
@@ -257,32 +213,17 @@ fetch_direct_rpm_for_row() {
   exit 1
 }
 
-while IFS='|' read -r package name epoch version release arch sha256_header sigmd5; do
-  fetch_direct_rpm_for_row "${package}" "${name}" "${version}" "${release}" "${arch}"
-done < /tmp/runtime.full.tsv
+while IFS='|' read -r package baseos_url appstream_url; do
+  fetch_direct_rpm_for_row "${package}" "${baseos_url}" "${appstream_url}"
+done < /tmp/runtime.candidates.tsv
 
-{
-  printf '# arch: %s\n' "${TARGETARCH}"
-  printf '# source_date_epoch: %s\n' "${SOURCE_DATE_EPOCH}"
-  printf '# columns: package|final_rpmdb|name|epoch|version|release|arch|sha256_header|sigmd5\n'
-  cat /tmp/runtime.direct.lock
-  awk -F'|' '
-    NR == FNR {
-      final[$0] = 1
-      next
-    }
-    {
-      status = ($1 in final) ? "yes" : "no"
-      print $1 "|" status "|" $2 "|" $3 "|" $4 "|" $5 "|" $6 "|" $7 "|" $8
-    }
-  ' /tmp/runtime.final.nevras /tmp/runtime.full.tsv
-} > "/out/runtime.${TARGETARCH}.txt"
-
-row_count="$(awk 'BEGIN { count=0 } /^[^#]/ { count++ } END { print count }' "/out/runtime.${TARGETARCH}.txt")"
-if [[ "${row_count}" -lt "15" ]]; then
-  echo "generated lockfile contains too few rows: ${row_count}" >&2
-  exit 1
-fi
+python3.12 /tmp/generate-runtime-lock.py render \
+  --full-rows /tmp/runtime.full.tsv \
+  --final-nevras /tmp/runtime.final.nevras \
+  --direct-results /tmp/runtime.direct.tsv \
+  --arch "${TARGETARCH}" \
+  --source-date-epoch "${SOURCE_DATE_EPOCH}" \
+  --output "/out/runtime.${TARGETARCH}.txt"
 CAPTURE
 
 FROM scratch AS export
@@ -316,7 +257,8 @@ generate_one() {
   mkdir -p "${tmpdir}/rpm-lock" "${tmpdir}/tools" "${tmpdir}/out"
   cp "${repo_root}/rpm-lock/builder.amd64.txt" "${repo_root}/rpm-lock/builder.arm64.txt" "${tmpdir}/rpm-lock/"
   cp "${repo_root}/tools/assert-builder-toolchain-floor.sh" "${repo_root}/tools/build-runtime-rootfs.py" \
-    "${repo_root}/tools/fetch-builder-rpms.sh" "${tmpdir}/tools/"
+    "${repo_root}/tools/fetch-builder-rpms.sh" "${repo_root}/tools/rpmlock.py" \
+    "${repo_root}/tools/generate-runtime-lock.py" "${tmpdir}/tools/"
   cp "${repo_root}/tools/fetch-openssl-fips-provider-rpms.sh" "${tmpdir}/fetch-openssl-fips-provider-rpms.sh"
 
   docker buildx build \
