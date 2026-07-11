@@ -90,9 +90,7 @@ def test_render_consumes_full_rows_once_and_preserves_snapshot_order() -> None:
         row.package for row in rows
     ]
     assert [line.split("|", 1)[0] for line in data_lines] == [row.package for row in rows]
-    assert {line.split("|", 2)[0] for line in data_lines if line.split("|", 2)[1] == "no"} == {
-        rows[-1].package
-    }
+    assert {line.split("|", 2)[0] for line in data_lines if line.split("|", 2)[1] == "no"} == {rows[-1].package}
     assert rendered.endswith(b"\n")
     assert b"\r" not in rendered
 
@@ -153,7 +151,9 @@ def test_render_rejects_every_join_failure_class(mutation: str, message: str) ->
         )
     elif mutation == "candidate":
         active_direct = (
-            rpmlock.DirectRpm(direct[0].package, direct[0].url.replace("/Packages/b/", "/Packages/z/"), direct[0].sha256),
+            rpmlock.DirectRpm(
+                direct[0].package, direct[0].url.replace("/Packages/b/", "/Packages/z/"), direct[0].sha256
+            ),
             *direct[1:],
         )
     elif mutation == "sha":
