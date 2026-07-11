@@ -1,6 +1,13 @@
 # Published Digest Verification
 
-P1.4d publishes `ghcr.io/nwarila/ubi9-base-micro` by digest from `.github/workflows/publish-image.yaml`. The publish workflow signs the image digest with Cosign keyless from the repository workflow identity, attaches Syft rpmdb-derived SPDX and CycloneDX SBOM attestations to each platform child digest, gates fixable HIGH and CRITICAL findings with both Trivy and Grype, applies the OpenVEX default-deny policy to unfixed HIGH and CRITICAL findings, runs the tailored RHEL9 STIG ARF gate, generates and attests the NIST SP 800-190 section 4.1 image predicate and the STIG ARF summary predicate, then passes the index digest to the SLSA container generator reusable workflow. The final push-only roll-up verifies that the full attestation set is Rekor-logged.
+The publish workflow publishes `ghcr.io/nwarila/ubi9-base-micro` by digest from `.github/workflows/publish-image.yaml`. It signs the image digest with Cosign keyless from the repository workflow identity, attaches Syft rpmdb-derived SPDX and CycloneDX SBOM attestations to each platform child digest, gates fixable HIGH and CRITICAL findings with both Trivy and Grype, applies the OpenVEX default-deny policy to unfixed HIGH and CRITICAL findings, runs the tailored RHEL9 STIG ARF gate, generates and attests the NIST SP 800-190 section 4.1 image predicate and the STIG ARF summary predicate, then passes the index digest to the SLSA container generator reusable workflow. The final push-only roll-up verifies that the full attestation set is Rekor-logged.
+
+## Prerequisites
+
+- `cosign`
+- `crane`
+- `jq`
+- `slsa-verifier`
 
 ## Identities
 
@@ -18,34 +25,59 @@ The SLSA generator tag `v2.1.0` is allowed only with the workflow tag-integrity 
 
 ## Contract
 
-Set `IMAGE_REF` to the published digest reference being verified, for example `ghcr.io/nwarila/ubi9-base-micro@sha256:<digest>`. For SBOM verification, use the per-platform child digest because the SBOM predicates are bound to `linux/amd64` and `linux/arm64` child manifests. Set `PUBLISH_REF` to the publishing Git ref, such as `refs/heads/main` or `refs/tags/v1.2.3`.
+Start from the immutable per-commit tag for the completed publish. Resolve its image index and then resolve the platform child from that pinned index:
 
 ```sh
-cosign verify "${IMAGE_REF}" \
+IMAGE="ghcr.io/nwarila/ubi9-base-micro"
+TAG="base-micro-<short_sha>"                 # immutable per-commit tag (normative input)
+INDEX_DIGEST="$(crane digest "${IMAGE}:${TAG}")"
+INDEX_REF="${IMAGE}@${INDEX_DIGEST}"
+CHILD_DIGEST="$(crane digest --platform linux/amd64 "${INDEX_REF}")"   # per-arch child
+CHILD_REF="${IMAGE}@${CHILD_DIGEST}"
+PUBLISH_REF="refs/heads/main"
+```
+
+The moving `base-micro` tag may be used for discovery, but resolve it once to `INDEX_REF` and anchor every child lookup to that reference. This prevents a concurrent publish from mixing index and child generations. `crane digest --platform` selects the requested platform and filters the index's `unknown/unknown` attestation descriptors.
+
+This is example output — your digests will differ:
+
+```console
+$ printf 'INDEX_REF=%s\nCHILD_REF=%s\n' "${INDEX_REF}" "${CHILD_REF}"
+INDEX_REF=ghcr.io/nwarila/ubi9-base-micro@sha256:be8f76f648fa8d8245892059bda8a119a31c5d45c40b5ec6b64f1b270f050ab2
+CHILD_REF=ghcr.io/nwarila/ubi9-base-micro@sha256:8280680a2218fe91cff051974b046b3a9ac61c81457ce61c86f098943b5ccc87
+```
+
+Use `INDEX_REF` for the canonical image signature and index-bound SLSA evidence. Use `CHILD_REF` for repository-generated attestations bound to the selected platform child.
+
+```sh
+cosign verify "${INDEX_REF}" \
   --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 ```
 
 ```sh
-cosign verify-attestation --type spdxjson "${IMAGE_REF}" \
+cosign verify-attestation --type spdxjson "${CHILD_REF}" \
   --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 ```
 
 ```sh
-cosign verify-attestation --type cyclonedx "${IMAGE_REF}" \
+cosign verify-attestation --type cyclonedx "${CHILD_REF}" \
   --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 ```
 
 ```sh
-cosign download sbom "${IMAGE_REF}" | grep -q glibc
+cosign verify-attestation --type spdxjson "${CHILD_REF}" \
+  --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  | jq -r '.payload | @base64d | fromjson | .predicate.packages[].name' | grep -q glibc
 ```
 
 When `vex/*.json` exists in the publishing commit, verify the OpenVEX attestation on each per-platform child digest:
 
 ```sh
-cosign verify-attestation --type openvex "${IMAGE_REF}" \
+cosign verify-attestation --type openvex "${CHILD_REF}" \
   --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 ```
@@ -53,7 +85,7 @@ cosign verify-attestation --type openvex "${IMAGE_REF}" \
 Verify the NIST SP 800-190 section 4.1 image-control predicate on each per-platform child digest:
 
 ```sh
-cosign verify-attestation --type https://nwarila.dev/attestations/nist-sp-800-190-image/v1 "${IMAGE_REF}" \
+cosign verify-attestation --type https://nwarila.dev/attestations/nist-sp-800-190-image/v1 "${CHILD_REF}" \
   --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 ```
@@ -61,19 +93,19 @@ cosign verify-attestation --type https://nwarila.dev/attestations/nist-sp-800-19
 Verify the tailored RHEL9 STIG ARF predicate on each per-platform child digest:
 
 ```sh
-cosign verify-attestation --type https://nwarila.dev/attestations/stig-arf/v1 "${IMAGE_REF}" \
+cosign verify-attestation --type https://nwarila.dev/attestations/stig-arf/v1 "${CHILD_REF}" \
   --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 ```
 
 ```sh
-cosign verify-attestation --type slsaprovenance "${IMAGE_REF}" \
+cosign verify-attestation --type slsaprovenance "${INDEX_REF}" \
   --certificate-identity "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 ```
 
 ```sh
-slsa-verifier verify-image "${IMAGE_REF}" \
+slsa-verifier verify-image "${INDEX_REF}" \
   --source-uri github.com/NWarila/ubi9-base-micro \
   --builder-id "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0"
 ```
@@ -94,6 +126,8 @@ OpenSCAP builds ComplianceAsCode/content `0.1.81` from SHA512-pinned source, run
 
 BuildKit SBOM generation is disabled in the publish build with `--sbom=false`. The authoritative C3 evidence is the Syft rpmdb-derived SPDX and CycloneDX predicates emitted after push from the per-platform child digests. A gate-only Syft JSON inventory corroborates the required RPM names before the SPDX and CycloneDX predicates are attested, avoiding two competing SPDX documents with different source semantics.
 
+`cosign download sbom` does not apply because the SBOM is delivered as the `spdxjson` and `cyclonedx` attestations, not as an attached BuildKit SBOM.
+
 ## Anonymous Pull Status
 
-The commands above are the normative verification contract for a published digest. The full anonymous-pull run is P1.8 because the GHCR package auto-creates private on first publish and requires a one-time owner visibility change before unauthenticated verification can be proven.
+The package is publicly readable. The complete pull and verification chain above works from a clean machine without registry authentication.
