@@ -126,3 +126,14 @@ def test_missing_architecture_key_fails(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "contract.fips.architectures.amd64 keys must be exactly" in result.stderr
+
+
+def test_non_utf8_contract_fails_with_clean_diagnostic(tmp_path: Path) -> None:
+    contract = tmp_path / "image-manifest.json"
+    contract.write_bytes(b"{\xff}\n")
+
+    result = _run(contract, "amd64", tmp_path / "fips-status.json")
+
+    assert result.returncode != 0
+    assert "FIPS status write failed:" in result.stderr
+    assert "Traceback" not in result.stderr

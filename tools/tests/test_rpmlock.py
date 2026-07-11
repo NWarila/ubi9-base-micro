@@ -82,7 +82,7 @@ def _rpm_filenames_command(path: Path, arch: str, policy: rpmlock.LockPolicy) ->
 
 def _write_lock(tmp_path: Path, text: str) -> Path:
     path = tmp_path / "runtime.txt"
-    path.write_text(text, encoding="utf-8")
+    path.write_text(text, encoding="utf-8", newline="\n")
     return path
 
 
@@ -459,6 +459,18 @@ def test_rejects_crlf_lockfile(tmp_path: Path) -> None:
         rpmlock.parse(path)
 
 
+@pytest.mark.parametrize(
+    "separator",
+    ["\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"],
+)
+def test_rejects_non_lf_unicode_line_separators(tmp_path: Path, separator: str) -> None:
+    path = tmp_path / "runtime.txt"
+    path.write_bytes(_lock_text().replace("\n", separator, 1).encode("utf-8"))
+
+    with pytest.raises(rpmlock.LockError, match="only LF line separators are allowed"):
+        rpmlock.parse(path)
+
+
 def test_inert_stray_header_comment_after_positional_headers_validates(tmp_path: Path) -> None:
     lines = _lock_text().splitlines()
     lines.insert(3, "# arch: arm64")
@@ -561,3 +573,27 @@ def test_cli_builder_validate_and_summary() -> None:
     summary = cast(dict[str, Any], json.loads(summary_result.stdout))
     assert len(cast(list[object], summary["rows"])) == 7
     assert len(cast(list[object], summary["direct_rpms"])) == 7
+
+
+def test_public_dockerfile_arg_default_and_cli() -> None:
+    expected = "1704067200"
+
+    assert rpmlock.dockerfile_arg_default(ROOT, "SOURCE_DATE_EPOCH") == expected
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools/rpmlock.py"),
+            "arg-default",
+            "--repo-root",
+            str(ROOT),
+            "--name",
+            "SOURCE_DATE_EPOCH",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == f"{expected}\n"

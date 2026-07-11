@@ -591,10 +591,12 @@ def check_required_files() -> None:
         "tools/assert-rpm-lock-hashes.py",
         "tools/fetch-runtime-rpms.sh",
         "tools/fetch-builder-rpms.sh",
+        "tools/generate-runtime-lock.py",
         "tools/rpmlock.py",
         "tools/verify-fips-provider.py",
         "tools/write-fips-status.py",
         "tools/tests/test_build_runtime_rootfs.py",
+        "tools/tests/test_generate_runtime_lock.py",
         "tools/tests/test_assert_rpm_lock_hashes.py",
         "tools/tests/test_rpmlock.py",
         "tools/tests/test_verify_fips_provider.py",
@@ -965,9 +967,26 @@ def check_builder_toolchain_floor_self_test() -> None:
         )
 
 
-def check_rpm_lock_generator() -> None:
-    text = read("tools/generate-rpm-lock.sh")
+def rpm_lock_generator_errors(text: str) -> list[str]:
+    """Return generator contract violations for source text, enabling real mutation probes."""
+
+    errors: list[str] = []
+
+    def expect(condition: bool, message: str) -> None:
+        if not condition:
+            errors.append(message)
+
+    if "write_capture_dockerfile() {" not in text or "\nvalidate_lockfile()" not in text:
+        return ["RPM lock generator capture function boundaries are missing"]
     capture = text.split("write_capture_dockerfile() {", 1)[1].split("\nvalidate_lockfile()", 1)[0]
+    if "generate_one() {" not in text or "\nrun_check()" not in text:
+        return ["RPM lock generator staging function boundaries are missing"]
+    staging = text.split("generate_one() {", 1)[1].split("\nrun_check()", 1)[0]
+    expect(
+        'python3 "${repo_root}/tools/rpmlock.py" arg-default --repo-root "${repo_root}" --name "${name}"' in text,
+        "RPM lock generator must consume rpmlock's public Dockerfile ARG reader",
+    )
+    expect('sed -n "s/^ARG ' not in text, "RPM lock generator retains the shell Dockerfile ARG parser")
     pre_strip_snapshot = (
         "rpm --root=/rootfs -qa \\\n"
         "  --qf '%{NEVRA}|%{NAME}|%{EPOCHNUM}|%{VERSION}|%{RELEASE}|%{ARCH}|%{SHA256HEADER}|%{SIGMD5}\\n' \\\n"
@@ -975,32 +994,41 @@ def check_rpm_lock_generator() -> None:
     )
     strip_invocation = "python3.12 /tmp/build-runtime-rootfs.py strip-packages --rootfs /rootfs"
     post_strip_snapshot = "rpm --root=/rootfs -qa --qf '%{NEVRA}\\n' | LC_ALL=C sort > /tmp/runtime.final.nevras"
-    count_floor = 'if [[ "${actual_final_count}" != "15" ]]; then'
-    required_names_floor = 'for package_name in "${required_final_names[@]}"; do'
-    classification = 'status = ($1 in final) ? "yes" : "no"'
+    floor_invocation = (
+        "python3.12 /tmp/generate-runtime-lock.py validate-floor \\\n"
+        "  --full-rows /tmp/runtime.full.tsv \\\n"
+        "  --final-nevras /tmp/runtime.final.nevras"
+    )
+    render_invocation = (
+        "python3.12 /tmp/generate-runtime-lock.py render \\\n"
+        "  --full-rows /tmp/runtime.full.tsv \\\n"
+        "  --final-nevras /tmp/runtime.final.nevras \\\n"
+        "  --direct-results /tmp/runtime.direct.tsv \\\n"
+        '  --arch "${TARGETARCH}" \\\n'
+        '  --source-date-epoch "${SOURCE_DATE_EPOCH}" \\\n'
+        '  --output "/out/runtime.${TARGETARCH}.txt"'
+    )
 
     for marker in [
         pre_strip_snapshot,
         strip_invocation,
         post_strip_snapshot,
-        count_floor,
-        required_names_floor,
-        classification,
+        floor_invocation,
+        render_invocation,
     ]:
-        require(marker in capture, f"RPM lock generator missing capture-stage marker: {marker}")
-    require(text.count(strip_invocation) == 1, "RPM lock generator must invoke strip-packages exactly once")
+        expect(marker in capture, f"RPM lock generator missing capture-stage marker: {marker}")
+    expect(text.count(strip_invocation) == 1, "RPM lock generator must invoke strip-packages exactly once")
 
-    pre_index = capture.index(pre_strip_snapshot)
-    strip_index = capture.index(strip_invocation)
-    post_index = capture.index(post_strip_snapshot)
-    require(
-        pre_index < strip_index < post_index,
-        "RPM lock generator must snapshot the full RPM set before stripping and the final RPM set after stripping",
-    )
-    require(
-        strip_index < capture.index(count_floor) < capture.index(required_names_floor) < capture.index(classification),
-        "RPM lock generator count floor, required-name floor, and classification must remain below stripping",
-    )
+    ordering_markers = [pre_strip_snapshot, strip_invocation, post_strip_snapshot, floor_invocation, render_invocation]
+    if all(marker in capture for marker in ordering_markers):
+        expect(
+            capture.index(pre_strip_snapshot)
+            < capture.index(strip_invocation)
+            < capture.index(post_strip_snapshot)
+            < capture.index(floor_invocation)
+            < capture.index(render_invocation),
+            "RPM lock generator must preserve pre-snapshot, strip, post-snapshot, floor, render ordering",
+        )
 
     for marker in [
         "protected_deps",
@@ -1008,15 +1036,37 @@ def check_rpm_lock_generator() -> None:
         "coreutils-single coreutils findutils grep sed",
         "LD_LIBRARY_PATH=/rootfs/usr/lib64 ldd",
     ]:
-        require(marker not in text, f"RPM lock generator retains shadow strip marker: {marker}")
+        expect(marker not in text, f"RPM lock generator retains shadow strip marker: {marker}")
 
-    for marker in [
+    copy_markers = [
         "COPY rpm-lock/builder.amd64.txt rpm-lock/builder.arm64.txt /tmp/rpm-lock/",
         "COPY tools/assert-builder-toolchain-floor.sh /tmp/assert-builder-toolchain-floor.sh",
         "COPY tools/build-runtime-rootfs.py /tmp/build-runtime-rootfs.py",
         "COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh",
-    ]:
-        require(marker in capture, f"RPM lock generator missing capture-stage builder input: {marker}")
+        "COPY fetch-openssl-fips-provider-rpms.sh /usr/local/bin/fetch-openssl-fips-provider-rpms.sh",
+        "COPY tools/rpmlock.py /tmp/rpmlock.py",
+        "COPY tools/generate-runtime-lock.py /tmp/generate-runtime-lock.py",
+    ]
+    for marker in copy_markers:
+        expect(marker in capture, f"RPM lock generator missing exact capture COPY: {marker}")
+    capture_inputs = capture.split("\nRUN <<'CAPTURE'", 1)[0]
+    expect(
+        capture_inputs.count("\nCOPY ") == 7,
+        "RPM lock generator capture input block must contain exactly seven COPY statements",
+    )
+
+    staging_sources = [
+        '"${repo_root}/rpm-lock/builder.amd64.txt"',
+        '"${repo_root}/rpm-lock/builder.arm64.txt"',
+        '"${repo_root}/tools/assert-builder-toolchain-floor.sh"',
+        '"${repo_root}/tools/build-runtime-rootfs.py"',
+        '"${repo_root}/tools/fetch-builder-rpms.sh"',
+        '"${repo_root}/tools/fetch-openssl-fips-provider-rpms.sh"',
+        '"${repo_root}/tools/rpmlock.py"',
+        '"${repo_root}/tools/generate-runtime-lock.py"',
+    ]
+    for marker in staging_sources:
+        expect(marker in staging, f"RPM lock generator missing staged source path: {marker}")
 
     builder_fetch = "bash /tmp/fetch-builder-rpms.sh"
     builder_install = 'rpm -Uvh --oldpackage --replacepkgs --excludedocs "${builder_rpm_paths[@]}"'
@@ -1024,15 +1074,106 @@ def check_rpm_lock_generator() -> None:
     rootfs_assembly = "mkdir -p /rootfs /out /tmp/fips-provider-rpms"
     runtime_install = "microdnf install -y --installroot=/rootfs"
     for marker in [builder_fetch, builder_install, builder_floor, rootfs_assembly, runtime_install]:
-        require(marker in capture, f"RPM lock generator missing capture-stage builder ordering marker: {marker}")
-    require(
-        capture.index(builder_fetch)
-        < capture.index(builder_install)
-        < capture.index(builder_floor)
-        < capture.index(rootfs_assembly)
-        < capture.index(runtime_install),
-        "RPM lock generator must install and floor-check builder Python before /rootfs assembly",
+        expect(marker in capture, f"RPM lock generator missing capture-stage builder ordering marker: {marker}")
+    builder_markers = [builder_fetch, builder_install, builder_floor, rootfs_assembly, runtime_install]
+    if all(marker in capture for marker in builder_markers):
+        expect(
+            capture.index(builder_fetch)
+            < capture.index(builder_install)
+            < capture.index(builder_floor)
+            < capture.index(rootfs_assembly)
+            < capture.index(runtime_install),
+            "RPM lock generator must install and floor-check builder Python before /rootfs assembly",
+        )
+
+    for marker in [
+        "python3.12 /tmp/generate-runtime-lock.py package-specs > /tmp/runtime-package-specs",
+        "python3.12 /tmp/generate-runtime-lock.py candidates",
+        "python3.12 /tmp/generate-runtime-lock.py signature-output --output /tmp/runtime.signature-output",
+        "curl -fL --retry 3 --retry-delay 2 --proto '=https' --tlsv1.2",
+        'actual_sha="$(sha256sum "${tmp}" | awk \'{print $1}\')"',
+        'rpm -K "${path}" | tee /tmp/runtime.signature-output',
+    ]:
+        expect(marker in capture, f"RPM lock generator missing fail-closed helper/orchestration marker: {marker}")
+
+    return errors
+
+
+def _move_after(text: str, moved: str, anchor: str) -> str:
+    without = text.replace(moved, "", 1)
+    return without.replace(anchor, f"{anchor}\n{moved}", 1)
+
+
+def check_rpm_lock_generator() -> None:
+    text = read("tools/generate-rpm-lock.sh")
+    errors = rpm_lock_generator_errors(text)
+    require(not errors, errors[0] if errors else "RPM lock generator contract failed")
+
+    pre_snapshot = (
+        "rpm --root=/rootfs -qa \\\n"
+        "  --qf '%{NEVRA}|%{NAME}|%{EPOCHNUM}|%{VERSION}|%{RELEASE}|%{ARCH}|%{SHA256HEADER}|%{SIGMD5}\\n' \\\n"
+        "  | LC_ALL=C sort > /tmp/runtime.full.tsv"
     )
+    strip = "python3.12 /tmp/build-runtime-rootfs.py strip-packages --rootfs /rootfs"
+    post_snapshot = "rpm --root=/rootfs -qa --qf '%{NEVRA}\\n' | LC_ALL=C sort > /tmp/runtime.final.nevras"
+    render = "python3.12 /tmp/generate-runtime-lock.py render"
+    mutations: list[tuple[str, str]] = [
+        ("delete pre-strip snapshot", text.replace(pre_snapshot, "", 1)),
+        ("move pre-strip snapshot below strip", _move_after(text, pre_snapshot, strip)),
+        ("delete post-strip snapshot", text.replace(post_snapshot, "", 1)),
+        ("move post-strip snapshot above strip", _move_after(text, post_snapshot, pre_snapshot)),
+        ("move rendering above post-strip snapshot", _move_after(text, render, strip)),
+        (
+            "swap render full/final input",
+            text.replace("--full-rows /tmp/runtime.full.tsv", "--full-rows /tmp/runtime.final.nevras", 2),
+        ),
+        ("remove render direct input", text.replace("  --direct-results /tmp/runtime.direct.tsv \\\n", "", 1)),
+        (
+            "weaken signature checker",
+            text.replace(
+                "python3.12 /tmp/generate-runtime-lock.py signature-output --output /tmp/runtime.signature-output",
+                "true",
+                1,
+            ),
+        ),
+        ("weaken curl TLS", text.replace(" --proto '=https' --tlsv1.2", "", 1)),
+        ("remove whole-RPM hash", text.replace("sha256sum", "printf", 1)),
+        (
+            "weaken final-floor checker",
+            text.replace("python3.12 /tmp/generate-runtime-lock.py validate-floor", "true", 1),
+        ),
+        (
+            "weaken public ARG reader",
+            text.replace(
+                'python3 "${repo_root}/tools/rpmlock.py" arg-default --repo-root "${repo_root}" --name "${name}"',
+                "printf unknown",
+                1,
+            ),
+        ),
+    ]
+    copy_markers = [line for line in text.splitlines() if line.startswith("COPY ")][:7]
+    mutations.extend(
+        (f"delete COPY {index}", text.replace(marker, "", 1)) for index, marker in enumerate(copy_markers, 1)
+    )
+    staging_sources = [
+        '"${repo_root}/rpm-lock/builder.amd64.txt"',
+        '"${repo_root}/rpm-lock/builder.arm64.txt"',
+        '"${repo_root}/tools/assert-builder-toolchain-floor.sh"',
+        '"${repo_root}/tools/build-runtime-rootfs.py"',
+        '"${repo_root}/tools/fetch-builder-rpms.sh"',
+        '"${repo_root}/tools/fetch-openssl-fips-provider-rpms.sh"',
+        '"${repo_root}/tools/rpmlock.py"',
+        '"${repo_root}/tools/generate-runtime-lock.py"',
+    ]
+    prefix, staging = text.split("generate_one() {", 1)
+    for index, marker in enumerate(staging_sources, 1):
+        mutations.append(
+            (f"delete staged source {index}", prefix + "generate_one() {" + staging.replace(marker, "", 1))
+        )
+
+    for label, mutated in mutations:
+        require(rpm_lock_generator_errors(mutated), f"RPM lock generator mutation was not rejected: {label}")
+    print(f"RPM lock generator mutation probes: {len(mutations)}/{len(mutations)} rejected")
 
 
 def check_dockerfile() -> None:
@@ -1416,6 +1557,130 @@ def check_dockerfile() -> None:
     require(not present, "Dockerfile/script contains forbidden marker(s): " + ", ".join(present))
 
 
+def rpm_lock_refresh_errors(text: str) -> list[str]:
+    """Return verify-only routing and least-privilege violations for workflow text."""
+
+    errors: list[str] = []
+
+    def expect(condition: bool, message: str) -> None:
+        if not condition:
+            errors.append(message)
+
+    if "\n  verify-only:\n" not in text or "\n  refresh:\n" not in text:
+        return ["RPM lock refresh workflow must define separate verify-only and refresh jobs"]
+    header, jobs = text.split("\njobs:\n", 1)
+    verify_job, refresh_job = jobs.split("\n  refresh:\n", 1)
+    verify_condition = "if: github.event_name == 'workflow_dispatch' && inputs.verify_only"
+    refresh_condition = (
+        "if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.verify_only)"
+    )
+
+    for marker in [
+        "workflow_dispatch:",
+        "verify_only:",
+        "required: true",
+        "default: false",
+        "type: boolean",
+        "permissions: {}",
+    ]:
+        expect(marker in header, f"RPM lock refresh workflow missing verify-only input boundary: {marker}")
+    expect(verify_condition in verify_job, "verify-only job routing condition is missing or weakened")
+    expect(refresh_condition in refresh_job, "refresh job routing condition is missing or weakened")
+    expect("permissions:\n      contents: read" in verify_job, "verify-only job must grant contents: read only")
+    for forbidden in [
+        "contents: write",
+        "pull-requests:",
+        "GH_TOKEN",
+        "git commit",
+        "git push",
+        "gh pr ",
+        "gh auth setup-git",
+    ]:
+        expect(forbidden not in verify_job, f"verify-only job contains write-capable marker: {forbidden}")
+    expect(
+        "permissions:\n      contents: write\n      pull-requests: write" in refresh_job, "refresh permissions changed"
+    )
+
+    required_verify_markers = [
+        "bash -n tools/generate-rpm-lock.sh",
+        "bash tools/generate-rpm-lock.sh --self-test",
+        "bash tools/generate-rpm-lock.sh --arch amd64",
+        "bash tools/generate-rpm-lock.sh --arch arm64",
+        "git diff --quiet -- rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt",
+        "git diff -- rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt",
+        "RPM lockfiles already match the current UBI repositories.",
+        "exit 1",
+    ]
+    for marker in required_verify_markers:
+        expect(marker in verify_job, f"verify-only job missing fail-closed marker: {marker}")
+    if all(marker in verify_job for marker in required_verify_markers[-4:]):
+        expect(
+            verify_job.index("git diff --quiet")
+            < verify_job.index("git diff -- rpm-lock")
+            < verify_job.index("exit 1"),
+            "verify-only unified diff and non-zero exit ordering is invalid",
+        )
+    return errors
+
+
+def check_rpm_lock_refresh_workflow(text: str) -> None:
+    errors = rpm_lock_refresh_errors(text)
+    require(not errors, errors[0] if errors else "RPM lock refresh workflow contract failed")
+
+    mutations = [
+        ("write-capable verify token", text.replace("      contents: read", "      contents: write", 1)),
+        (
+            "verify pull-request token",
+            text.replace("      contents: read", "      contents: read\n      pull-requests: write", 1),
+        ),
+        (
+            "verify route overlap",
+            text.replace(
+                "if: github.event_name == 'workflow_dispatch' && inputs.verify_only", "if: workflow_dispatch", 1
+            ),
+        ),
+        (
+            "refresh route overlap",
+            text.replace(
+                (
+                    "if: github.event_name == 'schedule' || "
+                    "(github.event_name == 'workflow_dispatch' && !inputs.verify_only)"
+                ),
+                "if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'",
+                1,
+            ),
+        ),
+        (
+            "verify commit",
+            text.replace(
+                "          set -euo pipefail",
+                "          set -euo pipefail\n          git commit -am bad",
+                1,
+            ),
+        ),
+        (
+            "verify push",
+            text.replace("          set -euo pipefail", "          set -euo pipefail\n          git push", 1),
+        ),
+        (
+            "verify PR",
+            text.replace("          set -euo pipefail", "          set -euo pipefail\n          gh pr create", 1),
+        ),
+        (
+            "remove unified diff",
+            text.replace(
+                "            git diff -- rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt\n",
+                "",
+                1,
+            ),
+        ),
+        ("remove non-zero exit", text.replace("            exit 1\n", "", 1)),
+    ]
+    for label, mutated in mutations:
+        require(rpm_lock_refresh_errors(mutated), f"RPM lock refresh mutation was not rejected: {label}")
+    print(f"RPM lock refresh mutation probes: {len(mutations)}/{len(mutations)} rejected")
+
+
 def check_workflow() -> None:
     workflows = sorted(path.name for path in (ROOT / ".github/workflows").glob("*.y*ml"))
     require(
@@ -1437,6 +1702,7 @@ def check_workflow() -> None:
     build = read(".github/workflows/build.yaml")
     nightly = read(".github/workflows/nightly.yaml")
     refresh = read(".github/workflows/rpm-lock-refresh.yaml")
+    check_rpm_lock_refresh_workflow(refresh)
     gate_runner = read("tools/run-test-gates.sh")
     reviewdog_actionlint_marker = (
         f"reviewdog/action-actionlint@{ACTIONLINT_REVIEWDOG_ACTION_SHA} # "
@@ -3242,14 +3508,17 @@ def check_lint_setup() -> None:
         "id: assert-rpm-lock-hashes-pytest",
         "name: assert RPM lock hashes pytest",
         "entry: python -m pytest tools/tests/test_assert_rpm_lock_hashes.py -q",
+        "id: generate-runtime-lock-pytest",
+        "name: generate runtime lock pytest",
+        "entry: python -m pytest tools/tests/test_generate_runtime_lock.py -q",
         "language: python",
         "always_run: true",
     ]:
         require(marker in precommit, f".pre-commit-config.yaml missing marker: {marker}")
     require(precommit.count("repo: local") == 1, ".pre-commit-config.yaml must carry exactly one local hook block")
     require(
-        precommit.count("pass_filenames: false") >= 6,
-        ".pre-commit-config.yaml must keep mypy and all pytest hooks filename-independent",
+        precommit.count("pass_filenames: false") == 7,
+        ".pre-commit-config.yaml must keep exactly mypy and six pytest hooks filename-independent",
     )
     status_hook = precommit.split("- id: write-fips-status-pytest", 1)[1]
     for marker in [
@@ -3292,6 +3561,18 @@ def check_lint_setup() -> None:
         ),
     ]:
         require(marker in rpm_hash_hook, f"RPM lock hash pytest hook missing locked marker: {marker}")
+
+    generator_hook = precommit.split("- id: generate-runtime-lock-pytest", 1)[1]
+    for marker in [
+        "name: generate runtime lock pytest",
+        "entry: python -m pytest tools/tests/test_generate_runtime_lock.py -q",
+        "language: python",
+        "additional_dependencies: [pytest==8.4.1]",
+        "pass_filenames: false",
+        "always_run: true",
+        ("files: ^(tools/generate-runtime-lock\\.py|tools/rpmlock\\.py|tools/tests/test_generate_runtime_lock\\.py)$"),
+    ]:
+        require(marker in generator_hook, f"runtime lock generator pytest hook missing locked marker: {marker}")
 
     lint = read(".github/workflows/lint.yaml")
     for marker in [
