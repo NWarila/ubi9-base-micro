@@ -622,6 +622,7 @@ def check_required_files() -> None:
         "!tools/fetch-runtime-rpms.sh" in dockerignore,
         ".dockerignore must allowlist runtime direct-CDN RPM fetch helper",
     )
+    require("!tools/rpmlock.py" in dockerignore, ".dockerignore must allowlist the in-stage RPM lock parser")
     for marker in ["!tools/assert-builder-toolchain-floor.sh", "!tools/fetch-builder-rpms.sh"]:
         require(marker in dockerignore, f".dockerignore must allowlist builder Python input: {marker}")
     for relative_path, _ in REPO_ADRS:
@@ -1033,12 +1034,25 @@ def check_dockerfile() -> None:
         "COPY tools/build-runtime-rootfs.py /tmp/build-runtime-rootfs.py",
         "COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh",
         "COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh",
+        "COPY tools/rpmlock.py /tmp/rpmlock.py",
         "dnf_repo_args=()",
         '"${dnf_repo_args[@]}"',
-        "locked_packages=()",
+        'builder_rpm_paths+=("/tmp/builder-rpms/${name}-${version}-${release}.${arch}.rpm")',
+        'test "${#builder_rpm_paths[@]}" -eq 7',
+        "python3.12 /tmp/rpmlock.py rpm-filenames",
+        '--source-date-epoch "${SOURCE_DATE_EPOCH}"',
+        '--openssl-fips-provider-nevra "${OPENSSL_FIPS_PROVIDER_NEVRA}"',
+        '--openssl-fips-provider-rpm-base-url "${OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}"',
+        '--openssl-fips-provider-rpm-sha256-x86-64 "${OPENSSL_FIPS_PROVIDER_RPM_SHA256_X86_64}"',
+        '--openssl-fips-provider-rpm-sha256-aarch64 "${OPENSSL_FIPS_PROVIDER_RPM_SHA256_AARCH64}"',
+        '--openssl-fips-provider-so-rpm-sha256-x86-64 "${OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64}"',
+        '--openssl-fips-provider-so-rpm-sha256-aarch64 "${OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64}"',
+        '> "${rt_tmp}"',
+        'mapfile -t rt_names < "${rt_tmp}"',
         "locked_rpm_paths=()",
-        'locked_packages+=("${package}")',
-        'locked_rpm_paths+=("/tmp/runtime-rpms/${name}-${version}-${release}.${arch}.rpm")',
+        'locked_rpm_paths+=("/tmp/runtime-rpms/${rt_name}")',
+        'rm -f "${rt_tmp}"',
+        'test "${#locked_rpm_paths[@]}" -gt 0',
         "bash /tmp/assert-rpm-lock-hashes.sh --root /rootfs --lockfile",
         "--direct-rpm-dir /tmp/runtime-rpms",
         "python3.12 /tmp/build-runtime-rootfs.py build",
@@ -1098,17 +1112,42 @@ def check_dockerfile() -> None:
         "FROM ${UBI_MINIMAL_IMAGE} AS dev-rootfs", 1
     )[0]
     require("microdnf install" not in rpm_rootfs, "rpm-rootfs must not install builder Python through microdnf")
-    require("tools/rpmlock.py" not in rpm_rootfs, "rpm-rootfs must not consume rpmlock.py in this increment")
+    runtime_filenames = "python3.12 /tmp/rpmlock.py rpm-filenames"
+    require(
+        "COPY tools/rpmlock.py /tmp/rpmlock.py" in rpm_rootfs and runtime_filenames in rpm_rootfs,
+        "rpm-rootfs must copy and consume rpmlock.py for runtime RPM filenames",
+    )
+    require(
+        "< <(" not in rpm_rootfs,
+        "rpm-rootfs must not hide the rpm-filenames producer status behind process substitution",
+    )
+    runtime_capture = (
+        '--openssl-fips-provider-so-rpm-sha256-aarch64 "${OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64}" > "${rt_tmp}"'
+    )
+    runtime_mapfile = 'mapfile -t rt_names < "${rt_tmp}"'
+    require(
+        rpm_rootfs.index("set -eux;")
+        < rpm_rootfs.index(runtime_filenames)
+        < rpm_rootfs.index(runtime_capture)
+        < rpm_rootfs.index(runtime_mapfile),
+        "rpm-rootfs must status-check rpm-filenames under set -e before reading its temporary output",
+    )
+    require(rpm_rootfs.count(runtime_filenames) == 1, "rpm-rootfs must invoke rpm-filenames exactly once")
     require(
         rpm_rootfs.index("bash /tmp/fetch-builder-rpms.sh") < rpm_rootfs.index("mkdir -p /rootfs"),
         "builder Python must be installed before any /rootfs assembly",
     )
+    builder_install = 'rpm -Uvh --oldpackage --replacepkgs --excludedocs "${builder_rpm_paths[@]}"'
     runtime_install = 'rpm --root=/rootfs -Uvh --oldpackage --replacepkgs --excludedocs "${locked_rpm_paths[@]}"'
     helper_invocation = "python3.12 /tmp/build-runtime-rootfs.py build"
     terminal_touch = 'find /rootfs -xdev -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +'
     require(
-        rpm_rootfs.index(runtime_install) < rpm_rootfs.index(helper_invocation) < rpm_rootfs.index(terminal_touch),
-        "runtime install, Python build helper, and terminal touch must retain their order",
+        rpm_rootfs.index(builder_install)
+        < rpm_rootfs.index(runtime_filenames)
+        < rpm_rootfs.index(runtime_install)
+        < rpm_rootfs.index(helper_invocation)
+        < rpm_rootfs.index(terminal_touch),
+        "builder Python, rpm-filenames, runtime install, build helper, and terminal touch must retain their order",
     )
     require(rpm_rootfs.count(helper_invocation) == 1, "rpm-rootfs must invoke the production build helper exactly once")
     require(

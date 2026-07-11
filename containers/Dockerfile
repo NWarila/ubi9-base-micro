@@ -152,6 +152,7 @@ COPY tools/assert-rpm-lock-hashes.sh /tmp/assert-rpm-lock-hashes.sh
 COPY tools/build-runtime-rootfs.py /tmp/build-runtime-rootfs.py
 COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh
 COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh
+COPY tools/rpmlock.py /tmp/rpmlock.py
 
 # Install the direct-CDN-pinned Python closure into this discarded stage's own
 # root before creating /rootfs. Guard the rpmdb-writing toolchain across it.
@@ -160,6 +161,7 @@ COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh
 # order -- no microdnf/metadata resolution; the lockfile is the complete
 # pre-resolved closure (rpm -Uvh without --nodeps aborts on any missing dep).
 # /var/lib/rpm is retained for scanners; only regenerable caches and logs are pruned.
+# The builder loop below bootstraps python, so it cannot use rpmlock.py (ADR-0014).
 RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     --mount=from=fips-verify,source=/usr/bin/openssl,target=/tmp/fips-openssl,ro \
     --mount=from=fips-verify,source=/usr/lib64,target=/tmp/fips-lib64,ro \
@@ -197,21 +199,18 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     bash /tmp/assert-builder-toolchain-floor.sh --before /tmp/builder-toolchain.before --after /tmp/builder-toolchain.after; \
     python3.12 -c 'import sys; print(sys.version)'; \
     rm -rf /tmp/builder-rpms /tmp/builder-toolchain.before /tmp/builder-toolchain.after; \
-    locked_packages=(); \
+    rt_tmp="/tmp/runtime-rpm-filenames.txt"; \
+    python3.12 /tmp/rpmlock.py rpm-filenames --lockfile "${runtime_lockfile}" --arch "${TARGETARCH}" --source-date-epoch "${SOURCE_DATE_EPOCH}" --openssl-fips-provider-nevra "${OPENSSL_FIPS_PROVIDER_NEVRA}" --openssl-fips-provider-rpm-base-url "${OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}" --openssl-fips-provider-rpm-sha256-x86-64 "${OPENSSL_FIPS_PROVIDER_RPM_SHA256_X86_64}" --openssl-fips-provider-rpm-sha256-aarch64 "${OPENSSL_FIPS_PROVIDER_RPM_SHA256_AARCH64}" --openssl-fips-provider-so-rpm-sha256-x86-64 "${OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64}" --openssl-fips-provider-so-rpm-sha256-aarch64 "${OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64}" > "${rt_tmp}"; \
+    mapfile -t rt_names < "${rt_tmp}"; \
     locked_rpm_paths=(); \
-    while IFS='|' read -r package final_rpmdb name epoch version release arch sha256_header sigmd5; do \
-      case "${package}" in ""|\#*) continue ;; esac; \
-      test -n "${final_rpmdb}" && test -n "${name}" && test -n "${epoch}" && test -n "${version}" && test -n "${release}" && test -n "${arch}" && test -n "${sha256_header}" && test -n "${sigmd5}"; \
-      case "${arch}" in noarch|"${rpm_arch}") ;; *) echo "locked package ${package} has wrong arch ${arch} for ${TARGETARCH}" >&2; exit 1 ;; esac; \
-      case "${final_rpmdb}" in yes|no) ;; *) echo "locked package ${package} has invalid final_rpmdb=${final_rpmdb}" >&2; exit 1 ;; esac; \
-      locked_packages+=("${package}"); \
-      locked_rpm_paths+=("/tmp/runtime-rpms/${name}-${version}-${release}.${arch}.rpm"); \
-    done < "${runtime_lockfile}"; \
-    test "${#locked_packages[@]}" -gt 0 || { echo "runtime RPM lockfile yielded no packages" >&2; exit 1; }; \
+    for rt_name in "${rt_names[@]}"; do \
+      locked_rpm_paths+=("/tmp/runtime-rpms/${rt_name}"); \
+    done; \
+    rm -f "${rt_tmp}"; \
     test "${#locked_rpm_paths[@]}" -gt 0 || { echo "runtime RPM lockfile yielded no local RPM paths" >&2; exit 1; }; \
     mkdir -p /tmp/runtime-rpms; \
     bash /tmp/fetch-runtime-rpms.sh --targetarch "${TARGETARCH}" --lockfile "${runtime_lockfile}" --dest /tmp/runtime-rpms; \
-    echo "installing locked runtime RPM transaction:${locked_packages[*]}"; \
+    echo "installing locked runtime RPM transaction"; \
     mkdir -p /rootfs; \
     rpm --root=/rootfs --initdb; \
     rpm --root=/rootfs -Uvh --oldpackage --replacepkgs --excludedocs "${locked_rpm_paths[@]}"; \

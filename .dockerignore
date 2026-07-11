@@ -15,5 +15,6 @@
 !tools/fetch-builder-rpms.sh
 !tools/fetch-openssl-fips-provider-rpms.sh
 !tools/fetch-runtime-rpms.sh
+!tools/rpmlock.py
 !rpm-lock/
 !rpm-lock/*.txt
