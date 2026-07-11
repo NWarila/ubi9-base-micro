@@ -8,6 +8,8 @@
 !containers/Dockerfile
 !containers/fips/
 !containers/fips/openssl.cnf
+!contracts/
+!contracts/image-manifest.json
 !tools/
 !tools/assert-builder-toolchain-floor.sh
 !tools/assert-rpm-lock-hashes.sh
@@ -16,5 +18,6 @@
 !tools/fetch-openssl-fips-provider-rpms.sh
 !tools/fetch-runtime-rpms.sh
 !tools/rpmlock.py
+!tools/write-fips-status.py
 !rpm-lock/
 !rpm-lock/*.txt

@@ -588,8 +588,10 @@ def check_required_files() -> None:
         "tools/fetch-runtime-rpms.sh",
         "tools/fetch-builder-rpms.sh",
         "tools/rpmlock.py",
+        "tools/write-fips-status.py",
         "tools/tests/test_build_runtime_rootfs.py",
         "tools/tests/test_rpmlock.py",
+        "tools/tests/test_write_fips_status.py",
         "tools/generate-rpm-lock.sh",
         "tools/install-syft.sh",
         "tools/install-trivy.sh",
@@ -626,6 +628,11 @@ def check_required_files() -> None:
     require("!tools/rpmlock.py" in dockerignore, ".dockerignore must allowlist the in-stage RPM lock parser")
     for marker in ["!tools/assert-builder-toolchain-floor.sh", "!tools/fetch-builder-rpms.sh"]:
         require(marker in dockerignore, f".dockerignore must allowlist builder Python input: {marker}")
+    for marker in ["!tools/write-fips-status.py", "!contracts/", "!contracts/image-manifest.json"]:
+        require(marker in dockerignore, f".dockerignore must allowlist FIPS status writer input: {marker}")
+    require(
+        "!contracts/examples" not in dockerignore, ".dockerignore must not expose contract examples to image builds"
+    )
     for relative_path, _ in REPO_ADRS:
         require((ROOT / relative_path).is_file(), f"missing required ADR: {relative_path}")
 
@@ -845,7 +852,11 @@ def check_renovate_config() -> None:
 
 
 def collect_dockerfile_forbidden_sources(root: Path = ROOT) -> list[tuple[str, str]]:
-    paths = [root / "containers/Dockerfile", root / "tools/build-runtime-rootfs.py"]
+    paths = [
+        root / "containers/Dockerfile",
+        root / "tools/build-runtime-rootfs.py",
+        root / "tools/write-fips-status.py",
+    ]
     scripts_dir = root / "containers/scripts"
     if scripts_dir.is_dir():
         paths.extend(sorted(scripts_dir.glob("*.sh")))
@@ -871,20 +882,23 @@ def check_dockerfile_forbidden_scan_self_test() -> None:
         dockerfile = tmp_path / "containers/Dockerfile"
         script = tmp_path / "containers/scripts/strip.sh"
         helper = tmp_path / "tools/build-runtime-rootfs.py"
+        writer = tmp_path / "tools/write-fips-status.py"
         script.parent.mkdir(parents=True)
         helper.parent.mkdir(parents=True)
         dockerfile.parent.mkdir(parents=True, exist_ok=True)
         dockerfile.write_text("FROM scratch\n", encoding="utf-8")
         script.write_text("rm -rf /rootfs/var/lib/rpm\n", encoding="utf-8")
         helper.write_text("rm -rf /rootfs/var/lib/rpm\n", encoding="utf-8")
+        writer.write_text("rm -rf /rootfs/var/lib/rpm\n", encoding="utf-8")
         findings = find_dockerfile_forbidden_markers(collect_dockerfile_forbidden_sources(tmp_path))
     require(
         findings
         == [
             "tools/build-runtime-rootfs.py: rm -rf /rootfs/var/lib/rpm",
+            "tools/write-fips-status.py: rm -rf /rootfs/var/lib/rpm",
             "containers/scripts/strip.sh: rm -rf /rootfs/var/lib/rpm",
         ],
-        "forbidden marker scan must cover runtime-rootfs helper and shell-script fixtures",
+        "forbidden marker scan must cover rootfs-writing helpers and shell-script fixtures",
     )
 
 
@@ -1033,9 +1047,11 @@ def check_dockerfile() -> None:
         "COPY tools/assert-builder-toolchain-floor.sh /tmp/assert-builder-toolchain-floor.sh",
         "COPY tools/assert-rpm-lock-hashes.sh /tmp/assert-rpm-lock-hashes.sh",
         "COPY tools/build-runtime-rootfs.py /tmp/build-runtime-rootfs.py",
+        "COPY contracts/image-manifest.json /tmp/image-manifest.json",
         "COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh",
         "COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh",
         "COPY tools/rpmlock.py /tmp/rpmlock.py",
+        "COPY tools/write-fips-status.py /tmp/write-fips-status.py",
         "dnf_repo_args=()",
         '"${dnf_repo_args[@]}"',
         'builder_rpm_paths+=("/tmp/builder-rpms/${name}-${version}-${release}.${arch}.rpm")',
@@ -1057,6 +1073,7 @@ def check_dockerfile() -> None:
         "bash /tmp/assert-rpm-lock-hashes.sh --root /rootfs --lockfile",
         "--direct-rpm-dir /tmp/runtime-rpms",
         "python3.12 /tmp/build-runtime-rootfs.py build",
+        "python3.12 /tmp/write-fips-status.py --contract /tmp/image-manifest.json",
         '--runtime-lockfile "${runtime_lockfile}"',
         "--fips-proof /tmp/fips-proof",
         "--fips-openssl /tmp/fips-openssl",
@@ -1084,15 +1101,10 @@ def check_dockerfile() -> None:
         "OPENSSL_CONF",
         "ossl-modules",
         f'org.nwarila.fips.cmvp="{fips_cmvp()}"',
-        f'"cmvp": "#{fips_cmvp()}"',
         "org.nwarila.fips.module-version",
         "org.nwarila.fips.provider-nvr",
         "org.nwarila.fips.cmvp.oe-validated",
         "/etc/nwarila/fips-status.json",
-        "provider_nvr",
-        "provider_nevra",
-        f"oe_validated={str(fips_oe_validated('arm64')).lower()}",
-        fips_disclaimer("arm64"),
         "/fips-proof/provider.nevra",
         "/fips-proof/expected-provider.nevra",
         "/fips-proof/libs.nevra",
@@ -1141,19 +1153,52 @@ def check_dockerfile() -> None:
     builder_install = 'rpm -Uvh --oldpackage --replacepkgs --excludedocs "${builder_rpm_paths[@]}"'
     runtime_install = 'rpm --root=/rootfs -Uvh --oldpackage --replacepkgs --excludedocs "${locked_rpm_paths[@]}"'
     helper_invocation = "python3.12 /tmp/build-runtime-rootfs.py build"
+    writer_invocation = "python3.12 /tmp/write-fips-status.py --contract /tmp/image-manifest.json"
     terminal_touch = 'find /rootfs -xdev -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +'
     require(
         rpm_rootfs.index(builder_install)
         < rpm_rootfs.index(runtime_filenames)
         < rpm_rootfs.index(runtime_install)
         < rpm_rootfs.index(helper_invocation)
+        < rpm_rootfs.index(writer_invocation)
         < rpm_rootfs.index(terminal_touch),
-        "builder Python, rpm-filenames, runtime install, build helper, and terminal touch must retain their order",
+        "builder Python, rpm-filenames, runtime install, build helper, FIPS status writer, and terminal touch "
+        "must retain their order",
     )
     require(rpm_rootfs.count(helper_invocation) == 1, "rpm-rootfs must invoke the production build helper exactly once")
+    require(rpm_rootfs.count(writer_invocation) == 1, "rpm-rootfs must invoke the FIPS status writer exactly once")
     require(
         "/rootfs" not in rpm_rootfs.split(terminal_touch, 1)[1],
         "the inline terminal touch must be the last rpm-rootfs mutation",
+    )
+
+    runtime_common = text.split("FROM ${UBI_MICRO_IMAGE} AS runtime-common", 1)[1].split(
+        "FROM runtime-common AS runtime-amd64", 1
+    )[0]
+    for marker in [
+        "test -s /tmp/fips-proof/proof.txt",
+        'test "$(cat /tmp/fips-proof/provider.nevra)" = "${expected_provider_nevra}"',
+        'test "$(cat /tmp/fips-proof/expected-provider.nevra)" = "${expected_provider_nevra}"',
+        'test "$(cat /tmp/fips-proof/module.version)" = "${OPENSSL_FIPS_MODULE_VERSION}"',
+        "test -s /etc/nwarila/fips-status.json",
+    ]:
+        require(marker in runtime_common, f"runtime-common missing retained FIPS assertion: {marker}")
+    for marker in [
+        "oe_validated=",
+        "disclaimer=",
+        "mkdir -p /etc/nwarila",
+        '"arch":',
+        '"module":',
+        '"provider_nvr":',
+        '"provider_nevra":',
+        '"cmvp":',
+        '"oe_validated":',
+        '"disclaimer":',
+    ]:
+        require(marker not in runtime_common, f"runtime-common must not generate FIPS status JSON: {marker}")
+    require(
+        re.search(r">{1,2}\s*/etc/nwarila/fips-status\.json", runtime_common) is None,
+        "runtime-common must not redirect output to the FIPS status path",
     )
 
     rootfs_helper = read("tools/build-runtime-rootfs.py")
@@ -1185,6 +1230,25 @@ def check_dockerfile() -> None:
         < build_body.index("_trim_filesystem("),
         "production build helper must run strip, lock floor, FIPS cross-checks, then filesystem trims",
     )
+
+    status_writer = read("tools/write-fips-status.py")
+    for marker in [
+        'parser.add_argument("--contract", type=Path, required=True)',
+        'parser.add_argument("--target-arch", choices=TARGET_ARCHES, required=True)',
+        'parser.add_argument("--provider-nevra", required=True)',
+        'parser.add_argument("--module-version", required=True)',
+        'parser.add_argument("--output", type=Path, required=True)',
+        'json.loads(contract.read_text(encoding="utf-8"))',
+        "provider_nevra == contract_provider",
+        "module_version == contract_module",
+        '"provider_nevra": f"{contract_provider}.{rpm_arch}"',
+        '"cmvp": f"#{cmvp}"',
+        "json.dumps(payload, indent=2, ensure_ascii=True)",
+        "output.parent.mkdir(mode=0o755, parents=True, exist_ok=True)",
+        "output.write_bytes(encoded)",
+        "output.read_bytes()",
+    ]:
+        require(marker in status_writer, f"FIPS status writer missing locked marker: {marker}")
 
     builder_fetch = read("tools/fetch-builder-rpms.sh")
     for marker in [
@@ -3024,15 +3088,32 @@ def check_lint_setup() -> None:
         "id: build-runtime-rootfs-pytest",
         "name: build runtime rootfs pytest",
         "entry: python -m pytest tools/tests/test_build_runtime_rootfs.py -q",
+        "id: write-fips-status-pytest",
+        "name: write FIPS status pytest",
+        "entry: python -m pytest tools/tests/test_write_fips_status.py -q",
         "language: python",
         "always_run: true",
     ]:
         require(marker in precommit, f".pre-commit-config.yaml missing marker: {marker}")
     require(precommit.count("repo: local") == 1, ".pre-commit-config.yaml must carry exactly one local hook block")
     require(
-        precommit.count("pass_filenames: false") >= 3,
-        ".pre-commit-config.yaml must keep mypy and both pytest hooks filename-independent",
+        precommit.count("pass_filenames: false") >= 4,
+        ".pre-commit-config.yaml must keep mypy and all pytest hooks filename-independent",
     )
+    status_hook = precommit.split("- id: write-fips-status-pytest", 1)[1]
+    for marker in [
+        "name: write FIPS status pytest",
+        "entry: python -m pytest tools/tests/test_write_fips_status.py -q",
+        "language: python",
+        "additional_dependencies: [pytest==8.4.1]",
+        "pass_filenames: false",
+        "always_run: true",
+        (
+            "files: ^(tools/write-fips-status\\.py|tools/tests/test_write_fips_status\\.py|"
+            "contracts/(image-manifest\\.json|examples/fips-status\\.(amd64|arm64)\\.json))$"
+        ),
+    ]:
+        require(marker in status_hook, f"FIPS status pytest hook missing locked marker: {marker}")
 
     lint = read(".github/workflows/lint.yaml")
     for marker in [

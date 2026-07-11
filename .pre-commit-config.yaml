@@ -79,3 +79,11 @@ repos:
         pass_filenames: false
         always_run: true
         files: ^(tools/build-runtime-rootfs\.py|tools/tests/test_build_runtime_rootfs\.py|containers/Dockerfile)$
+      - id: write-fips-status-pytest
+        name: write FIPS status pytest
+        entry: python -m pytest tools/tests/test_write_fips_status.py -q
+        language: python
+        additional_dependencies: [pytest==8.4.1]
+        pass_filenames: false
+        always_run: true
+        files: ^(tools/write-fips-status\.py|tools/tests/test_write_fips_status\.py|contracts/(image-manifest\.json|examples/fips-status\.(amd64|arm64)\.json))$
