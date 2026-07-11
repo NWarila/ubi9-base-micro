@@ -325,6 +325,42 @@ def test_rejects_direct_rpm_without_row(tmp_path: Path) -> None:
         _validate_text(tmp_path, "\n".join(lines) + "\n")
 
 
+def test_common_validation_modes_preserve_strict_and_named_orphan_order(tmp_path: Path) -> None:
+    first_direct = _first_direct_line(_lock_text())
+    payload = first_direct.removeprefix(rpmlock.DIRECT_PREFIX).split("|")
+    extra_direct = f"{rpmlock.DIRECT_PREFIX}ghost-1-1.el9.noarch|{payload[1]}|{payload[2]}"
+    lines = _lock_text().splitlines()
+    lines.insert(lines.index(first_direct) + 1, extra_direct)
+    lockfile = rpmlock.parse(_write_lock(tmp_path, "\n".join(lines) + "\n"))
+
+    with pytest.raises(rpmlock.LockError, match="expected 38 direct RPM pins"):
+        rpmlock.validate_common(lockfile, mode=rpmlock.CommonValidationMode.STRICT)
+    with pytest.raises(rpmlock.LockError, match="direct RPM entry has no matching package row: ghost"):
+        rpmlock.validate_common(lockfile, mode=rpmlock.CommonValidationMode.ASSERTION)
+
+
+def test_assertion_compatibility_rejects_pin_after_row(tmp_path: Path) -> None:
+    lines = _lock_text().splitlines()
+    first_direct = _first_direct_line(_lock_text())
+    direct_index = lines.index(first_direct)
+    package = first_direct.removeprefix(rpmlock.DIRECT_PREFIX).split("|", 1)[0]
+    row_index = next(index for index, line in enumerate(lines) if line.startswith(f"{package}|"))
+    lines.pop(direct_index)
+    lines.insert(row_index, first_direct)
+    lockfile = rpmlock.parse(_write_lock(tmp_path, "\n".join(lines) + "\n"))
+
+    with pytest.raises(rpmlock.LockError, match="direct RPM source pin must precede package row"):
+        rpmlock.validate_assertion_compatibility(lockfile)
+
+
+def test_assertion_compatibility_requires_terminal_lf(tmp_path: Path) -> None:
+    path = tmp_path / "runtime.txt"
+    path.write_bytes(AMD64_LOCK.read_bytes().removesuffix(b"\n"))
+
+    with pytest.raises(rpmlock.LockError, match="must end with a line feed"):
+        rpmlock.validate_assertion_compatibility(rpmlock.parse(path))
+
+
 def test_rejects_direct_rpm_filename_mismatch(tmp_path: Path) -> None:
     first_direct = _first_direct_line(_lock_text())
     mutated_direct = first_direct.replace(".rpm|", ".wrong.rpm|", 1)

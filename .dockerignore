@@ -10,7 +10,7 @@
 !containers/fips/openssl.cnf
 !contracts/image-manifest.json
 !tools/assert-builder-toolchain-floor.sh
-!tools/assert-rpm-lock-hashes.sh
+!tools/assert-rpm-lock-hashes.py
 !tools/build-runtime-rootfs.py
 !tools/fetch-builder-rpms.sh
 !tools/fetch-openssl-fips-provider-rpms.sh

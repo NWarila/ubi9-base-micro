@@ -3,8 +3,8 @@
 # (host/sha256/columns/arch/orphans), download each pinned RPM, verify sha256 + rpm -K GPG, and write a
 # direct-rpms.lock manifest (fails closed).
 # Role: container-build
-# Python-convertible: yes — lockfile parser + cross-validation duplicates assert-rpm-lock-hashes.sh; consolidate the
-# lock grammar in Python (curl/sha256sum/rpm -K stay glue).
+# Python-convertible: yes — lockfile parser + cross-validation duplicate the shared rpmlock.py seam; consolidate the
+# remaining lock grammar in Python (curl/sha256sum/rpm -K stay glue).
 # Relocate: yes — build-process fetch script; move under containers/scripts/.
 
 set -euo pipefail

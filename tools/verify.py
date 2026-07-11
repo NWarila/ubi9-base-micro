@@ -588,13 +588,14 @@ def check_required_files() -> None:
         "tools/build-runtime-rootfs.py",
         "tools/assert-no-phantom-packages.py",
         "tools/assert-reproducible.py",
-        "tools/assert-rpm-lock-hashes.sh",
+        "tools/assert-rpm-lock-hashes.py",
         "tools/fetch-runtime-rpms.sh",
         "tools/fetch-builder-rpms.sh",
         "tools/rpmlock.py",
         "tools/verify-fips-provider.py",
         "tools/write-fips-status.py",
         "tools/tests/test_build_runtime_rootfs.py",
+        "tools/tests/test_assert_rpm_lock_hashes.py",
         "tools/tests/test_rpmlock.py",
         "tools/tests/test_verify_fips_provider.py",
         "tools/tests/test_write_fips_status.py",
@@ -627,34 +628,33 @@ def check_required_files() -> None:
     ]:
         require((ROOT / relative_path).is_file(), f"missing required file: {relative_path}")
     dockerignore = read(".dockerignore")
-    dockerignore_lines = set(dockerignore.splitlines())
-    for marker in [
+    expected_dockerignore_negations = {
+        "!containers/",
+        "!containers/Dockerfile",
+        "!containers/fips/",
+        "!containers/fips/openssl.cnf",
+        "!contracts/image-manifest.json",
+        "!rpm-lock/",
+        "!rpm-lock/*.txt",
         "!tools/assert-builder-toolchain-floor.sh",
-        "!tools/assert-rpm-lock-hashes.sh",
+        "!tools/assert-rpm-lock-hashes.py",
         "!tools/build-runtime-rootfs.py",
         "!tools/fetch-builder-rpms.sh",
+        "!tools/fetch-openssl-fips-provider-rpms.sh",
         "!tools/fetch-runtime-rpms.sh",
         "!tools/rpmlock.py",
         "!tools/verify-fips-provider.py",
         "!tools/write-fips-status.py",
-    ]:
-        require(marker in dockerignore_lines, f".dockerignore must exactly allowlist Dockerfile tool input: {marker}")
-    for marker in ["!tools", "!tools/", "!tools/*"]:
+    }
+    raw_negations = [line for line in dockerignore.splitlines() if line.strip().startswith("!")]
+    for raw_line in raw_negations:
         require(
-            marker not in dockerignore_lines,
-            f".dockerignore must not re-include the whole tools subtree: {marker}",
+            raw_line == raw_line.strip(),
+            f".dockerignore negation lines must not carry leading or trailing whitespace: {raw_line!r}",
         )
     require(
-        "!contracts/image-manifest.json" in dockerignore_lines,
-        ".dockerignore must allowlist the image contract input",
-    )
-    require(
-        "!contracts/" not in dockerignore_lines,
-        ".dockerignore must not re-include the bare contracts/ directory because it exposes the whole subtree",
-    )
-    require(
-        not any(line.startswith("!contracts/examples") for line in dockerignore_lines),
-        ".dockerignore must not expose contract examples to image builds",
+        set(raw_negations) == expected_dockerignore_negations,
+        ".dockerignore negation lines must exactly equal the reviewed build-context allowlist",
     )
     for relative_path, _ in REPO_ADRS:
         require((ROOT / relative_path).is_file(), f"missing required ADR: {relative_path}")
@@ -1072,7 +1072,7 @@ def check_dockerfile() -> None:
         "python python3 python3.12",
         "COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/",
         "COPY tools/assert-builder-toolchain-floor.sh /tmp/assert-builder-toolchain-floor.sh",
-        "COPY tools/assert-rpm-lock-hashes.sh /tmp/assert-rpm-lock-hashes.sh",
+        "COPY tools/assert-rpm-lock-hashes.py /tmp/assert-rpm-lock-hashes.py",
         "COPY tools/build-runtime-rootfs.py /tmp/build-runtime-rootfs.py",
         "COPY contracts/image-manifest.json /tmp/image-manifest.json",
         "COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh",
@@ -1098,7 +1098,7 @@ def check_dockerfile() -> None:
         'locked_rpm_paths+=("/tmp/runtime-rpms/${rt_name}")',
         'rm -f "${rt_tmp}"',
         'test "${#locked_rpm_paths[@]}" -gt 0',
-        "bash /tmp/assert-rpm-lock-hashes.sh --root /rootfs --lockfile",
+        "python3.12 /tmp/assert-rpm-lock-hashes.py --root /rootfs --lockfile",
         "--direct-rpm-dir /tmp/runtime-rpms",
         "python3.12 /tmp/build-runtime-rootfs.py build",
         "python3.12 /tmp/write-fips-status.py --contract /tmp/image-manifest.json",
@@ -1249,6 +1249,9 @@ def check_dockerfile() -> None:
     )
     builder_install = 'rpm -Uvh --oldpackage --replacepkgs --excludedocs "${builder_rpm_paths[@]}"'
     runtime_install = 'rpm --root=/rootfs -Uvh --oldpackage --replacepkgs --excludedocs "${locked_rpm_paths[@]}"'
+    microdnf_clean = "microdnf clean all"
+    rootfs_cleanup = "rm -rf /rootfs/var/cache/* /var/cache/microdnf-installroot"
+    hash_assertion = "python3.12 /tmp/assert-rpm-lock-hashes.py --root /rootfs --lockfile"
     helper_invocation = "python3.12 /tmp/build-runtime-rootfs.py build"
     writer_invocation = "python3.12 /tmp/write-fips-status.py --contract /tmp/image-manifest.json"
     terminal_touch = 'find /rootfs -xdev -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +'
@@ -1256,14 +1259,25 @@ def check_dockerfile() -> None:
         rpm_rootfs.index(builder_install)
         < rpm_rootfs.index(runtime_filenames)
         < rpm_rootfs.index(runtime_install)
+        < rpm_rootfs.index(microdnf_clean)
+        < rpm_rootfs.index(rootfs_cleanup)
+        < rpm_rootfs.index(hash_assertion)
         < rpm_rootfs.index(helper_invocation)
         < rpm_rootfs.index(writer_invocation)
         < rpm_rootfs.index(terminal_touch),
-        "builder Python, rpm-filenames, runtime install, build helper, FIPS status writer, and terminal touch "
-        "must retain their order",
+        "rpm-rootfs must retain runtime install < microdnf clean < rootfs cleanup < hash assertion < build helper "
+        "< FIPS status writer < terminal touch",
     )
-    require(rpm_rootfs.count(helper_invocation) == 1, "rpm-rootfs must invoke the production build helper exactly once")
-    require(rpm_rootfs.count(writer_invocation) == 1, "rpm-rootfs must invoke the FIPS status writer exactly once")
+    for marker, label in [
+        (runtime_install, "runtime RPM install"),
+        (microdnf_clean, "microdnf cleanup"),
+        (rootfs_cleanup, "rootfs cleanup"),
+        (hash_assertion, "RPM lock hash assertion"),
+        (helper_invocation, "production build helper"),
+        (writer_invocation, "FIPS status writer"),
+        (terminal_touch, "terminal rootfs touch"),
+    ]:
+        require(rpm_rootfs.count(marker) == 1, f"rpm-rootfs must contain {label} exactly once")
     require(
         "/rootfs" not in rpm_rootfs.split(terminal_touch, 1)[1],
         "the inline terminal touch must be the last rpm-rootfs mutation",
@@ -1448,7 +1462,7 @@ def check_workflow() -> None:
         "tools/assert-footprint.py --self-test",
         "tools/assert-no-phantom-packages.py --self-test",
         "tools/assert-reproducible.py --self-test",
-        "bash tools/assert-rpm-lock-hashes.sh --self-test",
+        "python tools/assert-rpm-lock-hashes.py --self-test",
         "bash tools/generate-rpm-lock.sh --self-test",
         "tools/assert-scanner-db-freshness.py --self-test",
         "tools/assert-vex.py --self-test",
@@ -1494,6 +1508,7 @@ def check_workflow() -> None:
         "contents: read",
         "cancel-in-progress: false",
         "tools/verify.py",
+        "python tools/assert-rpm-lock-hashes.py --self-test",
         "bash tools/generate-rpm-lock.sh --self-test",
         "tools/assert-scanner-db-freshness.py --self-test",
         "bash -n tools/run-test-gates.sh",
@@ -1614,7 +1629,7 @@ def check_workflow() -> None:
         "tools/assert-no-rootfs-secrets.py",
         "tools/generate-nist-800-190-predicate.py",
         '--validate "${predicate}"',
-        "bash /tmp/assert-rpm-lock-hashes.sh --root /rootfs --lockfile",
+        "python3.12 /tmp/assert-rpm-lock-hashes.py --root /rootfs --lockfile",
     ]:
         require(
             marker in gate_runner or marker in read("containers/Dockerfile"),
@@ -2525,6 +2540,7 @@ def check_nist_800_190_scripts() -> None:
 
 def check_helper_self_tests() -> None:
     for relative_path in [
+        "tools/assert-rpm-lock-hashes.py",
         "tools/assert-no-rootfs-secrets.py",
         "tools/generate-nist-800-190-predicate.py",
         "tools/assert-footprint.py",
@@ -3064,7 +3080,7 @@ def check_docs() -> None:
 
     for marker in [
         "tools/assert-reproducible.py",
-        "tools/assert-rpm-lock-hashes.sh",
+        "tools/assert-rpm-lock-hashes.py",
         "tools/assert-scanner-db-freshness.py",
         "tools/assert-no-rootfs-secrets.py",
         "tools/assert-stig-arf.py",
@@ -3223,13 +3239,16 @@ def check_lint_setup() -> None:
         "id: verify-fips-provider-pytest",
         "name: verify FIPS provider pytest",
         "entry: python -m pytest tools/tests/test_verify_fips_provider.py -q",
+        "id: assert-rpm-lock-hashes-pytest",
+        "name: assert RPM lock hashes pytest",
+        "entry: python -m pytest tools/tests/test_assert_rpm_lock_hashes.py -q",
         "language: python",
         "always_run: true",
     ]:
         require(marker in precommit, f".pre-commit-config.yaml missing marker: {marker}")
     require(precommit.count("repo: local") == 1, ".pre-commit-config.yaml must carry exactly one local hook block")
     require(
-        precommit.count("pass_filenames: false") >= 5,
+        precommit.count("pass_filenames: false") >= 6,
         ".pre-commit-config.yaml must keep mypy and all pytest hooks filename-independent",
     )
     status_hook = precommit.split("- id: write-fips-status-pytest", 1)[1]
@@ -3258,6 +3277,21 @@ def check_lint_setup() -> None:
         ("files: ^(tools/verify-fips-provider\\.py|tools/tests/test_verify_fips_provider\\.py|containers/Dockerfile)$"),
     ]:
         require(marker in verifier_hook, f"FIPS provider pytest hook missing locked marker: {marker}")
+
+    rpm_hash_hook = precommit.split("- id: assert-rpm-lock-hashes-pytest", 1)[1]
+    for marker in [
+        "name: assert RPM lock hashes pytest",
+        "entry: python -m pytest tools/tests/test_assert_rpm_lock_hashes.py -q",
+        "language: python",
+        "additional_dependencies: [pytest==8.4.1]",
+        "pass_filenames: false",
+        "always_run: true",
+        (
+            "files: ^(tools/assert-rpm-lock-hashes\\.py|tools/rpmlock\\.py|"
+            "tools/tests/test_assert_rpm_lock_hashes\\.py)$"
+        ),
+    ]:
+        require(marker in rpm_hash_hook, f"RPM lock hash pytest hook missing locked marker: {marker}")
 
     lint = read(".github/workflows/lint.yaml")
     for marker in [
