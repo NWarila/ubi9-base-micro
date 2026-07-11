@@ -2522,6 +2522,35 @@ def check_docs() -> None:
     consume_howto = read("docs/how-to/consume-base-micro-as-from-base.md")
     tutorial = read("docs/tutorials/getting-started-build-and-verify.md")
     legacy_namespace = "ghcr.io/nwarila-" + "platform/*"
+    verify_hero_heading = "## Verify From a Clean Machine (No Auth)"
+    verify_headings = re.findall(r"^## Verify(?:[ \t]+.*)?$", readme, flags=re.MULTILINE)
+    require(
+        verify_headings == [verify_hero_heading],
+        "README.md must contain exactly one verify section: the clean-machine hero",
+    )
+    verify_hero_start = readme.index(verify_hero_heading)
+    verify_hero_tail = readme[verify_hero_start + len(verify_hero_heading) :]
+    verify_hero_end_match = re.search(r"^## ", verify_hero_tail, re.MULTILINE)
+    require(verify_hero_end_match is not None, "README.md verify hero must be followed by another section")
+    verify_hero_end = verify_hero_start + len(verify_hero_heading) + verify_hero_end_match.start()
+    verify_hero = readme[verify_hero_start:verify_hero_end]
+    for marker in [
+        "ghcr.io/nwarila/ubi9-base-micro:base-micro",
+        'INDEX_DIGEST="$(crane digest "${IMAGE}:${TAG}")"',
+        'INDEX_REF="${IMAGE}@${INDEX_DIGEST}"',
+        'CHILD_DIGEST="$(crane digest --platform linux/amd64 "${INDEX_REF}")"',
+        'CHILD_REF="${IMAGE}@${CHILD_DIGEST}"',
+        'cosign verify "${INDEX_REF}"',
+        f'cosign verify-attestation --type {predicate_type("spdx")} "${{CHILD_REF}}"',
+        f'cosign verify-attestation --type {predicate_type("cyclonedx")} "${{CHILD_REF}}"',
+        f'cosign verify-attestation --type {predicate_type("openvex")} "${{CHILD_REF}}"',
+        f'cosign verify-attestation --type {predicate_type("nist_800_190")} "${{CHILD_REF}}"',
+        f'cosign verify-attestation --type {predicate_type("stig_arf")} "${{CHILD_REF}}"',
+        f'cosign verify-attestation --type {slsa_attestation_type()} "${{INDEX_REF}}"',
+        'slsa-verifier verify-image "${INDEX_REF}"',
+        "docs/reference/verify.md",
+    ]:
+        require(marker in verify_hero, f"README.md verify hero missing or misrouting marker: {marker}")
     require(legacy_namespace in acceptance, "acceptance copy should preserve source DoD text")
     require("superseded for this repository" in acceptance, "acceptance.md must flag the legacy platform namespace")
     require("Byte-for-byte reproducible (HARD gate)" in acceptance, "acceptance.md must carry hard F3 wording")
