@@ -65,6 +65,6 @@ row.
 - `rpm-lock/runtime.amd64.txt`
 - `rpm-lock/runtime.arm64.txt`
 - `tools/fetch-runtime-rpms.sh`
-- `tools/assert-rpm-lock-hashes.sh`
+- `tools/assert-rpm-lock-hashes.py`
 - `tools/generate-rpm-lock.sh`
 - `.github/workflows/rpm-lock-refresh.yaml`

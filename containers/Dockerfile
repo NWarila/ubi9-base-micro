@@ -121,7 +121,7 @@ COPY rpm-lock/builder.amd64.txt rpm-lock/builder.arm64.txt /tmp/rpm-lock/
 COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/
 COPY contracts/image-manifest.json /tmp/image-manifest.json
 COPY tools/assert-builder-toolchain-floor.sh /tmp/assert-builder-toolchain-floor.sh
-COPY tools/assert-rpm-lock-hashes.sh /tmp/assert-rpm-lock-hashes.sh
+COPY tools/assert-rpm-lock-hashes.py /tmp/assert-rpm-lock-hashes.py
 COPY tools/build-runtime-rootfs.py /tmp/build-runtime-rootfs.py
 COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh
 COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh
@@ -191,7 +191,7 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     microdnf clean all; \
     rm -rf /rootfs/var/cache/* /var/cache/microdnf-installroot \
       /rootfs/var/log/dnf.log /rootfs/var/log/dnf.librepo.log /rootfs/var/log/hawkey.log; \
-    bash /tmp/assert-rpm-lock-hashes.sh --root /rootfs --lockfile "${runtime_lockfile}" --direct-rpm-dir /tmp/runtime-rpms; \
+    python3.12 /tmp/assert-rpm-lock-hashes.py --root /rootfs --lockfile "${runtime_lockfile}" --direct-rpm-dir /tmp/runtime-rpms; \
     python3.12 /tmp/build-runtime-rootfs.py build \
       --rootfs /rootfs \
       --runtime-lockfile "${runtime_lockfile}" \

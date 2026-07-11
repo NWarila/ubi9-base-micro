@@ -11,7 +11,7 @@ it.
 | `tools/assert-reproducible.py` | Builds the same runtime twice for a platform, exports both rootfs tar streams, reports canonical rootfs and rpmdb digests, fails on any byte, metadata, ownership, type, mtime, or presence difference when `--assert-byte-identical` is set, and fails when `--expect-from-contract` values from `contracts/image-manifest.json` do not match. |
 | `tools/assert-footprint.py` | Exports the runtime rootfs and fails when regular-file bytes exceed the configured H2 limit. |
 | `tools/assert-no-phantom-packages.py` | Compares rpmdb-declared payloads with the exported rootfs so stripped files cannot leave scanner-visible packages with missing shippable payload. |
-| `tools/assert-rpm-lock-hashes.sh` | Confirms installed RPMs match the lockfile `%{SHA256HEADER}` and `%{SIGMD5}` values after local RPM installation. |
+| `tools/assert-rpm-lock-hashes.py` | Confirms installed RPMs match the lockfile `%{SHA256HEADER}` and `%{SIGMD5}` values after local RPM installation. |
 | `tools/generate-rpm-lock.sh` | Regenerates per-architecture runtime lockfiles with exact NEVRA, direct-CDN URL, whole-RPM SHA-256, `%{SHA256HEADER}`, and `%{SIGMD5}` records; `--check` fails on drift. |
 | `tools/fetch-runtime-rpms.sh` | Fetches locked runtime RPMs from pinned Red Hat UBI CDN URLs, verifies whole-RPM SHA-256 values, and verifies Red Hat RPM signatures before installation. |
 | `tools/assert-sbom-rpms.py` | Confirms Syft rpmdb-derived SBOM output enumerates required runtime RPMs before SPDX and CycloneDX evidence is attested. |

@@ -14,6 +14,7 @@ import re
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Final, cast
 
@@ -55,6 +56,13 @@ BUILDER_PYTHON_NAMES: Final = (
 
 class LockError(Exception):
     """Raised when a runtime RPM lockfile is malformed."""
+
+
+class CommonValidationMode(StrEnum):
+    """Select aggregate diagnostic ordering for policy-independent validation."""
+
+    STRICT = "strict"
+    ASSERTION = "assertion"
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +135,17 @@ class Lockfile:
     direct_entries: tuple[DirectRpm, ...]
     direct_map: dict[str, tuple[str, str]]
     rows: tuple[LockRow, ...]
+    terminal_lf: bool
+    direct_line_numbers: dict[str, int]
+    row_line_numbers: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CommonValidationResult:
+    """Counts produced by policy-independent runtime-lock validation."""
+
+    row_count: int
+    direct_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,9 +279,11 @@ def parse(path: Path) -> Lockfile:
     headers = _positional_headers(lines)
     direct_entries: list[DirectRpm] = []
     direct_map: dict[str, tuple[str, str]] = {}
+    direct_line_numbers: dict[str, int] = {}
     rows: list[LockRow] = []
+    row_line_numbers: list[int] = []
 
-    for line in lines:
+    for line_number, line in enumerate(lines, start=1):
         if not line:
             continue
         if line.startswith(DIRECT_PREFIX):
@@ -271,10 +292,12 @@ def parse(path: Path) -> Lockfile:
                 raise LockError(f"{lock_path}: duplicate direct RPM entry: {entry.package}")
             direct_entries.append(entry)
             direct_map[entry.package] = (entry.url, entry.sha256)
+            direct_line_numbers[entry.package] = line_number
             continue
         if line.startswith("#"):
             continue
         rows.append(_parse_row(lock_path, line))
+        row_line_numbers.append(line_number)
 
     return Lockfile(
         path=lock_path,
@@ -282,6 +305,9 @@ def parse(path: Path) -> Lockfile:
         direct_entries=tuple(direct_entries),
         direct_map=direct_map,
         rows=tuple(rows),
+        terminal_lf=text.endswith("\n"),
+        direct_line_numbers=direct_line_numbers,
+        row_line_numbers=tuple(row_line_numbers),
     )
 
 
@@ -380,20 +406,14 @@ def validate(lockfile: Lockfile, *, arch: str, policy: LockPolicy | None = None)
     )
     _require(lockfile.headers.get("columns") == COLUMNS, f"{lockfile.path}: invalid columns header")
 
-    direct_seen: set[str] = set()
-    for entry in lockfile.direct_entries:
-        _validate_direct_entry(lockfile.path, entry, direct_seen)
-
-    rows = 0
     final_rows = 0
     final_seen: set[str] = set()
     previous_package = ""
     row_seen: set[str] = set()
-    direct_row_seen: set[str] = set()
     provider_pin_seen = False
 
-    for row in lockfile.rows:
-        _validate_row_fields(lockfile.path, row)
+    def validate_policy_before_hashes(row: LockRow) -> None:
+        nonlocal final_rows
         if row.final_rpmdb == "yes":
             final_rows += 1
             final_seen.add(row.name)
@@ -406,14 +426,10 @@ def validate(lockfile: Lockfile, *, arch: str, policy: LockPolicy | None = None)
             ASCII_DECIMAL.fullmatch(row.epoch) is not None,
             f"{lockfile.path}: non-numeric epoch for {row.package}",
         )
-        _require(
-            HEX64.fullmatch(row.sha256_header) is not None,
-            f"{lockfile.path}: invalid SHA256HEADER for {row.package}",
-        )
-        _require(HEX32.fullmatch(row.sigmd5) is not None, f"{lockfile.path}: invalid SIGMD5 for {row.package}")
-        _validate_direct_match(lockfile, row, provider_expectations)
 
-        direct_row_seen.add(row.package)
+    def validate_policy_after_direct_match(row: LockRow) -> None:
+        nonlocal previous_package, provider_pin_seen
+        _validate_provider_direct_match(lockfile, row, provider_expectations)
         if previous_package and row.package < previous_package:
             raise LockError(f"{lockfile.path}: rows are not sorted by package: {row.package} after {previous_package}")
         if row.package in row_seen:
@@ -422,18 +438,13 @@ def validate(lockfile: Lockfile, *, arch: str, policy: LockPolicy | None = None)
             provider_pin_seen = True
         row_seen.add(row.package)
         previous_package = row.package
-        rows += 1
 
-    _require(rows > 0, f"{lockfile.path}: lockfile has no package rows")
-    _require(
-        len(lockfile.direct_entries) == rows,
-        f"{lockfile.path}: expected {rows} direct RPM pins, got {len(lockfile.direct_entries)}",
+    validate_common(
+        lockfile,
+        mode=CommonValidationMode.STRICT,
+        before_hash_check=validate_policy_before_hashes,
+        after_direct_match_check=validate_policy_after_direct_match,
     )
-    for direct_package in lockfile.direct_map:
-        _require(
-            direct_package in direct_row_seen,
-            f"{lockfile.path}: direct RPM entry has no matching package row: {direct_package}",
-        )
     _require(
         final_rows == len(REQUIRED_FINAL_NAMES),
         f"{lockfile.path}: expected 15 final runtime RPMs, got {final_rows}",
@@ -596,10 +607,10 @@ def _validate_builder_row_fields(path: Path, row: BuilderLockRow) -> None:
             raise LockError(f"{path}: empty field in row {row.package}")
 
 
-def _validate_direct_match(lockfile: Lockfile, row: LockRow, expected: ProviderExpectations) -> None:
+def _validate_common_direct_match(lockfile: Lockfile, row: LockRow) -> None:
     if row.package not in lockfile.direct_map:
         raise LockError(f"{lockfile.path}: missing direct RPM source pin for {row.package}")
-    direct_url, direct_sha256 = lockfile.direct_map[row.package]
+    direct_url, _ = lockfile.direct_map[row.package]
     expected_filename = rpm_filename(row)
     direct_filename = direct_url.rsplit("/", 1)[-1]
     _require(
@@ -607,6 +618,10 @@ def _validate_direct_match(lockfile: Lockfile, row: LockRow, expected: ProviderE
         f"{lockfile.path}: direct RPM URL filename mismatch for {row.package}: "
         f"expected {expected_filename}, got {direct_filename}",
     )
+
+
+def _validate_provider_direct_match(lockfile: Lockfile, row: LockRow, expected: ProviderExpectations) -> None:
+    direct_url, direct_sha256 = lockfile.direct_map[row.package]
     if row.package == expected.provider_package:
         _require(
             (direct_url, direct_sha256) == (expected.provider_package_url, expected.provider_package_sha256),
@@ -617,6 +632,63 @@ def _validate_direct_match(lockfile: Lockfile, row: LockRow, expected: ProviderE
             (direct_url, direct_sha256) == (expected.provider_so_url, expected.provider_so_sha256),
             f"{lockfile.path}: FIPS provider shared-object direct pin mismatch for {row.package}",
         )
+
+
+def validate_common(
+    lockfile: Lockfile,
+    *,
+    mode: CommonValidationMode,
+    before_hash_check: Callable[[LockRow], None] | None = None,
+    after_direct_match_check: Callable[[LockRow], None] | None = None,
+) -> CommonValidationResult:
+    """Validate runtime-lock grammar and cross-row invariants without repository policy."""
+
+    direct_seen: set[str] = set()
+    for entry in lockfile.direct_entries:
+        _validate_direct_entry(lockfile.path, entry, direct_seen)
+
+    row_packages: set[str] = set()
+    for row in lockfile.rows:
+        _validate_row_fields(lockfile.path, row)
+        if before_hash_check is not None:
+            before_hash_check(row)
+        _require(
+            HEX64.fullmatch(row.sha256_header) is not None,
+            f"{lockfile.path}: invalid SHA256HEADER for {row.package}",
+        )
+        _require(HEX32.fullmatch(row.sigmd5) is not None, f"{lockfile.path}: invalid SIGMD5 for {row.package}")
+        _validate_common_direct_match(lockfile, row)
+        if after_direct_match_check is not None:
+            after_direct_match_check(row)
+        row_packages.add(row.package)
+
+    row_count = len(lockfile.rows)
+    direct_count = len(lockfile.direct_entries)
+    _require(row_count > 0, f"{lockfile.path}: lockfile has no package rows")
+    if mode is CommonValidationMode.STRICT:
+        _require(
+            direct_count == row_count,
+            f"{lockfile.path}: expected {row_count} direct RPM pins, got {direct_count}",
+        )
+    for direct_package in lockfile.direct_map:
+        _require(
+            direct_package in row_packages,
+            f"{lockfile.path}: direct RPM entry has no matching package row: {direct_package}",
+        )
+    return CommonValidationResult(row_count=row_count, direct_count=direct_count)
+
+
+def validate_assertion_compatibility(lockfile: Lockfile) -> None:
+    """Preserve fail-closed source-order and terminal-LF behavior of the legacy assertion gate."""
+
+    _require(lockfile.terminal_lf, f"{lockfile.path}: RPM lockfile must end with a line feed")
+    for row, row_line_number in zip(lockfile.rows, lockfile.row_line_numbers, strict=True):
+        direct_line_number = lockfile.direct_line_numbers.get(row.package)
+        if direct_line_number is not None:
+            _require(
+                direct_line_number < row_line_number,
+                f"{lockfile.path}: direct RPM source pin must precede package row for {row.package}",
+            )
 
 
 def _validate_builder_direct_match(lockfile: BuilderLockfile, row: BuilderLockRow) -> None:

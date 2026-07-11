@@ -80,7 +80,7 @@ jobs:
           python tools/assert-footprint.py --self-test
           python tools/assert-no-phantom-packages.py --self-test
           python tools/assert-reproducible.py --self-test
-          bash tools/assert-rpm-lock-hashes.sh --self-test
+          python tools/assert-rpm-lock-hashes.py --self-test
           bash tools/generate-rpm-lock.sh --self-test
           python tools/assert-scanner-db-freshness.py --self-test
           python tools/assert-vex.py --self-test
@@ -100,7 +100,6 @@ jobs:
           bash -n tools/install-grype.sh
           bash -n tools/build.sh
           bash -n tools/run-test-gates.sh
-          bash -n tools/assert-rpm-lock-hashes.sh
           bash -n tools/fetch-runtime-rpms.sh
           bash -n tools/generate-rpm-lock.sh
           bash -n tools/install-syft.sh

@@ -95,3 +95,11 @@ repos:
         pass_filenames: false
         always_run: true
         files: ^(tools/verify-fips-provider\.py|tools/tests/test_verify_fips_provider\.py|containers/Dockerfile)$
+      - id: assert-rpm-lock-hashes-pytest
+        name: assert RPM lock hashes pytest
+        entry: python -m pytest tools/tests/test_assert_rpm_lock_hashes.py -q
+        language: python
+        additional_dependencies: [pytest==8.4.1]
+        pass_filenames: false
+        always_run: true
+        files: ^(tools/assert-rpm-lock-hashes\.py|tools/rpmlock\.py|tools/tests/test_assert_rpm_lock_hashes\.py)$
