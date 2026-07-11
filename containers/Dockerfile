@@ -147,12 +147,14 @@ ARG SOURCE_DATE_EPOCH
 
 COPY rpm-lock/builder.amd64.txt rpm-lock/builder.arm64.txt /tmp/rpm-lock/
 COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/
+COPY contracts/image-manifest.json /tmp/image-manifest.json
 COPY tools/assert-builder-toolchain-floor.sh /tmp/assert-builder-toolchain-floor.sh
 COPY tools/assert-rpm-lock-hashes.sh /tmp/assert-rpm-lock-hashes.sh
 COPY tools/build-runtime-rootfs.py /tmp/build-runtime-rootfs.py
 COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh
 COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh
 COPY tools/rpmlock.py /tmp/rpmlock.py
+COPY tools/write-fips-status.py /tmp/write-fips-status.py
 
 # Install the direct-CDN-pinned Python closure into this discarded stage's own
 # root before creating /rootfs. Guard the rpmdb-writing toolchain across it.
@@ -227,6 +229,7 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
       --target-arch "${TARGETARCH}" \
       --provider-nevra "${OPENSSL_FIPS_PROVIDER_NEVRA}" \
       --module-version "${OPENSSL_FIPS_MODULE_VERSION}"; \
+    python3.12 /tmp/write-fips-status.py --contract /tmp/image-manifest.json --target-arch "${TARGETARCH}" --provider-nevra "${OPENSSL_FIPS_PROVIDER_NEVRA}" --module-version "${OPENSSL_FIPS_MODULE_VERSION}" --output /rootfs/etc/nwarila/fips-status.json; \
     find /rootfs -xdev -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 
 # UBI build-arg defaults are registry-qualified, digest-pinned, and verified by tools/verify.py.
@@ -304,8 +307,8 @@ ENV OPENSSL_MODULES=/usr/lib64/ossl-modules
 RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     set -eu; \
     case "${TARGETARCH}" in \
-      amd64) rpm_arch="x86_64"; oe_validated=true; disclaimer="CMVP #4857-validated approved-mode configuration." ;; \
-      arm64) rpm_arch="aarch64"; oe_validated=false; disclaimer="The Red Hat OpenSSL FIPS provider (module #4857, v3.0.7-395c1a240fbfffd8) is present, approved-mode-configured, and self-test-passing, but this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list - this is NOT a CMVP-validated configuration on this architecture." ;; \
+      amd64) rpm_arch="x86_64" ;; \
+      arm64) rpm_arch="aarch64" ;; \
       *) echo "unsupported TARGETARCH for FIPS status: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     expected_provider_nevra="${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}"; \
@@ -319,18 +322,6 @@ RUN --mount=from=fips-verify,source=/fips-proof,target=/tmp/fips-proof,ro \
     test ! -e /usr/lib64/ossl-modules/legacy.so; \
     test ! -e /etc/pki/tls/fipsmodule.cnf; \
     test ! -e /usr/bin/openssl; \
-    mkdir -p /etc/nwarila; \
-    { \
-      printf '{\n'; \
-      printf '  "arch": "%s",\n' "${TARGETARCH}"; \
-      printf '  "module": "%s",\n' "${OPENSSL_FIPS_MODULE_VERSION}"; \
-      printf '  "provider_nvr": "%s",\n' "${OPENSSL_FIPS_PROVIDER_NEVRA}"; \
-      printf '  "provider_nevra": "%s",\n' "${expected_provider_nevra}"; \
-      printf '  "cmvp": "#4857",\n'; \
-      printf '  "oe_validated": %s,\n' "${oe_validated}"; \
-      printf '  "disclaimer": "%s"\n' "${disclaimer}"; \
-      printf '}\n'; \
-    } > /etc/nwarila/fips-status.json; \
     test -s /etc/nwarila/fips-status.json; \
     touch -h -d "@${SOURCE_DATE_EPOCH}" /etc/nwarila/fips-status.json /etc/pki/tls/openssl-fips.cnf; \
     rm -rf \
