@@ -10,7 +10,7 @@ The gate is:
 exported-rootfs-regular-file-bytes <= 25 * 1024 * 1024 bytes
 ```
 
-Current STEP024 local evidence:
+Current local amd64 evidence:
 
 | Metric | Value |
 | --- | ---: |
@@ -33,12 +33,12 @@ rpmdb package.
 
 The compressed number above is a local OCI-layout layer-size sum for the same
 runtime target. The authoritative compressed registry-layer sum is recorded
-after publish from the registry manifest; STEP024 is a PR-time strip and gate,
-not the post-merge publish proof.
+after publish; the strip-and-footprint check is a pull-request-time gate, not
+post-publish proof.
 
-The H2 target was renegotiated from 16 MiB to 25 MiB after the STEP022/STEP023
-file sweep. The floor is dominated by the ldd-verified FIPS library closure
-plus the retained rpmdb. Keeping rpmdb is intentional because native scanner
+The ceiling was raised from 16 MiB to 25 MiB after a file-level sweep showed
+that the ldd-verified FIPS library closure plus retained rpmdb could not meet
+the smaller target. Keeping rpmdb is intentional because native scanner
 truthfulness is part of the acceptance contract.
 
 The strip removes accidental runtime tooling and auxiliary formats while keeping

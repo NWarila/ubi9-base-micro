@@ -1,6 +1,6 @@
 # Tailored RHEL9 STIG ARF
 
-P1.5a adds an image-scoped OpenSCAP gate for `base-micro`.
+This repository runs an image-scoped OpenSCAP gate for `base-micro`.
 
 The workflow builds the RHEL9 SSG datastream from the pinned
 ComplianceAsCode/content release below:

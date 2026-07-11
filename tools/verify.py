@@ -3014,7 +3014,6 @@ def check_docs() -> None:
     gate_howto = read("docs/how-to/run-a-gate-locally.md")
     consume_howto = read("docs/how-to/consume-base-micro-as-from-base.md")
     tutorial = read("docs/tutorials/getting-started-build-and-verify.md")
-    legacy_namespace = "ghcr.io/nwarila-" + "platform/*"
     verify_hero_heading = "## Verify From a Clean Machine (No Auth)"
     verify_headings = re.findall(r"^## Verify(?:[ \t]+.*)?$", readme, flags=re.MULTILINE)
     require(
@@ -3064,8 +3063,56 @@ def check_docs() -> None:
         "Canonical rocks",
     ]:
         require(marker in showcase, f"README.md supply-chain showcase missing marker: {marker}")
-    require(legacy_namespace in acceptance, "acceptance copy should preserve source DoD text")
-    require("superseded for this repository" in acceptance, "acceptance.md must flag the legacy platform namespace")
+    for marker in [
+        "The published artifact is the `base-micro` runtime image",
+        "built for local and pull-request tests but is not published, signed, attested",
+        "signs the index first",
+        "cannot retract the already-written signature",
+        "Cosign signature on that index",
+        "attestations on each platform child",
+        "`slsa-verifier` result on the index",
+        "jq -r '.payload | @base64d | fromjson | .predicate.packages[].name'",
+        "grep -q glibc",
+        "independently for `linux/amd64` and `linux/arm64`",
+        "published-child `--expect-from-contract` assertion",
+        "no shell or package-manager executable",
+        "Fixable vulnerability policy",
+        "reject fixable MEDIUM, HIGH, and CRITICAL findings",
+        "repository's `TD-6`",
+        "`openssl-fips-provider` and `openssl-fips-provider-so`",
+        "expiring on `2026-10-10`",
+        "Unfixed vulnerability policy",
+        "every unfixed HIGH or CRITICAL finding",
+        "default-denied",
+        "statement is `affected`; it is disclosure only and clears nothing",
+        "Scanner database freshness",
+        "parseable, schema-compatible, and no older than",
+        "rpmdb-derived SPDX and CycloneDX attestations",
+        "phantom-package checks corroborate",
+        "Rootfs secret exclusion",
+        "must pass the secret scan before NIST evidence is generated",
+        "Tailored STIG evidence",
+        "no unaccounted mass-N/A omissions",
+        "NIST SP 800-190 evidence",
+        "image evidence, not a CIS Docker host claim",
+        "Only `linux/amd64` is within certificate #4857",
+        "`linux/arm64` is approved-mode configured and self-test passing",
+        "must not exceed 25 MiB (26,214,400 bytes)",
+        "No both-architecture footprint ceiling is claimed",
+        "Scheduled sentinel capability",
+        "It does not publish, prove a historical green streak",
+        "../how-to/verify-a-published-image.md",
+        "../reference/verify.md",
+    ]:
+        require(marker in acceptance, f"acceptance.md missing load-bearing marker: {marker}")
+    require(
+        re.search(r"required status checks\s+are not enforced", acceptance) is not None,
+        "acceptance.md must not claim merge-blocking checks",
+    )
+    require(
+        "cosign " + "download sbom" not in acceptance,
+        "acceptance.md must use verified attestation payloads rather than attached SBOM download",
+    )
     require("Byte-for-byte reproducible (HARD gate)" in acceptance, "acceptance.md must carry hard F3 wording")
     require("explicitly retracted" not in acceptance, "acceptance.md must not preserve the old F3 retract escape")
     require("fipsinstall`-generated" not in acceptance, "acceptance.md must not preserve stale fipsinstall mechanism")
@@ -3259,9 +3306,9 @@ def check_docs() -> None:
         "exported-rootfs-regular-file-bytes",
         "tools/assert-footprint.py",
         "tools/assert-no-phantom-packages.py",
+        "raised from 16 MiB to 25 MiB",
         "FIPS library closure",
         "rpmdb",
-        "STEP022/STEP023",
     ]:
         require(marker in footprint_doc, f"docs/explanation/footprint.md missing marker: {marker}")
 
@@ -3627,6 +3674,108 @@ def check_no_attribution_residue() -> None:
     require(not findings, "attribution residue found in: " + ", ".join(sorted(findings)))
 
 
+INTERNAL_PROCESS_RESIDUE_PATTERNS = [
+    ("ledger label", re.compile(r"\bP\d+\.\d+[a-z]?\b", re.IGNORECASE)),
+    ("numbered work label", re.compile(r"\bSTEP\d{3}\b", re.IGNORECASE)),
+    ("internal directive", re.compile(r"\bMANDATE\b", re.IGNORECASE)),
+    ("ratification label", re.compile(r"\bowner-ratified\b", re.IGNORECASE)),
+    ("revision label", re.compile(r"\brev\.\s*b\b", re.IGNORECASE)),
+    ("internal namespace", re.compile(r"\bnwarila-platform\b", re.IGNORECASE)),
+    ("fleet-size label", re.compile(r"\b8\s+images\b", re.IGNORECASE)),
+]
+
+
+def collect_internal_process_docs(root: Path = ROOT) -> list[tuple[str, str]]:
+    readme = root / "README.md"
+    docs_dir = root / "docs"
+    require(readme.is_file(), "missing public README.md for internal-process residue scan")
+    require(docs_dir.is_dir(), "missing docs directory for internal-process residue scan")
+    paths = [readme, *sorted(docs_dir.rglob("*.md"))]
+    return [(str(path.relative_to(root)), path.read_text(encoding="utf-8")) for path in paths]
+
+
+def find_internal_process_residue(sources: list[tuple[str, str]]) -> list[str]:
+    findings: list[str] = []
+    for relative_path, text in sources:
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            for label, pattern in INTERNAL_PROCESS_RESIDUE_PATTERNS:
+                if pattern.search(line):
+                    findings.append(f"{relative_path}:{line_number}: {label}")
+    return findings
+
+
+def assert_no_internal_process_residue(sources: list[tuple[str, str]]) -> None:
+    findings = find_internal_process_residue(sources)
+    require(not findings, "internal-process residue found in: " + "; ".join(findings))
+
+
+def check_internal_process_residue_self_test() -> None:
+    positive_fixtures = [
+        ("ledger label", "P1.5a"),
+        ("numbered work label", "step024"),
+        ("internal directive", "MANDATE"),
+        ("ratification label", "OWNER-RATIFIED"),
+        ("revision label", "Rev.   B"),
+        ("internal namespace", "NWarila-Platform"),
+        ("fleet-size label", "8 Images"),
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        nested_docs = root / "docs/nested"
+        nested_docs.mkdir(parents=True)
+        (root / "README.md").write_text(
+            "\n".join(fixture for _, fixture in positive_fixtures[:4]) + "\n",
+            encoding="utf-8",
+        )
+        (nested_docs / "fixture.md").write_text(
+            "\n".join(fixture for _, fixture in positive_fixtures[4:]) + "\n",
+            encoding="utf-8",
+        )
+        (root / "outside.md").write_text("P9.9 STEP999 MANDATE\n", encoding="utf-8")
+        positive_findings = find_internal_process_residue(collect_internal_process_docs(root))
+        positive_labels = {finding.rsplit(": ", 1)[1] for finding in positive_findings}
+        require(
+            len(positive_findings) == len(INTERNAL_PROCESS_RESIDUE_PATTERNS)
+            and positive_labels == {label for label, _ in INTERNAL_PROCESS_RESIDUE_PATTERNS},
+            "internal-process residue self-test must detect every pattern across README.md and nested docs",
+        )
+
+        rejected = 0
+        for label, fixture in positive_fixtures:
+            try:
+                assert_no_internal_process_residue([("README.md", fixture)])
+            except VerifyError as exc:
+                require(label in str(exc), f"internal-process residue mutation must report {label}")
+                rejected += 1
+            else:
+                raise VerifyError(f"internal-process residue mutation unexpectedly passed: {label}")
+
+        (root / "README.md").write_text(
+            "This behavior is mandated. Complete the next step carefully.\n"
+            "This is revision b, while the unrelated abbreviated revision is rev. c.\n"
+            "XP1.5a P1.5aa XSTEP001 STEP001x preowner-ratified owner-ratifieds\n",
+            encoding="utf-8",
+        )
+        (nested_docs / "fixture.md").write_text(
+            "preview. b xnwarila-platform nwarila-platformx 18 images 8 imageset\n",
+            encoding="utf-8",
+        )
+        negative_findings = find_internal_process_residue(collect_internal_process_docs(root))
+        require(
+            not negative_findings,
+            "internal-process residue self-test must accept boundary and prose near misses",
+        )
+        print(
+            f"Internal-process residue mutation probes: {rejected}/{len(positive_fixtures)} rejected; "
+            "near-miss fixtures accepted"
+        )
+
+
+def check_no_internal_process_residue() -> None:
+    check_internal_process_residue_self_test()
+    assert_no_internal_process_residue(collect_internal_process_docs())
+
+
 def main() -> int:
     checks = [
         check_required_files,
@@ -3656,6 +3805,7 @@ def main() -> int:
         check_docs,
         check_helper_self_tests,
         check_no_attribution_residue,
+        check_no_internal_process_residue,
     ]
     try:
         for check in checks:

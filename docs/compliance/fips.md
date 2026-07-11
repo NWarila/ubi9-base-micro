@@ -69,7 +69,7 @@ The arm64 disclaimer is part of the runtime image. The publish manifest carries 
 The Red Hat OpenSSL FIPS provider (module #4857, v3.0.7-395c1a240fbfffd8) is present, approved-mode-configured, and self-test-passing, but this aarch64 operational environment is NOT in CMVP #4857's validated or vendor-affirmed list - this is NOT a CMVP-validated configuration on this architecture.
 ```
 
-The owner-ratified TD-3 posture is therefore multi-arch with honest per-arch scope: amd64 is #4857-validated approved mode, while arm64 ships the same module and provider NVR but is approved-mode configured and explicitly non-validated.
+The recorded TD-3 posture is therefore multi-arch with honest per-architecture scope: amd64 is #4857-validated approved mode, while arm64 ships the same module and provider NVR but is approved-mode configured and explicitly non-validated.
 
 References:
 
