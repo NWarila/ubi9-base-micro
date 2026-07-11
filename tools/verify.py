@@ -2712,7 +2712,7 @@ def check_docs() -> None:
         require(marker in stig_doc, f"docs/compliance/stig.md missing marker: {marker}")
 
     for marker in [
-        'cosign verify "${IMAGE_REF}"',
+        'cosign verify "${INDEX_REF}"',
         f"cosign verify-attestation --type {predicate_type('spdx')}",
         f"cosign verify-attestation --type {predicate_type('cyclonedx')}",
         f"cosign verify-attestation --type {predicate_type('openvex')}",
@@ -2723,7 +2723,8 @@ def check_docs() -> None:
         "signature JSON",
         "DSSE envelopes",
         "tools/assert-slsa-builder-id.py",
-        'cosign download sbom "${IMAGE_REF}" | grep -q glibc',
+        "@base64d",
+        "grep -q glibc",
         "Trivy",
         "Grype",
         "tools/assert-scanner-db-freshness.py",
@@ -2739,9 +2740,28 @@ def check_docs() -> None:
         "gh attestation verify` is not part of this contract",
         "BuildKit SBOM generation is disabled",
         "Syft rpmdb-derived",
-        "P1.8",
     ]:
         require(marker in verify, f"docs/reference/verify.md missing marker: {marker}")
+
+    for doc_name, doc in [
+        ("docs/reference/verify.md", verify),
+        ("docs/how-to/verify-a-published-image.md", verify_howto),
+    ]:
+        for marker in [
+            'INDEX_REF="${IMAGE}@${INDEX_DIGEST}"',
+            'CHILD_REF="${IMAGE}@${CHILD_DIGEST}"',
+            'cosign verify "${INDEX_REF}"',
+            'cosign verify-attestation --type spdxjson "${CHILD_REF}"',
+            'cosign verify-attestation --type cyclonedx "${CHILD_REF}"',
+            'cosign verify-attestation --type openvex "${CHILD_REF}"',
+            f'cosign verify-attestation --type {predicate_type("nist_800_190")} "${{CHILD_REF}}"',
+            f'cosign verify-attestation --type {predicate_type("stig_arf")} "${{CHILD_REF}}"',
+            'cosign verify-attestation --type slsaprovenance "${INDEX_REF}"',
+            'slsa-verifier verify-image "${INDEX_REF}"',
+        ]:
+            require(marker in doc, f"{doc_name} missing digest-routing marker: {marker}")
+    for residue in ["P1.8", "one-time owner visibility change"]:
+        require(residue not in verify, f"docs/reference/verify.md retains false anonymous-pull residue: {residue}")
 
     for marker in [
         "tools/assert-reproducible.py",
