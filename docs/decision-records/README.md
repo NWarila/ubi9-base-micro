@@ -24,3 +24,4 @@ canonical source.
 | [ADR-0012](repo/0012-source-runtime-rpms-from-direct-cdn.md) | Accepted | Source runtime RPMs from pinned Red Hat UBI direct-CDN blobs. |
 | [ADR-0013](repo/0013-externalize-image-contract-manifest.md) | Accepted | Externalize the consumer-verifiable image contract to a schema-validated manifest. |
 | [ADR-0014](repo/0014-pin-builder-python-closure.md) | Accepted | Pin the discarded-stage Python 3.12 closure and guard the rpmdb-writing toolchain floor. |
+| [ADR-0015](repo/0015-separate-python-policy-logic-from-shell-orchestration.md) | Accepted | Separate Python policy logic from shell orchestration. |

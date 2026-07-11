@@ -143,6 +143,10 @@ REPO_ADRS = [
         "docs/decision-records/repo/0014-pin-builder-python-closure.md",
         "Pin The Builder Python Closure",
     ),
+    (
+        "docs/decision-records/repo/0015-separate-python-policy-logic-from-shell-orchestration.md",
+        "Separate Python Policy Logic From Shell Orchestration",
+    ),
 ]
 
 
@@ -2610,14 +2614,24 @@ def check_decision_records() -> None:
     require("| ADR | Status | Decision |" in index, "decision-records index must contain an ADR table")
     require("repo/" in index, "decision-records index must point to repo ADRs")
 
+    index_paths = re.findall(r"^\| \[[^]]+\]\((repo/[^)]+\.md)\) \|", index, flags=re.MULTILINE)
+    registered_paths = [path.removeprefix("docs/decision-records/") for path, _ in REPO_ADRS]
+    require(
+        index_paths == registered_paths,
+        "decision-records index links must exactly match REPO_ADRS in order",
+    )
+
     expected_numbers = [f"{number:04d}" for number in range(1, len(REPO_ADRS) + 1)]
+    date_overrides = {
+        "0012": "2026-06-25",
+        "0013": "2026-06-25",
+        "0014": "2026-07-10",
+        "0015": "2026-07-11",
+    }
     for number, (relative_path, title) in zip(expected_numbers, REPO_ADRS, strict=True):
         text = read(relative_path)
         require(text.startswith(f"# ADR-{number}: {title}\n"), f"{relative_path} has wrong ADR heading")
-        if number == "0014":
-            expected_date = "2026-07-10"
-        else:
-            expected_date = "2026-06-25" if number in {"0012", "0013"} else "2026-06-21"
+        expected_date = date_overrides.get(number, "2026-06-21")
         for marker in [
             "- Status: Accepted",
             f"- Date: {expected_date}",
