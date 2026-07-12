@@ -2178,6 +2178,93 @@ def check_supply_chain_workflows() -> None:
     require(not present, "README.md must not add OpenSSF Best Practices / CII badge: " + ", ".join(present))
 
 
+COSIGN_TRUST_EXACT_FLAGS = [
+    "--private-infrastructure",
+    "--trusted-root",
+    "--ca-roots",
+    "--certificate-chain",
+    "--rekor-url",
+    "--fulcio-url",
+    "--timestamp-certificate-chain",
+    "--key",
+    "--sk",
+]
+COSIGN_TRUST_FAMILY_PREFIXES = ["--insecure-", "--tsa-", "--tuf-"]
+COSIGN_TRUST_ENV_PREFIXES = ["SIGSTORE_", "TUF_"]
+COSIGN_TRUST_MUTATIONS = [
+    ("private-infrastructure", "--private-infrastructure"),
+    ("trusted-root", "--trusted-root /tmp/trusted-root.json"),
+    ("ca-roots", "--ca-roots /tmp/ca-roots.pem"),
+    ("certificate-chain", "--certificate-chain /tmp/certificate-chain.pem"),
+    ("rekor-url", "--rekor-url https://rekor.invalid"),
+    ("fulcio-url", "--fulcio-url https://fulcio.invalid"),
+    ("timestamp-certificate-chain", "--timestamp-certificate-chain /tmp/tsa-chain.pem"),
+    ("insecure-family", "--insecure-future-flag"),
+    ("tsa-family", "--tsa-future-override value"),
+    ("tuf-family", "--tuf-future-override value"),
+    ("cosign-initialize", "cosign initialize"),
+    ("key", "--key /tmp/cosign.pub"),
+    ("sk", "--sk"),
+    ("sigstore-env", "SIGSTORE_ROOT_FILE=/tmp/trusted-root.json"),
+    ("tuf-env", "TUF_ROOT=/tmp/tuf-root.json"),
+]
+
+
+def exact_shell_token_present(text: str, token: str) -> bool:
+    return re.search(rf"(?<![A-Za-z0-9_-]){re.escape(token)}(?![A-Za-z0-9_-])", text) is not None
+
+
+def cosign_trust_substitution_errors(text: str) -> list[str]:
+    code = uncommented_shell(text)
+    errors: list[str] = []
+    present_exact = [flag for flag in COSIGN_TRUST_EXACT_FLAGS if exact_shell_token_present(code, flag)]
+    if present_exact:
+        errors.append("Cosign trust-substitution flag(s) are forbidden: " + ", ".join(present_exact))
+
+    present_families = [prefix for prefix in COSIGN_TRUST_FAMILY_PREFIXES if prefix in code]
+    if present_families:
+        errors.append("Cosign trust-substitution flag family/families are forbidden: " + ", ".join(present_families))
+
+    if re.search(r"(?<![A-Za-z0-9_-])cosign\s+initialize(?![A-Za-z0-9_-])", code) is not None:
+        errors.append("cosign initialize is forbidden because it can substitute the trust root")
+
+    env_pattern = rf"(?<![A-Za-z0-9_])(?:{'|'.join(COSIGN_TRUST_ENV_PREFIXES)})[A-Za-z0-9_]*"
+    present_env = sorted(set(re.findall(env_pattern, code)))
+    if present_env:
+        errors.append("Sigstore/TUF trust environment override(s) are forbidden: " + ", ".join(present_env))
+    return errors
+
+
+def publish_trust_policy_errors(text: str) -> list[str]:
+    errors = cosign_trust_substitution_errors(text)
+    code = uncommented_shell(text)
+    if exact_shell_token_present(code, "--check-claims=false"):
+        errors.append("Cosign --check-claims=false is forbidden because claim verification must remain enabled")
+    return errors
+
+
+def check_publish_trust_policy_mutations(text: str) -> int:
+    require(not publish_trust_policy_errors(text), "publish trust-policy baseline fixture must pass")
+    print("publish trust-policy baseline probe accepted")
+    mutations = [*COSIGN_TRUST_MUTATIONS, ("check-claims-false", "--check-claims=false")]
+    rejected = 0
+    for label, marker in mutations:
+        mutated = text + f"\n{marker}\n"
+        require(mutated != text, f"publish trust-policy mutation fixture did not change: {label}")
+        require(publish_trust_policy_errors(mutated), f"publish trust-policy mutation was not rejected: {label}")
+        print(f"publish trust-policy mutation rejected: {label}")
+        rejected += 1
+
+        comment_only = text + f"\n# {marker}\n"
+        require(comment_only != text, f"publish trust-policy comment fixture did not change: {label}")
+        require(
+            not publish_trust_policy_errors(comment_only),
+            f"publish trust-policy full-line comment caused a false positive: {label}",
+        )
+        print(f"publish trust-policy comment probe accepted: {label}")
+    return rejected
+
+
 def check_publish_workflow() -> None:
     text = read(".github/workflows/publish-image.yaml")
     require("runs-on: ubuntu-latest" not in text, "publish workflow must not use moving ubuntu-latest runner")
@@ -2390,8 +2477,6 @@ def check_publish_workflow() -> None:
         "-regexp",
         "--sbom=true",
         "--tlog-upload=false",
-        "--insecure-ignore-tlog",
-        "--rekor-url",
         "attest-build-" + "provenance",
         "gh attestation verify",
         "continue-on-" + "error",
@@ -2406,6 +2491,10 @@ def check_publish_workflow() -> None:
     ]
     present = [marker for marker in forbidden if marker in text]
     require(not present, "publish workflow contains forbidden marker(s): " + ", ".join(present))
+    trust_policy_errors = publish_trust_policy_errors(text)
+    require(not trust_policy_errors, "publish workflow trust policy failed: " + "; ".join(trust_policy_errors))
+    trust_mutations = check_publish_trust_policy_mutations(text)
+    print(f"publish trust-policy mutation probes: {trust_mutations}/{trust_mutations} rejected")
 
     uses = WORKFLOW_USES.findall(text)
     generator_uses = [(action, ref) for action, ref in uses if action == slsa_generator_action()]
@@ -2766,14 +2855,7 @@ def scanner_installer_errors(text: str, spec: dict[str, Any]) -> list[str]:
     )
     expect(issuer_flags == [issuer_line.strip()], "Cosign OIDC issuer must be the one exact pinned literal")
     expect("--certificate-identity-regexp" not in code, "regexp certificate identity is forbidden")
-    expect(
-        "--insecure-" not in code,
-        "Cosign --insecure-* flags are forbidden (including tlog/SCT bypass aliases and future insecure flags)",
-    )
-    expect(
-        "--private-infrastructure" not in code,
-        "Cosign --private-infrastructure is forbidden because it independently disables transparency-log verification",
-    )
+    errors.extend(cosign_trust_substitution_errors(text))
 
     expect(checksum_pin in code, "missing exact reviewed checksums-file SHA-256 verification")
     expect(shell_control_depth_at(code, checksum_pin.splitlines()[0].strip()) == 0, "checksums-file pin is conditional")
@@ -2890,7 +2972,26 @@ def check_scanner_installer_mutations(text: str, spec: dict[str, Any]) -> int:
         ]
     )
 
+    require(not scanner_installer_errors(text, spec), f"{name} installer trust-policy baseline fixture must pass")
+    print(f"scanner installer trust-policy baseline probe accepted: {name.lower()}")
     rejected = 0
+    for label, marker in COSIGN_TRUST_MUTATIONS:
+        mutated = text.replace("  cosign verify-blob \\", f"  cosign verify-blob \\\n    {marker} \\", 1)
+        require(mutated != text, f"{name} trust-policy mutation fixture did not change: {label}")
+        mutation_errors = scanner_installer_errors(mutated, spec)
+        require(mutation_errors, f"{name} trust-policy mutation was not rejected: {label}")
+        require(cosign_trust_substitution_errors(mutated), f"{name} trust-policy helper missed mutation: {label}")
+        print(f"scanner installer trust-policy mutation rejected: {name.lower()}/{label}")
+        rejected += 1
+
+        comment_only = text.replace("set -euo pipefail", f"set -euo pipefail\n# {marker}", 1)
+        require(comment_only != text, f"{name} trust-policy comment fixture did not change: {label}")
+        require(
+            not scanner_installer_errors(comment_only, spec),
+            f"{name} installer full-line trust-policy comment caused a false positive: {label}",
+        )
+        print(f"scanner installer trust-policy comment probe accepted: {name.lower()}/{label}")
+
     for label, mutated in mutations:
         require(scanner_installer_errors(mutated, spec), f"{name} installer mutation was not rejected: {label}")
         print(f"scanner installer mutation rejected: {name.lower()}/{label}")
