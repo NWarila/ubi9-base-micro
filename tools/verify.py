@@ -8,10 +8,12 @@
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 from pathlib import Path
 from typing import Any, cast
@@ -169,27 +171,42 @@ def read(relative_path: str) -> str:
 
 
 def check_gitattributes_archive_visibility() -> None:
-    github_paths = [".github", ".github/"]
-    github_paths.extend(
-        path.relative_to(ROOT).as_posix() for path in sorted((ROOT / ".github").rglob("*")) if path.is_file()
-    )
-    result = subprocess.run(
-        ["git", "check-attr", "-z", "export-ignore", "--", *github_paths],
+    tracked_result = subprocess.run(
+        ["git", "ls-tree", "-r", "-z", "--name-only", "HEAD", "--", ".github/"],
         cwd=ROOT,
-        text=True,
         capture_output=True,
         check=False,
     )
-    require(result.returncode == 0, f"git check-attr failed: {result.stderr.strip()}")
-    fields = result.stdout.split("\0")
-    require(fields.pop() == "", "git check-attr returned malformed NUL-delimited output")
-    require(len(fields) % 3 == 0, "git check-attr returned incomplete attribute records")
-    hidden = [
-        f"{path}={value}"
-        for path, attribute, value in zip(fields[0::3], fields[1::3], fields[2::3], strict=True)
-        if attribute == "export-ignore" and value not in {"unspecified", "unset"}
-    ]
-    require(not hidden, ".gitattributes must keep .github/ archive-visible: " + ", ".join(hidden))
+    require(
+        tracked_result.returncode == 0,
+        "git ls-tree failed: " + tracked_result.stderr.decode(errors="replace").strip(),
+    )
+    tracked_paths = {
+        field.decode("utf-8", errors="surrogateescape") for field in tracked_result.stdout.split(b"\0") if field
+    }
+    require(tracked_paths, "HEAD must contain tracked .github/ files")
+
+    archive_result = subprocess.run(
+        ["git", "archive", "--format=tar", "--worktree-attributes", "HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+    )
+    require(
+        archive_result.returncode == 0,
+        "git archive failed: " + archive_result.stderr.decode(errors="replace").strip(),
+    )
+    try:
+        with tarfile.open(fileobj=io.BytesIO(archive_result.stdout), mode="r:") as archive:
+            archived_paths = {member.name for member in archive.getmembers()}
+    except (OSError, tarfile.TarError) as exc:
+        raise VerifyError(f"git archive returned an unreadable tar stream: {exc}") from exc
+
+    hidden_paths = sorted(tracked_paths - archived_paths)
+    require(
+        not hidden_paths,
+        ".gitattributes must keep every tracked .github/ file archive-visible:\n  " + "\n  ".join(hidden_paths),
+    )
 
 
 def reject_stale_fixable_cve_claims(sources: dict[str, str]) -> None:
