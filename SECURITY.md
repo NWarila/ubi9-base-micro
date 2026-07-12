@@ -22,10 +22,12 @@ Include:
 
 ## Supported versions
 
-This repository currently has no git tags and no GitHub releases. The supported
-line is the latest default branch and any published digest built from it. When
-versioned `v*` releases exist, this section must be updated with a supported
-versions table before the release is announced as supported.
+The supported line is the latest `v*` release and any published image digest
+built from it.
+
+| Version | Supported |
+| --- | --- |
+| `1.0.0` | Yes |
 
 ## Coordinated disclosure
 
@@ -61,4 +63,3 @@ At a high level, verification requires:
 Do not substitute `gh attestation verify` for this repository's release
 contract; the repository uses cosign OCI attestations for the published image
 evidence.
-
