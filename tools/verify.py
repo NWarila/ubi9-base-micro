@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -44,6 +45,49 @@ SUPPLY_CHAIN_WORKFLOWS = [
     ".github/workflows/scorecard.yml",
     ".github/workflows/zizmor.yml",
 ]
+UBI_FULL_REFERENCE = re.compile(
+    r"registry\.access\.redhat\.com/ubi9/ubi-(?P<image>minimal|micro)@sha256:(?P<digest>[0-9a-f]{64})"
+)
+UBI_REFERENCE_PATTERNS = {
+    image: rf"registry\.access\.redhat\.com/ubi9/ubi-{image}@sha256:(?P<digest>[0-9a-f]{{64}})"
+    for image in ["minimal", "micro"]
+}
+UBI_DIGEST_SITES = {
+    "minimal": {
+        "containers/Dockerfile": re.compile(
+            rf"^ARG UBI_MINIMAL_IMAGE={UBI_REFERENCE_PATTERNS['minimal']}[ \t]*$", re.MULTILINE
+        ),
+        ".github/workflows/publish-image.yaml": re.compile(
+            rf"^[ \t]+UBI_MINIMAL_IMAGE: {UBI_REFERENCE_PATTERNS['minimal']}[ \t]*$", re.MULTILINE
+        ),
+        "tools/build.sh": re.compile(
+            rf'^ubi_minimal_image="\$\{{UBI_MINIMAL_IMAGE:-{UBI_REFERENCE_PATTERNS["minimal"]}\}}"[ \t]*$',
+            re.MULTILINE,
+        ),
+    },
+    "micro": {
+        "containers/Dockerfile": re.compile(
+            rf"^ARG UBI_MICRO_IMAGE={UBI_REFERENCE_PATTERNS['micro']}[ \t]*$", re.MULTILINE
+        ),
+        ".github/workflows/build.yaml": re.compile(
+            rf"^[ \t]+UBI_MICRO_IMAGE: {UBI_REFERENCE_PATTERNS['micro']}[ \t]*$", re.MULTILINE
+        ),
+        ".github/workflows/nightly.yaml": re.compile(
+            rf"^[ \t]+UBI_MICRO_IMAGE: {UBI_REFERENCE_PATTERNS['micro']}[ \t]*$", re.MULTILINE
+        ),
+        ".github/workflows/publish-image.yaml": re.compile(
+            rf"^[ \t]+UBI_MICRO_IMAGE: {UBI_REFERENCE_PATTERNS['micro']}[ \t]*$", re.MULTILINE
+        ),
+        "tools/run-test-gates.sh": re.compile(
+            rf'^ubi_micro_image="\$\{{UBI_MICRO_IMAGE:-{UBI_REFERENCE_PATTERNS["micro"]}\}}"[ \t]*$',
+            re.MULTILINE,
+        ),
+        "tools/build.sh": re.compile(
+            rf'^ubi_micro_image="\$\{{UBI_MICRO_IMAGE:-{UBI_REFERENCE_PATTERNS["micro"]}\}}"[ \t]*$',
+            re.MULTILINE,
+        ),
+    },
+}
 OPENSSL_FIPS_PROVIDER_RPM_BASE_URL = "https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9"
 OPENSSL_FIPS_PROVIDER_RPM_SHA256_AMD64 = "bbf25303def8e1270675531c47bdad432f6ad8ef4c327556ae65bd6abaf8edb5"
 OPENSSL_FIPS_PROVIDER_RPM_SHA256_ARM64 = "0cfe7b281ae2ca3cb0ceaa1a0b84f8c087c4ac16662ebb9c19b5681cf39f99a9"
@@ -150,6 +194,121 @@ def read(relative_path: str) -> str:
     path = ROOT / relative_path
     require(path.is_file(), f"missing required file: {relative_path}")
     return path.read_text(encoding="utf-8")
+
+
+def ubi_digest_sources() -> dict[str, str]:
+    paths = {path for sites in UBI_DIGEST_SITES.values() for path in sites}
+    return {path: read(path) for path in sorted(paths)}
+
+
+def require_ubi_digest_equality(sources: Mapping[str, str]) -> None:
+    expected_paths = {path for sites in UBI_DIGEST_SITES.values() for path in sites}
+    actual_paths = set(sources)
+    source_errors = []
+    missing_paths = sorted(expected_paths - actual_paths)
+    unexpected_paths = sorted(actual_paths - expected_paths)
+    if missing_paths:
+        source_errors.append("missing " + ", ".join(missing_paths))
+    if unexpected_paths:
+        source_errors.append("unexpected " + ", ".join(unexpected_paths))
+    require(not source_errors, "UBI digest source set mismatch: " + "; ".join(source_errors))
+
+    site_digests: dict[str, list[tuple[str, str]]] = {}
+    for image, sites in UBI_DIGEST_SITES.items():
+        site_digests[image] = []
+        for relative_path, site_pattern in sites.items():
+            matches = list(site_pattern.finditer(sources[relative_path]))
+            require(
+                len(matches) == 1,
+                f"UBI digest site mismatch for ubi-{image}: {relative_path} "
+                f"expected 1 assignment, found {len(matches)}",
+            )
+            site_digests[image].append((relative_path, matches[0].group("digest")))
+
+        for relative_path, text in sources.items():
+            live_matches = [
+                match
+                for line in text.splitlines()
+                if not line.lstrip().startswith("#")
+                for match in UBI_FULL_REFERENCE.finditer(line)
+                if match.group("image") == image
+            ]
+            expected_count = int(relative_path in sites)
+            require(
+                len(live_matches) == expected_count,
+                f"UBI digest site mismatch for ubi-{image}: {relative_path} "
+                f"expected {expected_count} live full reference(s), found {len(live_matches)}",
+            )
+
+        digests = {digest for _, digest in site_digests[image]}
+        require(
+            len(digests) == 1,
+            f"UBI digest mismatch for ubi-{image}: "
+            + ", ".join(f"{path}=sha256:{digest}" for path, digest in site_digests[image]),
+        )
+
+
+def check_ubi_digest_equality() -> None:
+    require_ubi_digest_equality(ubi_digest_sources())
+
+
+def check_ubi_digest_equality_self_test() -> None:
+    sources = ubi_digest_sources()
+    require_ubi_digest_equality(sources)
+
+    def site_match(image: str, path: str) -> re.Match[str]:
+        match = UBI_DIGEST_SITES[image][path].search(sources[path])
+        if match is None:
+            raise VerifyError(f"UBI digest self-test requires the {path} ubi-{image} assignment")
+        return match
+
+    micro_path = "tools/build.sh"
+    micro_match = site_match("micro", micro_path)
+    current_digest = micro_match.group("digest")
+    alternate_digest = ("0" if current_digest != "0" * 64 else "1") * 64
+    divergent = dict(sources)
+    divergent[micro_path] = sources[micro_path].replace(current_digest, alternate_digest, 1)
+    expected_divergence = "UBI digest mismatch for ubi-micro: " + ", ".join(
+        f"{path}=sha256:{alternate_digest if path == micro_path else site_match('micro', path).group('digest')}"
+        for path in UBI_DIGEST_SITES["micro"]
+    )
+
+    gate_path = "tools/run-test-gates.sh"
+    gate_match = site_match("micro", gate_path)
+    gate_reference = gate_match.group(0).split(":-", 1)[1].removesuffix('}"')
+    expected_missing = "UBI digest site mismatch for ubi-micro: tools/run-test-gates.sh expected 1 assignment, found 0"
+    missing = dict(sources)
+    missing[gate_path] = sources[gate_path].replace(gate_reference, "", 1)
+    comment_spoof = dict(missing)
+    comment_spoof[gate_path] += f"\n# {gate_reference}\n"
+    wrong_context = dict(missing)
+    wrong_context[gate_path] += f'\nprintf "%s\\n" "{gate_reference}"\n'
+
+    rejected = 0
+    for label, mutated, expected_message in [
+        ("one-site divergence", divergent, expected_divergence),
+        ("deleted site", missing, expected_missing),
+        ("comment spoof", comment_spoof, expected_missing),
+        ("wrong-context spoof", wrong_context, expected_missing),
+    ]:
+        try:
+            require_ubi_digest_equality(mutated)
+        except VerifyError as exc:
+            require(str(exc) == expected_message, f"UBI digest {label} mutation returned unexpected diagnostic: {exc}")
+            rejected += 1
+        else:
+            raise VerifyError(f"UBI digest {label} mutation unexpectedly passed")
+
+    replacement_digest = "2" * 64
+    consistent = {
+        path: UBI_FULL_REFERENCE.sub(
+            lambda match: match.group(0).removesuffix(match.group("digest")) + replacement_digest,
+            text,
+        )
+        for path, text in sources.items()
+    }
+    require_ubi_digest_equality(consistent)
+    print(f"UBI digest mutation probes: unchanged and consistent replacements accepted; {rejected}/4 rejected")
 
 
 def check_gitattributes_archive_visibility() -> None:
@@ -1100,6 +1259,54 @@ def check_renovate_config() -> None:
         and any("currentDigest" in pattern for pattern in manager.get("matchStrings", []))
     ]
     require(ubi_managers, "Renovate config must target workflow UBI image digests with docker datasource")
+
+    shell_manager_contracts = {
+        "minimal": {
+            "managerFilePatterns": [r"/^tools/build\.sh$/"],
+            "matchStrings": [
+                (
+                    r'(?<indentation>^|\n)ubi_minimal_image="\$\{UBI_MINIMAL_IMAGE:-'
+                    r"(?<depName>registry\.access\.redhat\.com/ubi9/ubi-minimal)@"
+                    r'(?<currentDigest>sha256:[a-f0-9]{64})\}"(?:\n|$)'
+                )
+            ],
+            "autoReplaceStringTemplate": (
+                '{{{indentation}}}ubi_minimal_image="${UBI_MINIMAL_IMAGE:-{{{depName}}}@'
+                '{{{newDigest}}}{{! shell-parameter close}}}"\n'
+            ),
+        },
+        "micro": {
+            "managerFilePatterns": [r"/^tools/(?:build|run-test-gates)\.sh$/"],
+            "matchStrings": [
+                (
+                    r'(?<indentation>^|\n)ubi_micro_image="\$\{UBI_MICRO_IMAGE:-'
+                    r"(?<depName>registry\.access\.redhat\.com/ubi9/ubi-micro)@"
+                    r'(?<currentDigest>sha256:[a-f0-9]{64})\}"(?:\n|$)'
+                )
+            ],
+            "autoReplaceStringTemplate": (
+                '{{{indentation}}}ubi_micro_image="${UBI_MICRO_IMAGE:-{{{depName}}}@'
+                '{{{newDigest}}}{{! shell-parameter close}}}"\n'
+            ),
+        },
+    }
+    for image, contract in shell_manager_contracts.items():
+        matching_managers = [
+            manager
+            for manager in custom_managers
+            if manager.get("customType") == "regex"
+            and manager.get("managerFilePatterns") == contract["managerFilePatterns"]
+            and manager.get("matchStrings") == contract["matchStrings"]
+            and manager.get("datasourceTemplate") == "docker"
+            and manager.get("packageNameTemplate") == "{{{depName}}}"
+            and manager.get("currentValueTemplate") == "latest"
+            and manager.get("versioningTemplate") == "redhat"
+            and manager.get("autoReplaceStringTemplate") == contract["autoReplaceStringTemplate"]
+        ]
+        require(
+            len(matching_managers) == 1,
+            f"Renovate config must keep one complete assignment-scoped tools manager for ubi-{image}",
+        )
 
     package_rules = config.get("packageRules")
     require(isinstance(package_rules, list), "Renovate config must declare packageRules")
@@ -4882,6 +5089,8 @@ def main() -> int:
         check_image_contract_files,
         check_community_profile,
         check_renovate_config,
+        check_ubi_digest_equality,
+        check_ubi_digest_equality_self_test,
         check_pin_invariant_self_test,
         check_dockerfile,
         check_rpm_lock_generator,
