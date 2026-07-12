@@ -22,6 +22,36 @@
       "currentValueTemplate": "latest",
       "versioningTemplate": "redhat",
       "autoReplaceStringTemplate": "{{{depName}}}@{{{newDigest}}}"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the Red Hat UBI minimal digest in the tools/build.sh default assignment.",
+      "managerFilePatterns": [
+        "/^tools/build\\.sh$/"
+      ],
+      "matchStrings": [
+        "(?<indentation>^|\\n)ubi_minimal_image=\"\\$\\{UBI_MINIMAL_IMAGE:-(?<depName>registry\\.access\\.redhat\\.com/ubi9/ubi-minimal)@(?<currentDigest>sha256:[a-f0-9]{64})\\}\"(?:\\n|$)"
+      ],
+      "datasourceTemplate": "docker",
+      "packageNameTemplate": "{{{depName}}}",
+      "currentValueTemplate": "latest",
+      "versioningTemplate": "redhat",
+      "autoReplaceStringTemplate": "{{{indentation}}}ubi_minimal_image=\"${UBI_MINIMAL_IMAGE:-{{{depName}}}@{{{newDigest}}}{{! shell-parameter close}}}\"\n"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the Red Hat UBI micro digest in tools build and test-gate defaults.",
+      "managerFilePatterns": [
+        "/^tools/(?:build|run-test-gates)\\.sh$/"
+      ],
+      "matchStrings": [
+        "(?<indentation>^|\\n)ubi_micro_image=\"\\$\\{UBI_MICRO_IMAGE:-(?<depName>registry\\.access\\.redhat\\.com/ubi9/ubi-micro)@(?<currentDigest>sha256:[a-f0-9]{64})\\}\"(?:\\n|$)"
+      ],
+      "datasourceTemplate": "docker",
+      "packageNameTemplate": "{{{depName}}}",
+      "currentValueTemplate": "latest",
+      "versioningTemplate": "redhat",
+      "autoReplaceStringTemplate": "{{{indentation}}}ubi_micro_image=\"${UBI_MICRO_IMAGE:-{{{depName}}}@{{{newDigest}}}{{! shell-parameter close}}}\"\n"
     }
   ],
   "packageRules": [
