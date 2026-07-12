@@ -96,6 +96,7 @@
 
 !/tests/
 !/tests/*.sh
+!/tests/fixtures/scanner-canary/log4shell.cdx.json
 
 !/tools/
 !/tools/*.py
