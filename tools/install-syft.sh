@@ -8,6 +8,11 @@
 
 set -euo pipefail
 
+if ! command -v cosign > /dev/null 2>&1; then
+  echo "cosign is required to verify the Syft release" >&2
+  exit 1
+fi
+
 version="${SYFT_VERSION:-1.45.1}"
 dest="${1:-dist/tools}"
 tmp_dir="$(mktemp -d)"
@@ -53,12 +58,24 @@ esac
 mkdir -p "${dest}"
 archive="syft_${version}_${os}_${arch}.${archive_ext}"
 checksums="syft_${version}_checksums.txt"
+certificate="${checksums}.pem"
+signature="${checksums}.sig"
 base_url="https://github.com/anchore/syft/releases/download/v${version}"
 
 (
   cd "${tmp_dir}"
   curl -fsSLO "${base_url}/${archive}"
   curl -fsSLO "${base_url}/${checksums}"
+  curl -fsSLO "${base_url}/${certificate}"
+  curl -fsSLO "${base_url}/${signature}"
+  cosign verify-blob \
+    --certificate "${certificate}" \
+    --signature "${signature}" \
+    --certificate-identity "https://github.com/anchore/syft/.github/workflows/release.yaml@refs/heads/main" \
+    --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    "${checksums}"
+  printf '%s  %s\n' '9e477f098c1843bed38491a986d0ac80e54866c182fe511167c866b0edf1140c' "${checksums}" \
+    | sha256sum -c -
   grep " ${archive}\$" "${checksums}" | sha256sum -c -
 
   if [[ "${archive_ext}" == "tar.gz" ]]; then
