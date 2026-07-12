@@ -32,13 +32,13 @@ not that the tag still named the audited commit at invocation time.
 
 ## TD-3: Per-architecture FIPS scope
 
-On `linux/amd64`, the Red Hat OpenSSL FIPS provider operates in the CMVP
-#4857-validated approved-mode configuration (`oe_validated=true`). On
+On `linux/amd64`, the Red Hat OpenSSL FIPS provider operates in the approved-mode
+configuration validated under CMVP certificate #4857 (`oe_validated=true`). On
 `linux/arm64`, the image ships the same module #4857 and provider NVR,
-approved-mode-configured and self-test-passing, but arm64 is not in certificate
-#4857's validated or vendor-affirmed operational-environment list; the contract
-therefore records `oe_validated=false`. This is the distinction between module
-validation and validation of a specific operational environment.
+approved-mode-configured and self-test-passing, but certificate #4857 does not
+list arm64 in its validated or vendor-affirmed operational environments; the
+contract therefore records `oe_validated=false`. This is the distinction between
+module validation and validation of a specific operational environment.
 
 Claims remain module-scoped and approved-mode-scoped, never an image, OS, host,
 or application validation. The per-architecture evidence and disclaimer are in
