@@ -168,6 +168,32 @@ def read(relative_path: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def check_gitattributes_archive_visibility() -> None:
+    github_paths = [".github", ".github/"]
+    github_paths.extend(
+        path.relative_to(ROOT).as_posix()
+        for path in sorted((ROOT / ".github").rglob("*"))
+        if path.is_file()
+    )
+    result = subprocess.run(
+        ["git", "check-attr", "-z", "export-ignore", "--", *github_paths],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    require(result.returncode == 0, f"git check-attr failed: {result.stderr.strip()}")
+    fields = result.stdout.split("\0")
+    require(fields.pop() == "", "git check-attr returned malformed NUL-delimited output")
+    require(len(fields) % 3 == 0, "git check-attr returned incomplete attribute records")
+    hidden = [
+        f"{path}={value}"
+        for path, attribute, value in zip(fields[0::3], fields[1::3], fields[2::3], strict=True)
+        if attribute == "export-ignore" and value not in {"unspecified", "unset"}
+    ]
+    require(not hidden, ".gitattributes must keep .github/ archive-visible: " + ", ".join(hidden))
+
+
 def reject_stale_fixable_cve_claims(sources: dict[str, str]) -> None:
     stale_patterns = [
         r"fixable HIGH and CRITICAL",
@@ -4468,6 +4494,7 @@ def check_no_internal_process_residue() -> None:
 def main() -> int:
     checks = [
         check_required_files,
+        check_gitattributes_archive_visibility,
         check_image_contract_files,
         check_community_profile,
         check_renovate_config,
