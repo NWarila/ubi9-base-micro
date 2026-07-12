@@ -772,6 +772,9 @@ def check_community_profile() -> None:
         require((ROOT / relative_path).is_file(), f"missing community profile file: {relative_path}")
         require(f"!/{relative_path}" in gitignore, f".gitignore must allowlist community profile file: {relative_path}")
 
+    version = read("VERSION").strip()
+    require(re.fullmatch(r"\d+\.\d+\.\d+", version) is not None, "VERSION must contain a non-empty SemVer version")
+
     contributing = read("CONTRIBUTING.md")
     for marker in [
         "make build",
@@ -790,8 +793,7 @@ def check_community_profile() -> None:
     security = read("SECURITY.md")
     for marker in [
         "https://github.com/NWarila/ubi9-base-micro/security/advisories/new",
-        "no git tags",
-        "GitHub releases",
+        "Supported versions",
         "docs/reference/verify.md",
         "cosign verify",
         "cosign verify-attestation",
@@ -800,6 +802,10 @@ def check_community_profile() -> None:
         "Do not substitute `gh attestation verify`",
     ]:
         require(marker in security, f"SECURITY.md missing marker: {marker}")
+    require(
+        re.search(rf"^\|\s*`?{re.escape(version)}`?\b", security, re.M) is not None,
+        f"SECURITY.md must list VERSION {version} in the supported-versions table",
+    )
     require("mailto:" not in security.lower(), "SECURITY.md must not publish a personal email contact")
 
     conduct = read("CODE_OF_CONDUCT.md")
@@ -825,12 +831,13 @@ def check_community_profile() -> None:
         "Keep a Changelog",
         "Semantic Versioning",
         "## [Unreleased]",
-        "no git tags",
-        "GitHub releases",
         "Community health files",
     ]:
         require(marker in changelog, f"CHANGELOG.md missing marker: {marker}")
-    require("## [0.1.0]" not in changelog, "CHANGELOG.md must not claim an unreleased VERSION as a release")
+    require(
+        re.search(rf"^## \[{re.escape(version)}\] - \d{{4}}-\d{{2}}-\d{{2}}$", changelog, re.M) is not None,
+        f"CHANGELOG.md must contain a dated release heading for VERSION {version}",
+    )
 
     bug_form = read(".github/ISSUE_TEMPLATE/bug_report.yml")
     for marker in [
