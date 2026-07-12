@@ -50,6 +50,25 @@ dist/tools/trivy image --download-db-only
 dist/tools/grype db update
 python tools/assert-scanner-db-freshness.py --max-age-days "${scanner_db_max_age_days}"
 
+scanner_canary_fixture="tests/fixtures/scanner-canary/log4shell.cdx.json"
+grype_canary_json="dist/vuln/scanner-canary.grype.json"
+trivy_canary_json="dist/vuln/scanner-canary.trivy.json"
+mkdir -p dist/vuln
+: > "${grype_canary_json}"
+: > "${trivy_canary_json}"
+GRYPE_DB_AUTO_UPDATE=false dist/tools/grype "sbom:${scanner_canary_fixture}" -o json -q > "${grype_canary_json}"
+dist/tools/trivy sbom "${scanner_canary_fixture}" \
+  --format json \
+  --output "${trivy_canary_json}" \
+  --skip-db-update \
+  --skip-java-db-update \
+  --offline-scan \
+  -q
+python tools/assert-scanner-canary.py \
+  --grype-json "${grype_canary_json}" \
+  --trivy-json "${trivy_canary_json}" \
+  --expect-cve CVE-2021-44228
+
 export GRYPE_DB_VALIDATE_AGE=true
 export GRYPE_DB_MAX_ALLOWED_BUILT_AGE="$((scanner_db_max_age_days * 24))h"
 

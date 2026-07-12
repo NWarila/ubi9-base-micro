@@ -646,6 +646,7 @@ def check_required_files() -> None:
         "tools/install-crane.sh",
         "tools/assert-ignore-scope.py",
         "tools/assert-scanner-db-freshness.py",
+        "tools/assert-scanner-canary.py",
         "tools/assert-sbom-rpms.py",
         "tools/assert-vex.py",
         "tools/assert-no-rootfs-secrets.py",
@@ -665,6 +666,7 @@ def check_required_files() -> None:
         "vex/.gitkeep",
         "vex/cve-2026-31790.openvex.json",
         "vex/README.md",
+        "tests/fixtures/scanner-canary/log4shell.cdx.json",
     ]:
         require((ROOT / relative_path).is_file(), f"missing required file: {relative_path}")
     dockerignore = read(".dockerignore")
@@ -2863,6 +2865,278 @@ def check_scanner_install_scripts() -> None:
         require(marker in freshness, f"scanner DB freshness helper missing marker: {marker}")
 
 
+def scanner_canary_wiring_errors(
+    text: str,
+    source: str,
+    freshness_marker: str,
+    first_scan_marker: str,
+) -> list[str]:
+    errors: list[str] = []
+
+    def expect(condition: object, message: str) -> None:
+        if not condition:
+            errors.append(f"{source}: {message}")
+
+    grype_producer = 'GRYPE_DB_AUTO_UPDATE=false dist/tools/grype "sbom:${scanner_canary_fixture}" -o json -q'
+    trivy_producer = 'dist/tools/trivy sbom "${scanner_canary_fixture}"'
+    grype_output = (
+        f'{grype_producer} \\\n            > "${{grype_canary_json}}"'
+        if source == "publish workflow"
+        else f'{grype_producer} > "${{grype_canary_json}}"'
+    )
+    assertion = "python tools/assert-scanner-canary.py"
+    markers = [
+        'scanner_canary_fixture="tests/fixtures/scanner-canary/log4shell.cdx.json"',
+        'grype_canary_json="dist/vuln/scanner-canary.grype.json"',
+        'trivy_canary_json="dist/vuln/scanner-canary.trivy.json"',
+        ': > "${grype_canary_json}"',
+        ': > "${trivy_canary_json}"',
+        grype_producer,
+        grype_output,
+        trivy_producer,
+        '--output "${trivy_canary_json}"',
+        assertion,
+        '--grype-json "${grype_canary_json}"',
+        '--trivy-json "${trivy_canary_json}"',
+        "--expect-cve CVE-2021-44228",
+        "--skip-db-update",
+        "--skip-java-db-update",
+        "--offline-scan",
+    ]
+    for marker in markers:
+        expect(text.count(marker) == 1, f"must contain exactly one canary marker: {marker}")
+
+    freshness_index = text.find(freshness_marker)
+    fixture_index = text.find('scanner_canary_fixture="tests/fixtures/scanner-canary/log4shell.cdx.json"')
+    grype_truncate_index = text.find(': > "${grype_canary_json}"')
+    trivy_truncate_index = text.find(': > "${trivy_canary_json}"')
+    grype_index = text.find(grype_producer)
+    trivy_index = text.find(trivy_producer)
+    assertion_index = text.find(assertion)
+    first_scan_index = text.find(first_scan_marker)
+    expect(freshness_index >= 0, "must keep the scanner DB freshness gate")
+    expect(first_scan_index >= 0, "must keep the first real vulnerability scan")
+    expect(
+        0 <= freshness_index < fixture_index < grype_truncate_index < grype_index < trivy_index < assertion_index,
+        "canary must run after freshness with truncation before both producers and assertion last",
+    )
+    expect(
+        0 <= fixture_index < trivy_truncate_index < trivy_index,
+        "Trivy report must be truncated before its producer runs",
+    )
+    expect(assertion_index < first_scan_index, "canary assertion must precede the first real vulnerability scan")
+
+    if 0 <= fixture_index < assertion_index:
+        canary_end = text.find("\n\n", text.find("--expect-cve CVE-2021-44228", assertion_index))
+        if canary_end < 0:
+            canary_end = first_scan_index
+        canary_block = text[fixture_index:canary_end]
+        expect(canary_block.count("-q") == 2, "both canary scanner invocations must remain quiet")
+        for forbidden in [
+            "--fail-on",
+            "--exit-code",
+            "|| true",
+            "continue-on-error",
+            "--download-db-only",
+            "db update",
+            "\nif ",
+            "\nfor ",
+        ]:
+            expect(forbidden not in canary_block, f"canary block contains forbidden marker: {forbidden}")
+
+    if source == "publish workflow":
+        step_start = text.rfind("      - name:", 0, fixture_index)
+        step_end = text.find("\n      - name:", fixture_index)
+        publish_block = text[step_start:step_end]
+        expect("- name: Assert scanner content canary" in publish_block, "must use a dedicated canary step")
+        expect("set -euo pipefail" in publish_block, "canary step must enable strict shell mode")
+    else:
+        expect("set -euo pipefail" in text[:fixture_index], "gate runner must enable strict shell mode")
+    return errors
+
+
+def scanner_canary_contract_errors(
+    fixture: str | None,
+    helper: str,
+    gate_runner: str,
+    publish_workflow: str,
+    verify_source: str,
+    gitignore: str,
+    gates_doc: str,
+) -> list[str]:
+    errors: list[str] = []
+    expected_fixture = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "version": 1,
+        "components": [
+            {
+                "type": "library",
+                "name": "log4j-core",
+                "group": "org.apache.logging.log4j",
+                "version": "2.14.1",
+                "purl": "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1",
+            }
+        ],
+    }
+    if fixture is None:
+        errors.append("fixture: missing scanner canary fixture")
+    else:
+        try:
+            parsed_fixture = json.loads(fixture)
+        except json.JSONDecodeError:
+            errors.append("fixture: malformed scanner canary JSON")
+        else:
+            if parsed_fixture != expected_fixture:
+                errors.append("fixture: must remain the pinned one-component log4j-core CycloneDX SBOM")
+
+    helper_markers = [
+        'DEFAULT_EXPECTED_CVE = "CVE-2021-44228"',
+        'GRYPE_PRIMARY_ID = "GHSA-jfh8-c2jp-5v3q"',
+        'match.get("relatedVulnerabilities", [])',
+        'vulnerability.get("VulnerabilityID")',
+        "class ScannerReportLoadError(ScannerCanaryError)",
+        "class ScannerReportSchemaError(ScannerCanaryError)",
+        "class ScannerDetectionError(ScannerCanaryError)",
+        "--grype-json",
+        "--trivy-json",
+        "--expect-cve",
+        "--self-test",
+        "scanner content canary self-test: ok",
+    ]
+    errors.extend(
+        f"helper: missing scanner canary marker: {marker}" for marker in helper_markers if marker not in helper
+    )
+
+    errors.extend(
+        scanner_canary_wiring_errors(
+            gate_runner,
+            "test gate runner",
+            "tools/assert-scanner-db-freshness.py",
+            "--ignore-unfixed",
+        )
+    )
+    errors.extend(
+        scanner_canary_wiring_errors(
+            publish_workflow,
+            "publish workflow",
+            "Assert scanner DB freshness",
+            "Run Trivy fixable vulnerability gates",
+        )
+    )
+    if "!/tests/fixtures/scanner-canary/log4shell.cdx.json" not in gitignore:
+        errors.append(".gitignore: scanner canary fixture must be explicitly allowlisted")
+    if "`tools/assert-scanner-canary.py`" not in gates_doc or "content validity, not image cataloging" not in gates_doc:
+        errors.append("docs: gates reference must document the content-validity boundary")
+
+    self_test_start = verify_source.find("\ndef check_helper_self_tests()")
+    self_test_end = verify_source.find("\ndef ", self_test_start + 1)
+    if self_test_start < 0 or self_test_end < 0:
+        errors.append("verify: check_helper_self_tests must remain identifiable")
+    else:
+        self_test_block = verify_source[self_test_start:self_test_end]
+        if self_test_block.count('"tools/assert-scanner-canary.py"') != 1:
+            errors.append("verify: scanner canary must be registered once in check_helper_self_tests")
+    return errors
+
+
+def remove_scanner_canary_self_test_registration(verify_source: str) -> str:
+    function_index = verify_source.find("\ndef check_helper_self_tests()")
+    marker = '        "tools/assert-scanner-canary.py",\n'
+    marker_index = verify_source.find(marker, function_index)
+    require(function_index >= 0 and marker_index >= 0, "scanner canary self-test mutation fixture is missing")
+    return verify_source[:marker_index] + verify_source[marker_index + len(marker) :]
+
+
+def check_scanner_content_canary() -> None:
+    fixture = read("tests/fixtures/scanner-canary/log4shell.cdx.json")
+    helper = read("tools/assert-scanner-canary.py")
+    gate_runner = read("tools/run-test-gates.sh")
+    publish_workflow = read(".github/workflows/publish-image.yaml")
+    verify_source = read("tools/verify.py")
+    gitignore = read(".gitignore")
+    gates_doc = read("docs/reference/gates.md")
+
+    def errors(
+        fixture_text: str | None = fixture,
+        helper_text: str = helper,
+        gate_text: str = gate_runner,
+        publish_text: str = publish_workflow,
+        verify_text: str = verify_source,
+    ) -> list[str]:
+        return scanner_canary_contract_errors(
+            fixture_text,
+            helper_text,
+            gate_text,
+            publish_text,
+            verify_text,
+            gitignore,
+            gates_doc,
+        )
+
+    require(not errors(), "scanner content canary contract failed: " + "; ".join(errors()))
+
+    gate_grype_marker = 'GRYPE_DB_AUTO_UPDATE=false dist/tools/grype "sbom:${scanner_canary_fixture}" -o json -q'
+    gate_trivy_marker = 'dist/tools/trivy sbom "${scanner_canary_fixture}"'
+    mutations = [
+        (
+            "test-runner-grype-producer-substitution",
+            errors(gate_text=gate_runner.replace(gate_grype_marker, gate_grype_marker.replace("grype", "trivy"), 1)),
+        ),
+        (
+            "test-runner-trivy-producer-substitution",
+            errors(gate_text=gate_runner.replace(gate_trivy_marker, gate_trivy_marker.replace("trivy", "grype"), 1)),
+        ),
+        (
+            "publish-grype-producer-deletion",
+            errors(publish_text=publish_workflow.replace(gate_grype_marker, "", 1)),
+        ),
+        (
+            "publish-trivy-producer-deletion",
+            errors(publish_text=publish_workflow.replace(gate_trivy_marker, "", 1)),
+        ),
+        (
+            "test-runner-distinct-consumer-substitution",
+            errors(
+                gate_text=gate_runner.replace(
+                    '--trivy-json "${trivy_canary_json}"',
+                    '--trivy-json "${grype_canary_json}"',
+                    1,
+                )
+            ),
+        ),
+        (
+            "publish-distinct-consumer-substitution",
+            errors(
+                publish_text=publish_workflow.replace(
+                    '--grype-json "${grype_canary_json}"',
+                    '--grype-json "${trivy_canary_json}"',
+                    1,
+                )
+            ),
+        ),
+        ("fixture-deletion", errors(fixture_text=None)),
+        (
+            "expected-cve-blanking",
+            errors(
+                helper_text=helper.replace('DEFAULT_EXPECTED_CVE = "CVE-2021-44228"', 'DEFAULT_EXPECTED_CVE = ""', 1)
+            ),
+        ),
+        (
+            "expected-ghsa-blanking",
+            errors(helper_text=helper.replace('GRYPE_PRIMARY_ID = "GHSA-jfh8-c2jp-5v3q"', 'GRYPE_PRIMARY_ID = ""', 1)),
+        ),
+        (
+            "self-test-registration-deletion",
+            errors(verify_text=remove_scanner_canary_self_test_registration(verify_source)),
+        ),
+    ]
+    for label, mutation_errors in mutations:
+        require(mutation_errors, f"scanner content canary mutation was not rejected: {label}")
+        print(f"scanner content canary mutation rejected: {label}")
+    print(f"scanner content canary mutation probes: {len(mutations)}/{len(mutations)} rejected")
+
+
 def check_cve_ignore_policy() -> None:
     gitignore = read(".gitignore")
     for marker in [
@@ -3147,6 +3421,7 @@ def check_helper_self_tests() -> None:
         "tools/assert-reproducible.py",
         "tools/assert-ignore-scope.py",
         "tools/assert-scanner-db-freshness.py",
+        "tools/assert-scanner-canary.py",
         "tools/assert-cosign-rekor.py",
         "tools/assert-slsa-builder-id.py",
         "tools/assert-stig-tailoring.py",
@@ -3795,6 +4070,7 @@ def check_docs() -> None:
         "tools/assert-reproducible.py",
         "tools/assert-rpm-lock-hashes.py",
         "tools/assert-scanner-db-freshness.py",
+        "tools/assert-scanner-canary.py",
         "tools/assert-no-rootfs-secrets.py",
         "tools/assert-stig-arf.py",
         "tools/generate-stig-arf-predicate.py",
@@ -4198,6 +4474,7 @@ def main() -> int:
         check_hardening_script,
         check_sbom_assertion_script,
         check_scanner_install_scripts,
+        check_scanner_content_canary,
         check_cve_ignore_policy,
         check_fips_config,
         check_fips_script,
