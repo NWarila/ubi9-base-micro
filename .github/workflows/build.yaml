@@ -160,6 +160,26 @@ jobs:
             --workdir "dist/reproducibility/work.${ARCH}"
           cat "dist/reproducibility/base-micro.${ARCH}.reproducibility.txt"
 
+      - name: Emit reproducibility decision envelope
+        if: ${{ always() }}
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          python3 tools/summarize-gates.py \
+            --kind repro \
+            --arch "${ARCH}" \
+            --contract contracts/image-manifest.json \
+            --output "dist/summary/base-micro.${ARCH}.repro.json"
+
+      - name: Upload reproducibility decision envelope
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: decision-repro-${{ matrix.arch }}
+          path: dist/summary/base-micro.${{ matrix.arch }}.repro.json
+          if-no-files-found: error
+          retention-days: 7
+
   hardening:
     name: hardening (${{ matrix.arch }})
     runs-on: ubuntu-24.04
@@ -203,6 +223,26 @@ jobs:
       - name: Run full test-only gate set
         run: bash tools/run-test-gates.sh
 
+      - name: Emit hardening decision envelope
+        if: ${{ always() }}
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          python3 tools/summarize-gates.py \
+            --kind hardening \
+            --arch "${ARCH}" \
+            --contract contracts/image-manifest.json \
+            --output "dist/summary/base-micro.${ARCH}.hardening.json"
+
+      - name: Upload hardening decision envelope
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: decision-hardening-${{ matrix.arch }}
+          path: dist/summary/base-micro.${{ matrix.arch }}.hardening.json
+          if-no-files-found: error
+          retention-days: 7
+
   build:
     name: build and hardening
     runs-on: ubuntu-24.04
@@ -218,4 +258,207 @@ jobs:
           if [ "${{ needs.hardening.result }}" != "success" ]; then
             echo "hardening matrix result: ${{ needs.hardening.result }}"
             exit 1
+          fi
+
+  decision-surface:
+    name: PR decision surface
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    needs:
+      - reproducibility-gate
+      - hardening
+      - build
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    permissions:
+      contents: read
+      checks: read
+      statuses: read
+      pull-requests: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download decision envelopes
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: decision-*
+          path: dist/summary
+          merge-multiple: true
+
+      - name: Capture PR context
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir -p dist/decision
+          jq \
+            --arg head_sha "${{ github.event.pull_request.head.sha }}" \
+            --arg run_url "${RUN_URL}" \
+            '{
+              title: .pull_request.title,
+              number: .pull_request.number,
+              changed_files: ((.pull_request.changed_files | tostring) + " changed file(s)"),
+              head_sha: $head_sha,
+              run_url: $run_url
+            }' "${GITHUB_EVENT_PATH}" > dist/decision/pr-context.json
+
+      - name: Capture required-check snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -u
+          mkdir -p dist/decision
+          required=dist/decision/required-contexts.json
+          contexts=dist/decision/check-contexts.json
+          snapshot=dist/decision/check-snapshot.json
+          printf '[]\n' > "${required}"
+          printf '[]\n' > "${contexts}"
+          api_error=""
+
+          if ! gh api --paginate --slurp \
+            "repos/${REPOSITORY}/rulesets?includes_parents=true&per_page=100" \
+            > dist/decision/rulesets.json; then
+            api_error="active Pull Request Gate ruleset query failed"
+          else
+            if ! ruleset_count="$(jq \
+              '[.[][] | select(.name == "Pull Request Gate" and .enforcement == "active")] | length' \
+              dist/decision/rulesets.json)"; then
+              api_error="active Pull Request Gate ruleset response is malformed"
+            elif [[ "${ruleset_count}" != "1" ]]; then
+              api_error="active Pull Request Gate ruleset is missing or ambiguous"
+            elif ! ruleset_url="$(jq -er \
+              '.[][] | select(.name == "Pull Request Gate" and .enforcement == "active") | ._links.self.href' \
+              dist/decision/rulesets.json)"; then
+              api_error="active Pull Request Gate ruleset URL is missing"
+            else
+              if ! gh api "${ruleset_url}" > dist/decision/ruleset.json; then
+                api_error="active Pull Request Gate ruleset detail query failed"
+              elif ! jq -e \
+                '[.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context]
+                 | unique | select(length > 0)' \
+                dist/decision/ruleset.json > "${required}"; then
+                api_error="active Pull Request Gate ruleset has no required contexts"
+              fi
+            fi
+          fi
+
+          capture_contexts() {
+            if ! gh api --paginate --slurp \
+              "repos/${REPOSITORY}/commits/${HEAD_SHA}/check-runs?per_page=100" \
+              > dist/decision/check-runs.json; then
+              return 1
+            fi
+            if ! gh api "repos/${REPOSITORY}/commits/${HEAD_SHA}/status" \
+              > dist/decision/status-rollup.json; then
+              return 1
+            fi
+            if ! jq '[.[] | .check_runs[]? | {
+                        context: .name,
+                        conclusion: (.conclusion // .status),
+                        source: "check"
+                      }]' dist/decision/check-runs.json > dist/decision/check-run-contexts.json; then
+              return 1
+            fi
+            if ! jq -s '.[0] + (.[1].statuses | map({context: .context, conclusion: .state, source: "status"}))' \
+              dist/decision/check-run-contexts.json dist/decision/status-rollup.json > "${contexts}"; then
+              return 1
+            fi
+          }
+
+          if [[ -z "${api_error}" ]]; then
+            for attempt in 1 2 3 4 5 6; do
+              if ! capture_contexts; then
+                api_error="check/status rollup query failed"
+                break
+              fi
+              if ! jq -e --slurpfile required "${required}" '
+                [. as $contexts | $required[0][] as $name
+                 | [$contexts[] | select(.context == $name)] as $matches
+                 | select(($matches | length) == 0
+                     or (($matches | length) == 1
+                         and ($matches[0].conclusion == "pending"
+                              or $matches[0].conclusion == "queued"
+                              or $matches[0].conclusion == "in_progress")))]
+                | length > 0' "${contexts}" > /dev/null; then
+                break
+              fi
+              if [[ "${attempt}" != "6" ]]; then
+                sleep 15
+              fi
+            done
+          fi
+
+          jq -n \
+            --arg api_error "${api_error}" \
+            --arg head_sha "${HEAD_SHA}" \
+            --slurpfile required "${required}" \
+            --slurpfile contexts "${contexts}" \
+            '{
+              api_error: (if $api_error == "" then null else $api_error end),
+              head_sha: $head_sha,
+              required_contexts: $required[0],
+              contexts: $contexts[0]
+            }' > "${snapshot}"
+
+      - name: Render PR decision
+        run: |
+          python3 tools/render-pr-decision.py \
+            --hardening-amd64 dist/summary/base-micro.amd64.hardening.json \
+            --hardening-arm64 dist/summary/base-micro.arm64.hardening.json \
+            --repro-amd64 dist/summary/base-micro.amd64.repro.json \
+            --repro-arm64 dist/summary/base-micro.arm64.repro.json \
+            --pr-context dist/decision/pr-context.json \
+            --check-snapshot dist/decision/check-snapshot.json \
+            --output dist/decision/pr-comment.md
+
+      - name: Log PR decision
+        run: |
+          cat dist/decision/pr-comment.md
+          cat dist/decision/pr-comment.md >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Post or update sticky PR decision
+        env:
+          BODY_FILE: dist/decision/pr-comment.md
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          MARKER: "<!-- ubi9-base-micro-pr-decision:v1 -->"
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if [[ "${HEAD_REPOSITORY}" != "${REPOSITORY}" ]]; then
+            echo "Fork PR trust boundary: sticky comment write skipped; rendered body is logged above."
+            exit 0
+          fi
+
+          gh api --paginate --slurp \
+            "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100" \
+            > dist/decision/issue-comments.json
+          match_count="$(jq --arg marker "${MARKER}" \
+            '[.[][] | select(.user.login == "github-actions[bot]" and (.body | contains($marker)))] | length' \
+            dist/decision/issue-comments.json)"
+          if [[ "${match_count}" -gt 1 ]]; then
+            echo "Multiple github-actions[bot] sticky decision comments found; refusing an ambiguous update." >&2
+            exit 1
+          fi
+
+          jq -n --rawfile body "${BODY_FILE}" '{body: $body}' > dist/decision/comment-request.json
+          if [[ "${match_count}" == "1" ]]; then
+            comment_id="$(jq -r --arg marker "${MARKER}" \
+              '.[][] | select(.user.login == "github-actions[bot]" and (.body | contains($marker))) | .id' \
+              dist/decision/issue-comments.json)"
+            gh api --method PATCH \
+              "repos/${REPOSITORY}/issues/comments/${comment_id}" \
+              --input dist/decision/comment-request.json
+          else
+            gh api --method POST \
+              "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --input dist/decision/comment-request.json
           fi
