@@ -2233,6 +2233,45 @@ def check_publish_workflow() -> None:
     ]
     missing = [marker for marker in required if marker not in text]
     require(not missing, "publish workflow missing required marker(s): " + ", ".join(missing))
+
+    publish_start = text.find("\n  publish:\n")
+    publish_end = text.find("\n  slsa-provenance:\n", publish_start)
+    require(
+        publish_start >= 0 and publish_end > publish_start,
+        "publish workflow must contain an identifiable publish job",
+    )
+    publish_job = text[publish_start:publish_end]
+    ordered_steps = {
+        "build/push": "Build and push runtime image",
+        "digest resolution": "Resolve platform image digests",
+        "Crane installation": "Install Crane for published rootfs assertions",
+        "rootfs assertion": "Assert published rootfs contracts",
+        "Cosign signing": "Sign image digest with Cosign",
+        "Cosign verification": "Verify Cosign signature",
+        "first attestation": "Attest rpmdb SBOMs",
+    }
+    step_indexes = {name: publish_job.find(marker) for name, marker in ordered_steps.items()}
+    missing_ordered_steps = [name for name, index in step_indexes.items() if index < 0]
+    require(
+        not missing_ordered_steps,
+        "publish job missing ordered step marker(s): " + ", ".join(missing_ordered_steps),
+    )
+    required_order = [
+        ("build/push", "digest resolution"),
+        ("digest resolution", "rootfs assertion"),
+        ("Crane installation", "rootfs assertion"),
+        ("rootfs assertion", "Cosign signing"),
+        ("Cosign signing", "Cosign verification"),
+        ("Cosign verification", "first attestation"),
+    ]
+    violated_order = [
+        f"{before} < {after}" for before, after in required_order if step_indexes[before] >= step_indexes[after]
+    ]
+    require(
+        not violated_order,
+        "publish job violates required dependency order: " + ", ".join(violated_order),
+    )
+
     freshness_index = text.find("Assert scanner DB freshness")
     ignore_scope_index = text.find("Assert fixable-CVE ignore scope")
     first_trivy_scan_index = text.find("Run Trivy fixable vulnerability gates")
@@ -3149,8 +3188,8 @@ def check_docs() -> None:
     for marker in [
         "The published artifact is the `base-micro` runtime image",
         "built for local and pull-request tests but is not published, signed, attested",
-        "signs the index first",
-        "cannot retract the already-written signature",
+        "must push the OCI index before it can export and compare the registry-served child rootfs bytes",
+        "cannot retract the pushed manifest or tag update",
         "Cosign signature on that index",
         "attestations on each platform child",
         "`slsa-verifier` result on the index",
@@ -3188,6 +3227,16 @@ def check_docs() -> None:
         "../reference/verify.md",
     ]:
         require(marker in acceptance, f"acceptance.md missing load-bearing marker: {marker}")
+    stale_publish_order_phrases = [
+        "signs the index first",
+        "signature is written before the published-rootfs assertion",
+        "cannot retract the already-written signature",
+    ]
+    stale_publish_order = [marker for marker in stale_publish_order_phrases if marker in acceptance]
+    require(
+        not stale_publish_order,
+        "acceptance.md contains stale publish-order phrase(s): " + ", ".join(stale_publish_order),
+    )
     require(
         re.search(r"required status checks\s+are not enforced", acceptance) is not None,
         "acceptance.md must not claim merge-blocking checks",
