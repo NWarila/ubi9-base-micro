@@ -3606,6 +3606,16 @@ def check_docs() -> None:
     acceptance = read("docs/compliance/acceptance.md")
     fips = read("docs/compliance/fips.md")
     tech_debt = read("docs/TECH-DEBT.md")
+    for debt_id in ("TD-1", "TD-3"):
+        require(
+            re.search(
+                rf"^## {re.escape(debt_id)}(?:\s*:\s*.+)?$",
+                tech_debt,
+                re.MULTILINE,
+            )
+            is not None,
+            f"docs/TECH-DEBT.md must define ## {debt_id}",
+        )
     docs_index = read("docs/README.md")
     verify = read("docs/reference/verify.md")
     adr_0006 = read("docs/decision-records/repo/0006-rpm-lock-cve-absorption-loop.md")
