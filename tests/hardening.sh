@@ -73,6 +73,8 @@ run_self_test() (
   status=0
   output="$(
     (
+      # This check intentionally fails so the self-test can capture its status and diagnostic.
+      # shellcheck disable=SC2310
       assert_no_shell_binaries "${shell_file_list}"
     ) 2>&1
   )" || status=$?
@@ -91,6 +93,8 @@ run_self_test() (
   status=0
   output="$(
     (
+      # This check intentionally fails so the self-test can capture its status and diagnostic.
+      # shellcheck disable=SC2310
       assert_no_package_manager_executables "${package_manager_file_list}"
     ) 2>&1
   )" || status=$?
