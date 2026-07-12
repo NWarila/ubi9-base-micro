@@ -88,6 +88,23 @@ UBI_DIGEST_SITES = {
         ),
     },
 }
+BINFMT_IMAGE = "docker.io/tonistiigi/binfmt"
+BINFMT_ACTION = "docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8"
+BINFMT_FULL_REFERENCE = re.compile(rf"{re.escape(BINFMT_IMAGE)}@sha256:(?P<digest>[0-9a-f]{{64}})")
+BINFMT_ACTION_REFERENCE = re.compile(r"^[ \t]+uses: docker/setup-qemu-action@[^\s#]+", re.MULTILINE)
+BINFMT_SITE = re.compile(
+    rf"^(?P<indent>[ \t]+)uses: {re.escape(BINFMT_ACTION)}[ \t]+# v4\.2\.0[ \t]*\n"
+    rf"(?P=indent)with:[ \t]*\n"
+    rf"(?P=indent)  platforms: amd64,arm64[ \t]*\n"
+    rf"(?P=indent)  image: {re.escape(BINFMT_IMAGE)}@sha256:(?P<digest>[0-9a-f]{{64}})[ \t]*$",
+    re.MULTILINE,
+)
+BINFMT_DIGEST_SITES = {
+    ".github/workflows/build.yaml": 1,
+    ".github/workflows/nightly.yaml": 1,
+    ".github/workflows/publish-image.yaml": 1,
+    ".github/workflows/rpm-lock-refresh.yaml": 2,
+}
 OPENSSL_FIPS_PROVIDER_RPM_BASE_URL = "https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9"
 OPENSSL_FIPS_PROVIDER_RPM_SHA256_AMD64 = "bbf25303def8e1270675531c47bdad432f6ad8ef4c327556ae65bd6abaf8edb5"
 OPENSSL_FIPS_PROVIDER_RPM_SHA256_ARM64 = "0cfe7b281ae2ca3cb0ceaa1a0b84f8c087c4ac16662ebb9c19b5681cf39f99a9"
@@ -309,6 +326,136 @@ def check_ubi_digest_equality_self_test() -> None:
     }
     require_ubi_digest_equality(consistent)
     print(f"UBI digest mutation probes: unchanged and consistent replacements accepted; {rejected}/4 rejected")
+
+
+def binfmt_sources() -> dict[str, str]:
+    sources = {path: read(path) for path in BINFMT_DIGEST_SITES}
+    workflow_paths = sorted({*ROOT.glob(".github/workflows/*.yaml"), *ROOT.glob(".github/workflows/*.yml")})
+    for path in workflow_paths:
+        relative_path = str(path.relative_to(ROOT))
+        if relative_path in sources:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if BINFMT_ACTION_REFERENCE.search(text) or BINFMT_FULL_REFERENCE.search(text):
+            sources[relative_path] = text
+    return sources
+
+
+def require_binfmt_digest_equality(sources: Mapping[str, str]) -> None:
+    expected_paths = set(BINFMT_DIGEST_SITES)
+    actual_paths = set(sources)
+    source_errors = []
+    missing_paths = sorted(expected_paths - actual_paths)
+    unexpected_paths = sorted(actual_paths - expected_paths)
+    if missing_paths:
+        source_errors.append("missing " + ", ".join(missing_paths))
+    if unexpected_paths:
+        source_errors.append("unexpected " + ", ".join(unexpected_paths))
+    require(not source_errors, "binfmt digest source set mismatch: " + "; ".join(source_errors))
+
+    site_digests: list[tuple[str, str]] = []
+    for relative_path, expected_count in BINFMT_DIGEST_SITES.items():
+        text = sources[relative_path]
+        matches = list(BINFMT_SITE.finditer(text))
+        require(
+            len(matches) == expected_count,
+            f"binfmt digest site mismatch: {relative_path} expected {expected_count} pinned site(s), "
+            f"found {len(matches)}",
+        )
+
+        action_matches = list(BINFMT_ACTION_REFERENCE.finditer(text))
+        require(
+            len(action_matches) == expected_count,
+            f"binfmt action site mismatch: {relative_path} expected {expected_count} setup-qemu-action site(s), "
+            f"found {len(action_matches)}",
+        )
+
+        live_references = [
+            match
+            for line in text.splitlines()
+            if not line.lstrip().startswith("#")
+            for match in BINFMT_FULL_REFERENCE.finditer(line)
+        ]
+        require(
+            len(live_references) == expected_count,
+            f"binfmt digest site mismatch: {relative_path} expected {expected_count} live full reference(s), "
+            f"found {len(live_references)}",
+        )
+        site_digests.extend(
+            (f"{relative_path}#{index}", match.group("digest")) for index, match in enumerate(matches, start=1)
+        )
+
+    digests = {digest for _, digest in site_digests}
+    require(
+        len(site_digests) == 5 and len(digests) == 1,
+        "binfmt digest mismatch: " + ", ".join(f"{site}=sha256:{digest}" for site, digest in site_digests),
+    )
+
+
+def check_binfmt_digest_equality() -> None:
+    require_binfmt_digest_equality(binfmt_sources())
+
+
+def check_binfmt_digest_equality_self_test() -> None:
+    sources = binfmt_sources()
+    require_binfmt_digest_equality(sources)
+
+    target_path = ".github/workflows/build.yaml"
+    target_match = BINFMT_SITE.search(sources[target_path])
+    if target_match is None:
+        raise VerifyError(f"binfmt digest self-test requires the {target_path} pinned site")
+
+    expected_missing = f"binfmt digest site mismatch: {target_path} expected 1 pinned site(s), found 0"
+    unpinned = dict(sources)
+    reference_start, reference_end = target_match.span("digest")
+    reference_prefix = sources[target_path][:reference_start].removesuffix("@sha256:")
+    unpinned[target_path] = reference_prefix + ":latest" + sources[target_path][reference_end:]
+
+    current_digest = target_match.group("digest")
+    alternate_digest = ("0" if current_digest != "0" * 64 else "1") * 64
+    divergent = dict(sources)
+    divergent[target_path] = (
+        sources[target_path][:reference_start] + alternate_digest + sources[target_path][reference_end:]
+    )
+    expected_divergence = "binfmt digest mismatch: " + ", ".join(
+        f"{relative_path}#{index}=sha256:{alternate_digest if relative_path == target_path else match.group('digest')}"
+        for relative_path in BINFMT_DIGEST_SITES
+        for index, match in enumerate(BINFMT_SITE.finditer(sources[relative_path]), start=1)
+    )
+
+    missing = dict(sources)
+    missing[target_path] = sources[target_path].replace(target_match.group(0), "", 1)
+
+    rejected = 0
+    for label, mutated, expected_message in [
+        ("unpinned site", unpinned, expected_missing),
+        ("divergent digit", divergent, expected_divergence),
+        ("missing site", missing, expected_missing),
+    ]:
+        try:
+            require_binfmt_digest_equality(mutated)
+        except VerifyError as exc:
+            require(
+                str(exc) == expected_message,
+                f"binfmt digest {label} mutation returned unexpected diagnostic: {exc}",
+            )
+            rejected += 1
+        else:
+            raise VerifyError(f"binfmt digest {label} mutation unexpectedly passed")
+
+    replacement_digest = "2" * 64
+    consistent = {
+        path: BINFMT_FULL_REFERENCE.sub(
+            lambda match: match.group(0).removesuffix(match.group("digest")) + replacement_digest,
+            text,
+        )
+        for path, text in sources.items()
+    }
+    require_binfmt_digest_equality(consistent)
+    print(
+        "binfmt digest mutation probes: unchanged and all-5-pinned-equal replacements accepted; "
+        f"{rejected}/3 rejected (unpinned site, divergent digit, missing site)"
+    )
 
 
 def check_gitattributes_archive_visibility() -> None:
@@ -1260,6 +1407,33 @@ def check_renovate_config() -> None:
     ]
     require(ubi_managers, "Renovate config must target workflow UBI image digests with docker datasource")
 
+    binfmt_manager_contract = {
+        "managerFilePatterns": [r"/^\.github/workflows/(?:build|nightly|publish-image|rpm-lock-refresh)\.yaml$/"],
+        "matchStrings": [
+            (
+                r"(?<linePrefix>^|\n[ \t]+)image: docker\.io/tonistiigi/binfmt@"
+                r"(?<currentDigest>sha256:[a-f0-9]{64})[ \t]*(?:\n|$)"
+            )
+        ],
+        "autoReplaceStringTemplate": ("{{{linePrefix}}}image: docker.io/tonistiigi/binfmt@{{{newDigest}}}\n"),
+    }
+    binfmt_managers = [
+        manager
+        for manager in custom_managers
+        if manager.get("customType") == "regex"
+        and manager.get("managerFilePatterns") == binfmt_manager_contract["managerFilePatterns"]
+        and manager.get("matchStrings") == binfmt_manager_contract["matchStrings"]
+        and manager.get("datasourceTemplate") == "docker"
+        and manager.get("packageNameTemplate") == BINFMT_IMAGE
+        and manager.get("currentValueTemplate") == "latest"
+        and manager.get("versioningTemplate") == "docker"
+        and manager.get("autoReplaceStringTemplate") == binfmt_manager_contract["autoReplaceStringTemplate"]
+    ]
+    require(
+        len(binfmt_managers) == 1,
+        "Renovate config must keep one complete workflow-scoped QEMU/binfmt docker digest manager",
+    )
+
     shell_manager_contracts = {
         "minimal": {
             "managerFilePatterns": [r"/^tools/build\.sh$/"],
@@ -1314,6 +1488,7 @@ def check_renovate_config() -> None:
     action_pin_rule_index = None
     generator_rule_index = None
     ubi_rule_found = False
+    binfmt_rule_found = False
     for index, rule in enumerate(package_rules):
         if (
             "github-actions" in rule.get("matchManagers", [])
@@ -1338,6 +1513,16 @@ def check_renovate_config() -> None:
             and rule.get("groupName") == "red hat ubi9 base image digests"
         ):
             ubi_rule_found = True
+        if (
+            rule.get("matchDatasources") == ["docker"]
+            and rule.get("matchPackageNames") == [BINFMT_IMAGE]
+            and rule.get("groupName") == "qemu binfmt emulator image digest"
+            and rule.get("labels") == ["dependencies"]
+            and rule.get("versioning") == "docker"
+            and rule.get("semanticCommitType") == "build"
+            and rule.get("semanticCommitScope") == "deps"
+        ):
+            binfmt_rule_found = True
 
     if action_pin_rule_index is None:
         raise VerifyError("Renovate config must keep ordinary GitHub Actions SHA-pinned")
@@ -1348,6 +1533,7 @@ def check_renovate_config() -> None:
         "TD-1 generator rule must follow the general GitHub Actions pin rule so it overrides it",
     )
     require(ubi_rule_found, "Renovate config must group UBI minimal and micro digest refreshes")
+    require(binfmt_rule_found, "Renovate config must group and label QEMU/binfmt digest refreshes")
 
 
 def collect_dockerfile_forbidden_sources(root: Path = ROOT) -> list[tuple[str, str]]:
@@ -5091,6 +5277,8 @@ def main() -> int:
         check_renovate_config,
         check_ubi_digest_equality,
         check_ubi_digest_equality_self_test,
+        check_binfmt_digest_equality,
+        check_binfmt_digest_equality_self_test,
         check_pin_invariant_self_test,
         check_dockerfile,
         check_rpm_lock_generator,

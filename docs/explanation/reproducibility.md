@@ -35,20 +35,19 @@ QEMU is currently in scope and hard-gated because arm64 is a published artifact.
 
 The setup-action code is pinned by
 `docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8`.
-Its binfmt emulator image defaults to `docker.io/tonistiigi/binfmt:latest`,
-which is mutable, with `cache-image: true` caching the selected image within a
-run.
+Its binfmt emulator image is immutably pinned to
+`docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0`,
+with `cache-image: true` persisting the selected image to the GitHub Actions
+cache across runs.
 
 The `linux/amd64` byte-identity claim is native and toolchain-independent: no
 emulator participates in that build path. The `linux/arm64` byte-identity claim
-is emulator-relative: it is reproducible relative to the binfmt emulator image
-selected and cached for that run. The build-twice CI gate proves same-run,
-same-cached-emulator determinism for arm64; because the image tag is mutable, it
-does not immutably guarantee byte-identity across time or hosts. A third-party
-arm64 reproducer needs the same emulator image, not merely the same action SHA,
-unless they are deliberately testing a different emulator or native arm64 path.
-Immutably pinning the emulator image is tracked follow-up. That boundary is
-intrinsic to cross-architecture reproducible builds.
+is emulator-relative: it is reproducible relative to that pinned binfmt
+emulator image. The build-twice CI gate proves determinism for arm64 with the
+immutable emulator input. A third-party arm64 reproducer uses the same pinned
+action SHA and emulator digest unless they are deliberately testing a different
+emulator or native arm64 path. That boundary is intrinsic to
+cross-architecture reproducible builds.
 
 The two-builds-in-one-CI-run gate is necessary for the F3 claim because any rootfs
 difference fails the build, but it is not sufficient by itself for a broad
@@ -62,9 +61,9 @@ scope.
 - Buildx uses `rewrite-timestamp=true` on local, CI, and publish image exporters.
 - `docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8` pins
   the setup-action code for the cross-architecture `linux/arm64` build path on
-  GitHub-hosted amd64 runners. Its `docker.io/tonistiigi/binfmt:latest` emulator
-  image is mutable and cached within a run; an immutable image pin is tracked
-  follow-up.
+  GitHub-hosted amd64 runners. Its emulator image is immutably pinned to
+  `docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0`
+  and persisted to the GitHub Actions cache across runs.
 - Runtime RPM inputs are locked by per-architecture transaction files in
   `rpm-lock/`. Every lock row has a `# direct_rpm:` entry with a
   `https://cdn-ubi.redhat.com/` URL and whole-RPM SHA-256. The build fetches

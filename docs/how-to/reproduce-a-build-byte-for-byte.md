@@ -33,6 +33,7 @@ python tools/assert-reproducible.py \
   --workdir dist/reproducibility/work.arm64
 ```
 
-The arm64 result is reproducible relative to the pinned QEMU/binfmt path used by
-CI. A byte difference in either platform is a failing gate, including
-differences under `/var/lib/rpm/rpmdb.sqlite`.
+The arm64 result is reproducible relative to the QEMU setup action SHA and the
+immutable `docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0`
+emulator pin used by CI. A byte difference in either platform is a failing gate,
+including differences under `/var/lib/rpm/rpmdb.sqlite`.
