@@ -20,9 +20,10 @@ The comparison includes file content, metadata, ownership, type, presence, and
 `/var/lib/rpm`. The runtime RPM lockfiles pin NEVRA plus `%{SHA256HEADER}` and
 `%{SIGMD5}` so same-NEVRA content drift fails before the strip stage.
 
-`linux/amd64` is checked natively. `linux/arm64` is checked through the pinned
-QEMU/binfmt path used by the publish workflow, so its current proof is
-emulator-relative to that pinned input.
+`linux/amd64` is checked natively. `linux/arm64` is checked through the publish
+workflow's QEMU/binfmt path, with both the setup action SHA and the binfmt index
+digest immutably pinned, so its current proof is emulator-relative to those
+pinned inputs.
 
 ## Consequences
 

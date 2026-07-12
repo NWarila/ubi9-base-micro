@@ -52,6 +52,21 @@
       "currentValueTemplate": "latest",
       "versioningTemplate": "redhat",
       "autoReplaceStringTemplate": "{{{indentation}}}ubi_micro_image=\"${UBI_MICRO_IMAGE:-{{{depName}}}@{{{newDigest}}}{{! shell-parameter close}}}\"\n"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the QEMU/binfmt emulator image digest at every setup-qemu-action site.",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/(?:build|nightly|publish-image|rpm-lock-refresh)\\.yaml$/"
+      ],
+      "matchStrings": [
+        "(?<linePrefix>^|\\n[ \\t]+)image: docker\\.io/tonistiigi/binfmt@(?<currentDigest>sha256:[a-f0-9]{64})[ \\t]*(?:\\n|$)"
+      ],
+      "datasourceTemplate": "docker",
+      "packageNameTemplate": "docker.io/tonistiigi/binfmt",
+      "currentValueTemplate": "latest",
+      "versioningTemplate": "docker",
+      "autoReplaceStringTemplate": "{{{linePrefix}}}image: docker.io/tonistiigi/binfmt@{{{newDigest}}}\n"
     }
   ],
   "packageRules": [
@@ -94,6 +109,22 @@
       "versioning": "redhat",
       "semanticCommitType": "ci",
       "semanticCommitScope": "ubi9-upstream-digests"
+    },
+    {
+      "description": "Group QEMU/binfmt emulator image digest refreshes.",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "docker.io/tonistiigi/binfmt"
+      ],
+      "groupName": "qemu binfmt emulator image digest",
+      "labels": [
+        "dependencies"
+      ],
+      "versioning": "docker",
+      "semanticCommitType": "build",
+      "semanticCommitScope": "deps"
     }
   ]
 }
