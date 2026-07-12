@@ -21,30 +21,12 @@ from typing import Any, cast
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_USES = re.compile(r"uses:\s+([^@\s]+)@([^\s#]+)")
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
+VERSION_LITERAL = re.compile(r"^v?\d+(?:\.\d+)+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?$")
+HADOLINT_IMAGE = re.compile(r"^ghcr\.io/hadolint/hadolint@sha256:[0-9a-f]{64}$")
+EXTERNAL_ACTION = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$")
 SLSA_GENERATOR_SHA = "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a"
 HARDEN_RUNNER = "step-security/harden-runner"
-HARDEN_RUNNER_SHA = "9af89fc71515a100421586dfdb3dc9c984fbf411"
-CHECKOUT_SHA = "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
-SCORECARD_ACTION_SHA = "4eaacf0543bb3f2c246792bd56e8cdeffafb205a"
-CODEQL_ACTION_SHA = "8aad20d150bbac5944a9f9d289da16a4b0d87c1e"
-DEPENDENCY_REVIEW_ACTION_SHA = "a1d282b36b6f3519aa1f3fc636f609c47dddb294"
-ZIZMOR_ACTION_SHA = "5f14fd08f7cf1cb1609c1e344975f152c7ee938d"
-ZIZMOR_VERSION = "1.25.2"
-PRE_COMMIT_VERSION = "4.6.0"
-SHELLCHECK_HOOK_REV = "v0.11.0.1"
-SHFMT_HOOK_REV = "v3.13.1-1"
-RUFF_HOOK_REV = "v0.15.18"
-MYPY_HOOK_REV = "v2.1.0"
-YAMLLINT_HOOK_REV = "v1.38.0"
-MARKDOWNLINT_HOOK_REV = "v0.22.1"
-HADOLINT_HOOK_REV = "v2.14.0"
-HADOLINT_IMAGE_DIGEST = "sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e"
-ACTIONLINT_HOOK_REV = "v1.7.12"
-ACTIONLINT_REVIEWDOG_ACTION_SHA = "6fb7acc99f4a1008869fa8a0f09cfca740837d9d"
-ACTIONLINT_REVIEWDOG_ACTION_TAG = "v1.72.0"
-ACTIONLINT_REVIEWDOG_TOOL_VERSION = "1.7.12"
 COSIGN_INSTALLER_ACTION = "sigstore/cosign-installer"
-COSIGN_INSTALLER_SHA = "f713795cb21599bc4e5c4b58cbad1da852d7eeb9"
 COSIGN_RELEASE = "v2.5.2"
 LINT_CONFIG_FILES = [
     ".hadolint.yaml",
@@ -557,11 +539,56 @@ def check_uses_pinned(text: str, source: str) -> None:
     require(uses, f"{source} should pin external actions explicitly")
     bad_refs: list[str] = []
     for action, ref in uses:
+        if not EXTERNAL_ACTION.fullmatch(action):
+            continue
         if action == slsa_generator_action() and ref == slsa_generator_tag():
             continue
         if not SHA40.fullmatch(ref):
             bad_refs.append(f"{action}@{ref}")
     require(not bad_refs, f"{source} uses entries must be pinned to 40-char SHA: " + ", ".join(bad_refs))
+
+
+def require_action_sha_pin(text: str, source: str, action: str, *, count: int | None = None) -> None:
+    refs = [ref for candidate, ref in WORKFLOW_USES.findall(text) if candidate == action]
+    require(refs, f"{source} must use {action}")
+    if count is not None:
+        require(len(refs) == count, f"{source} must use {action} exactly {count} time(s)")
+    require(
+        all(SHA40.fullmatch(ref) for ref in refs),
+        f"{source} must pin every {action} use to a lowercase 40-character SHA",
+    )
+
+
+def require_version_literal(value: str, source: str) -> None:
+    require(
+        SHA40.fullmatch(value) is not None or VERSION_LITERAL.fullmatch(value) is not None,
+        f"{source} must use a literal version-shaped value or lowercase 40-character SHA",
+    )
+
+
+def precommit_repo_block(text: str, repository: str) -> str:
+    marker = f"  - repo: {repository}\n"
+    require(text.count(marker) == 1, f".pre-commit-config.yaml must contain exactly one {repository} block")
+    return text.split(marker, 1)[1].split("\n  - repo: ", 1)[0]
+
+
+def require_precommit_hook_pin(text: str, repository: str) -> None:
+    block = precommit_repo_block(text, repository)
+    match = re.search(r"^    rev:\s+([^\s#]+)\s*$", block, flags=re.MULTILINE)
+    if match is None:
+        raise VerifyError(f"{repository} pre-commit hook must declare a literal rev")
+    require_version_literal(match.group(1), f"{repository} pre-commit hook rev")
+
+
+def require_hadolint_image_digest(text: str) -> None:
+    block = precommit_repo_block(text, "https://github.com/hadolint/hadolint")
+    match = re.search(r"^        entry:\s+([^\s]+)\s+hadolint\s*$", block, flags=re.MULTILINE)
+    if match is None:
+        raise VerifyError("Hadolint hook must invoke the ghcr.io/hadolint/hadolint image")
+    require(
+        HADOLINT_IMAGE.fullmatch(match.group(1)) is not None,
+        "Hadolint hook image must be ghcr.io/hadolint/hadolint@sha256:<64 lowercase hex>",
+    )
 
 
 def check_workflow_uses_present(text: str, source: str) -> None:
@@ -591,33 +618,151 @@ def check_harden_runner_audit_steps(text: str, source: str) -> None:
             )
             block = "\n".join(lines[next_index : next_index + 5])
             require(
-                f"uses: {HARDEN_RUNNER}@{HARDEN_RUNNER_SHA} # v2.19.4" in block,
-                f"{source} harden-runner must be pinned to v2.19.4 SHA",
+                any(action == HARDEN_RUNNER and SHA40.fullmatch(ref) for action, ref in WORKFLOW_USES.findall(block)),
+                f"{source} first harden-runner step must use a lowercase 40-character SHA",
             )
             require("egress-policy: audit" in block, f"{source} harden-runner must use audit egress policy")
     require(step_blocks > 0, f"{source} must contain at least one job steps block")
+    require_action_sha_pin(text, source, HARDEN_RUNNER)
     require(
-        text.count(f"{HARDEN_RUNNER}@{HARDEN_RUNNER_SHA}") == text.count("egress-policy: audit"),
+        len([action for action, _ in WORKFLOW_USES.findall(text) if action == HARDEN_RUNNER])
+        == text.count("egress-policy: audit"),
         f"{source} harden-runner entries must all use egress-policy: audit",
     )
 
 
-def cosign_installer_step() -> str:
-    return (
-        "      - name: Install Cosign\n"
-        f"        uses: {COSIGN_INSTALLER_ACTION}@{COSIGN_INSTALLER_SHA} # v3\n"
-        "        with:\n"
-        f"          cosign-release: {COSIGN_RELEASE}"
+def cosign_installer_steps(text: str) -> list[str]:
+    return re.findall(
+        r"      - name: Install Cosign\n"
+        rf"        uses: {re.escape(COSIGN_INSTALLER_ACTION)}@([^\s#]+)(?:\s+#[^\n]+)?\n"
+        r"        with:\n"
+        rf"          cosign-release: {re.escape(COSIGN_RELEASE)}",
+        text,
     )
 
 
 def check_cosign_before_test_gates(text: str, source: str) -> None:
-    step = cosign_installer_step()
+    require_action_sha_pin(text, source, COSIGN_INSTALLER_ACTION, count=1)
+    refs = cosign_installer_steps(text)
+    require(len(refs) == 1, f"{source} must contain exactly one pinned Cosign v2.5.2 installer step")
+    require(SHA40.fullmatch(refs[0]) is not None, f"{source} Cosign installer must use a lowercase 40-character SHA")
+    step_pattern = re.compile(
+        r"      - name: Install Cosign\n"
+        rf"        uses: {re.escape(COSIGN_INSTALLER_ACTION)}@{re.escape(refs[0])}(?:\s+#[^\n]+)?\n"
+        r"        with:\n"
+        rf"          cosign-release: {re.escape(COSIGN_RELEASE)}"
+    )
+    match = step_pattern.search(text)
+    if match is None:
+        raise VerifyError(f"{source} must keep the Cosign v2.5.2 installer step identifiable")
     gate = "      - name: Run full test-only gate set\n        run: bash tools/run-test-gates.sh"
-    require(text.count(step) == 1, f"{source} must contain exactly one pinned Cosign v2.5.2 installer step")
     require(
-        f"{step}\n\n{gate}" in text,
+        f"{match.group(0)}\n\n{gate}" in text,
         f"{source} must install pinned Cosign v2.5.2 immediately before run-test-gates.sh",
+    )
+
+
+def check_publish_slsa_pins(text: str) -> None:
+    tag = slsa_generator_tag()
+    action = slsa_generator_action()
+    for marker in [
+        f'SLSA_GENERATOR_TAG: "{tag}"',
+        f'SLSA_GENERATOR_TAG_SHA: "{SLSA_GENERATOR_SHA}"',
+        'gh api "repos/slsa-framework/slsa-github-generator/git/ref/tags/${SLSA_GENERATOR_TAG}"',
+        'if [[ "${actual}" != "${SLSA_GENERATOR_TAG_SHA}" ]]; then',
+    ]:
+        require(marker in text, f"publish workflow SLSA tag-integrity guard missing exact marker: {marker}")
+    generator_uses = [
+        (candidate, ref) for candidate, ref in WORKFLOW_USES.findall(text) if candidate == slsa_generator_action()
+    ]
+    require(
+        generator_uses == [(action, tag)],
+        "publish workflow must use exactly one SLSA generator @v2.1.0 tag pin",
+    )
+
+
+def check_pin_invariant_self_test() -> None:
+    alternate_sha = "a" * 40
+    relaxed_actions = [
+        HARDEN_RUNNER,
+        "actions/checkout",
+        "ossf/scorecard-action",
+        "github/codeql-action/init",
+        "github/codeql-action/analyze",
+        "github/codeql-action/upload-sarif",
+        "actions/dependency-review-action",
+        "zizmorcore/zizmor-action",
+        "reviewdog/action-actionlint",
+        COSIGN_INSTALLER_ACTION,
+    ]
+    for action in relaxed_actions:
+        fixture = f"uses: {action}@{alternate_sha}\n"
+        require_action_sha_pin(fixture, f"self-test alternate SHA for {action}", action, count=1)
+        check_uses_pinned(fixture, f"self-test alternate SHA for {action}")
+
+    invalid_refs = [
+        ("tag", "v4"),
+        ("branch", "main"),
+        ("short SHA", "a" * 12),
+        ("uppercase SHA", "A" * 40),
+        ("41 hex", "a" * 41),
+        ("trailing junk", f"{alternate_sha}-junk"),
+    ]
+    rejected = 0
+    for label, ref in invalid_refs:
+        try:
+            check_uses_pinned(f"uses: actions/checkout@{ref}\n", f"self-test invalid {label}")
+        except VerifyError:
+            rejected += 1
+        else:
+            raise VerifyError(f"action pin invariant self-test unexpectedly accepted {label}: {ref}")
+
+    publish = read(".github/workflows/publish-image.yaml")
+    check_publish_slsa_pins(publish)
+    slsa_mutations = [
+        (
+            "reusable tag",
+            publish.replace(
+                f"{slsa_generator_action()}@{slsa_generator_tag()}",
+                f"{slsa_generator_action()}@v2.1.1",
+                1,
+            ),
+        ),
+        (
+            "tag-integrity SHA",
+            publish.replace(
+                f'SLSA_GENERATOR_TAG_SHA: "{SLSA_GENERATOR_SHA}"',
+                f'SLSA_GENERATOR_TAG_SHA: "{alternate_sha}"',
+                1,
+            ),
+        ),
+    ]
+    for label, mutated in slsa_mutations:
+        require(mutated != publish, f"SLSA {label} mutation fixture did not change")
+        try:
+            check_publish_slsa_pins(mutated)
+        except VerifyError:
+            pass
+        else:
+            raise VerifyError(f"SLSA {label} mutation unexpectedly passed")
+
+    precommit = read(".pre-commit-config.yaml")
+    hadolint_block = precommit_repo_block(precommit, "https://github.com/hadolint/hadolint")
+    digest_match = re.search(r"ghcr\.io/hadolint/hadolint@sha256:[0-9a-f]{64}", hadolint_block)
+    if digest_match is None:
+        raise VerifyError("Hadolint digest mutation fixture is missing")
+    invalid_hadolint = precommit.replace(digest_match.group(0), "ghcr.io/hadolint/hadolint:latest", 1)
+    try:
+        require_hadolint_image_digest(invalid_hadolint)
+    except VerifyError:
+        pass
+    else:
+        raise VerifyError("Hadolint non-digest image mutation unexpectedly passed")
+
+    print(
+        f"Action pin mutation probes: {len(relaxed_actions)}/{len(relaxed_actions)} alternate SHAs accepted; "
+        f"{rejected}/{len(invalid_refs)} invalid refs rejected; 2/2 SLSA exact-pin mutations rejected; "
+        "1/1 Hadolint digest mutation rejected"
     )
 
 
@@ -1855,11 +2000,6 @@ def check_workflow() -> None:
     refresh = read(".github/workflows/rpm-lock-refresh.yaml")
     check_rpm_lock_refresh_workflow(refresh)
     gate_runner = read("tools/run-test-gates.sh")
-    reviewdog_actionlint_marker = (
-        f"reviewdog/action-actionlint@{ACTIONLINT_REVIEWDOG_ACTION_SHA} # "
-        f"{ACTIONLINT_REVIEWDOG_ACTION_TAG}; bundles actionlint {ACTIONLINT_REVIEWDOG_TOOL_VERSION}"
-    )
-
     for source, source_text in [
         ("build workflow", build),
         ("nightly workflow", nightly),
@@ -2114,8 +2254,18 @@ def check_workflow() -> None:
     check_uses_pinned(build, "build workflow")
     check_uses_pinned(nightly, "nightly workflow")
     check_uses_pinned(refresh, "RPM lock refresh workflow")
-    require(reviewdog_actionlint_marker in build, "build workflow must document the bundled actionlint 1.7.12 pin")
-    require(reviewdog_actionlint_marker in nightly, "nightly workflow must document the bundled actionlint 1.7.12 pin")
+    reviewdog_annotation = re.compile(
+        r"uses:\s+reviewdog/action-actionlint@[^\s#]+\s+#\s+"
+        r"(v?\d+(?:\.\d+)+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?);\s+"
+        r"bundles actionlint (v?\d+(?:\.\d+)+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?)"
+    )
+    for source, source_text in [("build workflow", build), ("nightly workflow", nightly)]:
+        require_action_sha_pin(source_text, source, "reviewdog/action-actionlint", count=1)
+        annotation_match = reviewdog_annotation.search(source_text)
+        if annotation_match is None:
+            raise VerifyError(f"{source} must document version-shaped reviewdog and actionlint pins")
+        require_version_literal(annotation_match.group(1), f"{source} reviewdog annotation")
+        require_version_literal(annotation_match.group(2), f"{source} bundled actionlint annotation")
 
 
 def check_supply_chain_workflows() -> None:
@@ -2139,6 +2289,8 @@ def check_supply_chain_workflows() -> None:
         require("runs-on: ubuntu-latest" not in text, f"{relative_path} must not use moving ubuntu-latest runner")
 
     scorecard = read(".github/workflows/scorecard.yml")
+    for action in ["actions/checkout", "ossf/scorecard-action", "github/codeql-action/upload-sarif"]:
+        require_action_sha_pin(scorecard, "scorecard workflow", action, count=1)
     for marker in [
         "name: OpenSSF Scorecard",
         "push:\n    branches: [main]",
@@ -2148,12 +2300,9 @@ def check_supply_chain_workflows() -> None:
         "types: [created, edited, deleted]",
         "permissions: {}",
         "permissions:\n      contents: read\n      id-token: write\n      security-events: write",
-        f"actions/checkout@{CHECKOUT_SHA}",
-        f"ossf/scorecard-action@{SCORECARD_ACTION_SHA}",
         "results_file: results.sarif",
         "results_format: sarif",
         "publish_results: true",
-        f"github/codeql-action/upload-sarif@{CODEQL_ACTION_SHA}",
         "sarif_file: results.sarif",
     ]:
         require(marker in scorecard, f"scorecard workflow missing marker: {marker}")
@@ -2162,6 +2311,8 @@ def check_supply_chain_workflows() -> None:
         require(forbidden not in scorecard, f"scorecard workflow has non-minimal permission marker: {forbidden}")
 
     codeql = read(".github/workflows/codeql.yml")
+    for action in ["actions/checkout", "github/codeql-action/init", "github/codeql-action/analyze"]:
+        require_action_sha_pin(codeql, "CodeQL workflow", action, count=1)
     for marker in [
         "name: CodeQL",
         "pull_request:\n    branches: [main]",
@@ -2170,26 +2321,23 @@ def check_supply_chain_workflows() -> None:
         'cron: "37 6 * * 2"',
         "permissions: {}",
         "permissions:\n      actions: read\n      contents: read\n      security-events: write",
-        f"actions/checkout@{CHECKOUT_SHA}",
-        f"github/codeql-action/init@{CODEQL_ACTION_SHA}",
         "languages: python",
         "build-mode: none",
         "queries: security-extended",
         "paths:\n              - tools",
-        f"github/codeql-action/analyze@{CODEQL_ACTION_SHA}",
     ]:
         require(marker in codeql, f"CodeQL workflow missing marker: {marker}")
     for forbidden in ["id-token:", "packages:", "pull-requests:"]:
         require(forbidden not in codeql, f"CodeQL workflow has non-minimal permission marker: {forbidden}")
 
     dependency_review = read(".github/workflows/dependency-review.yml")
+    for action in ["actions/checkout", "actions/dependency-review-action"]:
+        require_action_sha_pin(dependency_review, "dependency review workflow", action, count=1)
     for marker in [
         "name: Dependency review",
         "pull_request:\n    branches: [main]",
         "permissions: {}",
         "permissions:\n      contents: read\n      pull-requests: read",
-        f"actions/checkout@{CHECKOUT_SHA}",
-        f"actions/dependency-review-action@{DEPENDENCY_REVIEW_ACTION_SHA}",
         "fail-on-severity: high",
     ]:
         require(marker in dependency_review, f"dependency review workflow missing marker: {marker}")
@@ -2197,18 +2345,21 @@ def check_supply_chain_workflows() -> None:
         require(forbidden not in dependency_review, f"dependency review workflow has non-minimal marker: {forbidden}")
 
     zizmor = read(".github/workflows/zizmor.yml")
+    for action in ["actions/checkout", "zizmorcore/zizmor-action"]:
+        require_action_sha_pin(zizmor, "zizmor workflow", action, count=1)
+    zizmor_version_match = re.search(r"^\s+version:\s+([^\s#]+)\s*$", zizmor, flags=re.MULTILINE)
+    if zizmor_version_match is None:
+        raise VerifyError("zizmor workflow must declare a literal tool version")
+    require_version_literal(zizmor_version_match.group(1), "zizmor workflow tool version")
     for marker in [
         "name: zizmor",
         "pull_request:\n    branches: [main]",
         "push:\n    branches: [main]",
         "permissions: {}",
         "permissions:\n      actions: read\n      contents: read\n      security-events: write",
-        f"actions/checkout@{CHECKOUT_SHA}",
-        f"zizmorcore/zizmor-action@{ZIZMOR_ACTION_SHA}",
         "inputs: .github/workflows/",
         "config: .github/zizmor.yml",
         "advanced-security: true",
-        f"version: {ZIZMOR_VERSION}",
     ]:
         require(marker in zizmor, f"zizmor workflow missing marker: {marker}")
     for forbidden in ["id-token:", "packages:", "pull-requests:"]:
@@ -2459,10 +2610,12 @@ def check_publish_workflow() -> None:
     ]
     missing = [marker for marker in required if marker not in text]
     require(not missing, "publish workflow missing required marker(s): " + ", ".join(missing))
+    release_installer_refs = cosign_installer_steps(text)
     require(
-        text.count(cosign_installer_step()) == 1,
-        "publish workflow must contain exactly one explicit pinned Cosign v2.5.2 installer step",
+        len(release_installer_refs) == 1 and SHA40.fullmatch(release_installer_refs[0]) is not None,
+        "publish workflow must contain exactly one explicit SHA-pinned Cosign v2.5.2 installer step",
     )
+    require_action_sha_pin(text, "publish workflow", COSIGN_INSTALLER_ACTION, count=2)
 
     publish_start = text.find("\n  publish:\n")
     publish_end = text.find("\n  slsa-provenance:\n", publish_start)
@@ -2559,12 +2712,7 @@ def check_publish_workflow() -> None:
     trust_mutations = check_publish_trust_policy_mutations(text)
     print(f"publish trust-policy mutation probes: {trust_mutations}/{trust_mutations} rejected")
 
-    uses = WORKFLOW_USES.findall(text)
-    generator_uses = [(action, ref) for action, ref in uses if action == slsa_generator_action()]
-    require(
-        generator_uses == [(slsa_generator_action(), slsa_generator_tag())],
-        "publish workflow must use exactly one SLSA generator tag pin",
-    )
+    check_publish_slsa_pins(text)
     check_uses_pinned(text, "publish workflow")
 
 
@@ -4438,44 +4586,55 @@ def check_lint_setup() -> None:
     require("ignored:" not in hadolint, ".hadolint.yaml must not ignore hadolint rules")
 
     precommit = read(".pre-commit-config.yaml")
+    minimum_version_match = re.search(
+        r'^minimum_pre_commit_version:\s+"([^"\s]+)"\s*$',
+        precommit,
+        flags=re.MULTILINE,
+    )
+    if minimum_version_match is None:
+        raise VerifyError(".pre-commit-config.yaml must pin minimum_pre_commit_version")
+    require_version_literal(minimum_version_match.group(1), "minimum_pre_commit_version")
+    hook_repositories = [
+        "https://github.com/shellcheck-py/shellcheck-py",
+        "https://github.com/scop/pre-commit-shfmt",
+        "https://github.com/astral-sh/ruff-pre-commit",
+        "https://github.com/pre-commit/mirrors-mypy",
+        "https://github.com/adrienverge/yamllint",
+        "https://github.com/DavidAnson/markdownlint-cli2",
+        "https://github.com/hadolint/hadolint",
+        "https://github.com/rhysd/actionlint",
+    ]
+    for repository in hook_repositories:
+        require_precommit_hook_pin(precommit, repository)
+    require_hadolint_image_digest(precommit)
     for marker in [
-        f'minimum_pre_commit_version: "{PRE_COMMIT_VERSION}"',
         "default_language_version:",
         "python: python3",
         "repo: https://github.com/shellcheck-py/shellcheck-py",
-        f"rev: {SHELLCHECK_HOOK_REV}",
         "id: shellcheck",
         "args: [--severity=style]",
         "repo: https://github.com/scop/pre-commit-shfmt",
-        f"rev: {SHFMT_HOOK_REV}",
         "id: shfmt",
         'args: [-w, -i, "2", -ci, -sr, -bn]',
         "repo: https://github.com/astral-sh/ruff-pre-commit",
-        f"rev: {RUFF_HOOK_REV}",
         "id: ruff",
         "args: [--fix]",
         "id: ruff-format",
         "repo: https://github.com/pre-commit/mirrors-mypy",
-        f"rev: {MYPY_HOOK_REV}",
         "id: mypy",
         "pass_filenames: false",
         "args: [--config-file=pyproject.toml, tools]",
         "additional_dependencies: [pytest==8.4.1]",
         "repo: https://github.com/adrienverge/yamllint",
-        f"rev: {YAMLLINT_HOOK_REV}",
         "id: yamllint",
         "args: [--strict, -c, .yamllint]",
         "repo: https://github.com/DavidAnson/markdownlint-cli2",
-        f"rev: {MARKDOWNLINT_HOOK_REV}",
         "id: markdownlint-cli2",
         "files: ^.*\\.md$",
         "repo: https://github.com/hadolint/hadolint",
-        f"rev: {HADOLINT_HOOK_REV}",
         "id: hadolint-docker",
-        f"ghcr.io/hadolint/hadolint@{HADOLINT_IMAGE_DIGEST} hadolint",
         "args: [--config, .hadolint.yaml]",
         "repo: https://github.com/rhysd/actionlint",
-        f"rev: {ACTIONLINT_HOOK_REV}",
         "id: actionlint",
         "repo: local",
         "id: rpmlock-pytest",
@@ -4560,6 +4719,11 @@ def check_lint_setup() -> None:
         require(marker in generator_hook, f"runtime lock generator pytest hook missing locked marker: {marker}")
 
     lint = read(".github/workflows/lint.yaml")
+    require_action_sha_pin(lint, "lint workflow", HARDEN_RUNNER, count=1)
+    require_action_sha_pin(lint, "lint workflow", "actions/checkout", count=1)
+    precommit_install_matches = re.findall(r"\bpre-commit==([^\s]+)", lint)
+    require(len(precommit_install_matches) == 1, "lint workflow must contain exactly one pinned pre-commit install")
+    require_version_literal(precommit_install_matches[0], "lint workflow pre-commit install")
     for marker in [
         "name: Lint",
         "pull_request:\n    branches: [main]",
@@ -4568,10 +4732,7 @@ def check_lint_setup() -> None:
         "permissions: {}",
         "permissions:\n      contents: read",
         "runs-on: ubuntu-24.04",
-        f"step-security/harden-runner@{HARDEN_RUNNER_SHA} # v2.19.4",
         "egress-policy: audit",
-        f"actions/checkout@{CHECKOUT_SHA}",
-        f"pre-commit=={PRE_COMMIT_VERSION}",
         "pre-commit run --all-files --show-diff-on-failure",
     ]:
         require(marker in lint, f"lint workflow missing marker: {marker}")
@@ -4721,6 +4882,7 @@ def main() -> int:
         check_image_contract_files,
         check_community_profile,
         check_renovate_config,
+        check_pin_invariant_self_test,
         check_dockerfile,
         check_rpm_lock_generator,
         check_dockerfile_forbidden_scan_self_test,
