@@ -2759,6 +2759,14 @@ def scanner_installer_errors(text: str, spec: dict[str, Any]) -> list[str]:
     )
     expect(issuer_flags == [issuer_line.strip()], "Cosign OIDC issuer must be the one exact pinned literal")
     expect("--certificate-identity-regexp" not in code, "regexp certificate identity is forbidden")
+    expect(
+        "--insecure-" not in code,
+        "Cosign --insecure-* flags are forbidden (including tlog/SCT bypass aliases and future insecure flags)",
+    )
+    expect(
+        "--private-infrastructure" not in code,
+        "Cosign --private-infrastructure is forbidden because it independently disables transparency-log verification",
+    )
 
     expect(checksum_pin in code, "missing exact reviewed checksums-file SHA-256 verification")
     expect(shell_control_depth_at(code, checksum_pin.splitlines()[0].strip()) == 0, "checksums-file pin is conditional")
@@ -2862,12 +2870,30 @@ def check_scanner_installer_mutations(text: str, spec: dict[str, Any]) -> int:
             ("remove-pipefail", text.replace("set -euo pipefail", "set -eu", 1)),
         ]
     )
+    mutations.extend(
+        (
+            f"forbidden-{flag.removeprefix('--')}",
+            text.replace("  cosign verify-blob \\", f"  cosign verify-blob \\\n    {flag} \\", 1),
+        )
+        for flag in [
+            "--insecure-ignore-tlog",
+            "--insecure-ignore-sct",
+            "--insecure-future-flag",
+            "--private-infrastructure",
+        ]
+    )
 
     rejected = 0
     for label, mutated in mutations:
         require(scanner_installer_errors(mutated, spec), f"{name} installer mutation was not rejected: {label}")
         print(f"scanner installer mutation rejected: {name.lower()}/{label}")
         rejected += 1
+    commented_flag = text.replace("set -euo pipefail", "set -euo pipefail\n# --insecure-future-flag", 1)
+    require(
+        not scanner_installer_errors(commented_flag, spec),
+        f"{name} installer full-line insecure-flag comment caused a false positive",
+    )
+    print(f"scanner installer comment probe accepted: {name.lower()}/insecure-future-flag")
     return rejected
 
 
