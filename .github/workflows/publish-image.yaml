@@ -194,6 +194,71 @@ jobs:
             printf 'ref=%s@%s\n' "${image}" "${digest}"
           } >> "${GITHUB_OUTPUT}"
 
+      - name: Resolve platform image digests
+        id: platform_digests
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: |
+          set -euo pipefail
+
+          docker buildx imagetools inspect --raw "${IMAGE_REF}" > dist/image-index.json
+          python - <<'PY' >> "${GITHUB_OUTPUT}"
+          import json
+          import sys
+
+          with open("dist/image-index.json", encoding="utf-8") as handle:
+              index = json.load(handle)
+
+          found = {}
+          for descriptor in index.get("manifests") or []:
+              platform = descriptor.get("platform") or {}
+              if platform.get("os") != "linux":
+                  continue
+              arch = platform.get("architecture")
+              digest = descriptor.get("digest")
+              if arch in {"amd64", "arm64"} and digest:
+                  found[arch] = digest
+
+          missing = sorted({"amd64", "arm64"} - set(found))
+          if missing:
+              raise SystemExit("missing platform digest(s): " + ", ".join(missing))
+
+          for arch in ("amd64", "arm64"):
+              print(f"{arch}_digest={found[arch]}")
+          PY
+
+      - name: Install Crane for published rootfs assertions
+        run: |
+          bash tools/install-crane.sh
+          printf '%s\n' "${PWD}/dist/tools" >> "${GITHUB_PATH}"
+
+      - name: Assert published rootfs contracts
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/published-rootfs
+          for arch in amd64 arm64; do
+            case "${arch}" in
+              amd64) digest="${AMD64_DIGEST}" ;;
+              arm64) digest="${ARM64_DIGEST}" ;;
+              *)
+                echo "unsupported published rootfs architecture: ${arch}" >&2
+                exit 1
+                ;;
+            esac
+
+            rootfs_tar="dist/published-rootfs/base-micro.${arch}.tar"
+            crane export "${IMAGE}@${digest}" "${rootfs_tar}"
+            python3.12 tools/assert-reproducible.py \
+              --rootfs-tar "${rootfs_tar}" \
+              --arch "${arch}" \
+              --expect-from-contract contracts/image-manifest.json
+          done
+
       - name: Sign image digest with Cosign
         env:
           COSIGN_YES: "true"
@@ -262,71 +327,6 @@ jobs:
 
       - name: Build RHEL9 STIG datastream
         run: bash tools/build-stig-datastream.sh
-
-      - name: Resolve platform image digests
-        id: platform_digests
-        env:
-          IMAGE_REF: ${{ steps.image.outputs.ref }}
-        run: |
-          set -euo pipefail
-
-          docker buildx imagetools inspect --raw "${IMAGE_REF}" > dist/image-index.json
-          python - <<'PY' >> "${GITHUB_OUTPUT}"
-          import json
-          import sys
-
-          with open("dist/image-index.json", encoding="utf-8") as handle:
-              index = json.load(handle)
-
-          found = {}
-          for descriptor in index.get("manifests") or []:
-              platform = descriptor.get("platform") or {}
-              if platform.get("os") != "linux":
-                  continue
-              arch = platform.get("architecture")
-              digest = descriptor.get("digest")
-              if arch in {"amd64", "arm64"} and digest:
-                  found[arch] = digest
-
-          missing = sorted({"amd64", "arm64"} - set(found))
-          if missing:
-              raise SystemExit("missing platform digest(s): " + ", ".join(missing))
-
-          for arch in ("amd64", "arm64"):
-              print(f"{arch}_digest={found[arch]}")
-          PY
-
-      - name: Install Crane for published rootfs assertions
-        run: |
-          bash tools/install-crane.sh
-          printf '%s\n' "${PWD}/dist/tools" >> "${GITHUB_PATH}"
-
-      - name: Assert published rootfs contracts
-        env:
-          IMAGE: ${{ steps.image.outputs.image }}
-          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
-          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
-        run: |
-          set -euo pipefail
-
-          mkdir -p dist/published-rootfs
-          for arch in amd64 arm64; do
-            case "${arch}" in
-              amd64) digest="${AMD64_DIGEST}" ;;
-              arm64) digest="${ARM64_DIGEST}" ;;
-              *)
-                echo "unsupported published rootfs architecture: ${arch}" >&2
-                exit 1
-                ;;
-            esac
-
-            rootfs_tar="dist/published-rootfs/base-micro.${arch}.tar"
-            crane export "${IMAGE}@${digest}" "${rootfs_tar}"
-            python3.12 tools/assert-reproducible.py \
-              --rootfs-tar "${rootfs_tar}" \
-              --arch "${arch}" \
-              --expect-from-contract contracts/image-manifest.json
-          done
 
       - name: Run tailored STIG ARF gates
         env:
