@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.25
 # Purpose: Multi-stage hardened build for ubi9-base-micro: FIPS-provider proof, shell-free runtime rootfs from the
 # pinned RPM lockfile, and distroless ubi-micro runtime + dev images.
 # Role: container-build
