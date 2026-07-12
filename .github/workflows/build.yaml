@@ -26,7 +26,6 @@ env:
   IMAGE_REPOSITORY: ghcr.io/nwarila/ubi9-base-micro
   RUNTIME_IMAGE: ghcr.io/nwarila/ubi9-base-micro:base-micro
   DEV_IMAGE: ghcr.io/nwarila/ubi9-base-micro:base-micro-dev
-  PLATFORM: linux/amd64
   SYFT_VERSION: "1.45.1"
   TRIVY_VERSION: "0.71.0"
   GRYPE_VERSION: "0.115.0"
@@ -161,11 +160,21 @@ jobs:
             --workdir "dist/reproducibility/work.${ARCH}"
           cat "dist/reproducibility/base-micro.${ARCH}.reproducibility.txt"
 
-  build:
-    name: build and hardening
+  hardening:
+    name: hardening (${{ matrix.arch }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+          - platform: linux/arm64
+            arch: arm64
+    env:
+      PLATFORM: ${{ matrix.platform }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -177,6 +186,12 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          platforms: amd64,arm64
+          image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
@@ -187,3 +202,20 @@ jobs:
 
       - name: Run full test-only gate set
         run: bash tools/run-test-gates.sh
+
+  build:
+    name: build and hardening
+    runs-on: ubuntu-24.04
+    needs: hardening
+    if: ${{ always() }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Assert hardening matrix succeeded
+        run: |
+          if [ "${{ needs.hardening.result }}" != "success" ]; then
+            echo "hardening matrix result: ${{ needs.hardening.result }}"
+            exit 1
+          fi

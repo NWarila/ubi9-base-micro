@@ -100,7 +100,7 @@ BINFMT_SITE = re.compile(
     re.MULTILINE,
 )
 BINFMT_DIGEST_SITES = {
-    ".github/workflows/build.yaml": 1,
+    ".github/workflows/build.yaml": 2,
     ".github/workflows/nightly.yaml": 1,
     ".github/workflows/publish-image.yaml": 1,
     ".github/workflows/rpm-lock-refresh.yaml": 2,
@@ -387,7 +387,7 @@ def require_binfmt_digest_equality(sources: Mapping[str, str]) -> None:
 
     digests = {digest for _, digest in site_digests}
     require(
-        len(site_digests) == 5 and len(digests) == 1,
+        len(site_digests) == 6 and len(digests) == 1,
         "binfmt digest mismatch: " + ", ".join(f"{site}=sha256:{digest}" for site, digest in site_digests),
     )
 
@@ -405,7 +405,7 @@ def check_binfmt_digest_equality_self_test() -> None:
     if target_match is None:
         raise VerifyError(f"binfmt digest self-test requires the {target_path} pinned site")
 
-    expected_missing = f"binfmt digest site mismatch: {target_path} expected 1 pinned site(s), found 0"
+    expected_missing = f"binfmt digest site mismatch: {target_path} expected 2 pinned site(s), found 1"
     unpinned = dict(sources)
     reference_start, reference_end = target_match.span("digest")
     reference_prefix = sources[target_path][:reference_start].removesuffix("@sha256:")
@@ -418,7 +418,8 @@ def check_binfmt_digest_equality_self_test() -> None:
         sources[target_path][:reference_start] + alternate_digest + sources[target_path][reference_end:]
     )
     expected_divergence = "binfmt digest mismatch: " + ", ".join(
-        f"{relative_path}#{index}=sha256:{alternate_digest if relative_path == target_path else match.group('digest')}"
+        f"{relative_path}#{index}=sha256:"
+        f"{alternate_digest if relative_path == target_path and index == 1 else match.group('digest')}"
         for relative_path in BINFMT_DIGEST_SITES
         for index, match in enumerate(BINFMT_SITE.finditer(sources[relative_path]), start=1)
     )
@@ -453,7 +454,7 @@ def check_binfmt_digest_equality_self_test() -> None:
     }
     require_binfmt_digest_equality(consistent)
     print(
-        "binfmt digest mutation probes: unchanged and all-5-pinned-equal replacements accepted; "
+        "binfmt digest mutation probes: unchanged and all-6-pinned-equal replacements accepted; "
         f"{rejected}/3 rejected (unpinned site, divergent digit, missing site)"
     )
 
@@ -2370,6 +2371,80 @@ def check_rpm_lock_refresh_workflow(text: str) -> None:
     print(f"RPM lock refresh mutation probes: {len(mutations)}/{len(mutations)} rejected")
 
 
+def workflow_job_block(text: str, job_id: str, source: str) -> str:
+    match = re.search(
+        rf"^  {re.escape(job_id)}:\n.*?(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+        text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    if match is None:
+        raise VerifyError(f"{source} missing job: {job_id}")
+    return match.group(0)
+
+
+def check_build_hardening_matrix(text: str) -> None:
+    hardening = workflow_job_block(text, "hardening", "build workflow")
+    aggregate = workflow_job_block(text, "build", "build workflow")
+
+    matrix_shape = """    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+          - platform: linux/arm64
+            arch: arm64
+    env:
+      PLATFORM: ${{ matrix.platform }}
+"""
+    require(matrix_shape in hardening, "build hardening job must keep the exact amd64/arm64 matrix shape")
+    for marker in [
+        "    name: hardening (${{ matrix.arch }})",
+        "    runs-on: ubuntu-24.04",
+        "    timeout-minutes: 45",
+        "    needs: verify",
+    ]:
+        require(marker in hardening, f"build hardening job missing exact marker: {marker.strip()}")
+    require(
+        re.search(r"^    if:", hardening, flags=re.MULTILINE) is None,
+        "build hardening matrix job must not have a job-level if condition",
+    )
+    require(
+        len(list(BINFMT_SITE.finditer(hardening))) == 1,
+        "build hardening job must contain exactly one fully pinned amd64/arm64 QEMU setup",
+    )
+    buildx = "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0"
+    require(hardening.count(buildx) == 1, "build hardening job must contain exactly one pinned Buildx setup")
+    require(
+        hardening.count("      PLATFORM: ${{ matrix.platform }}") == 1,
+        "build hardening job must derive PLATFORM once at job-level env",
+    )
+
+    for marker in [
+        "    name: build and hardening",
+        "    runs-on: ubuntu-24.04",
+        "    needs: hardening",
+        "    if: ${{ always() }}",
+    ]:
+        require(marker in aggregate, f"build hardening aggregate missing exact marker: {marker.strip()}")
+    require(
+        text.count("    name: build and hardening") == 1,
+        "build workflow must expose exactly one bare build and hardening check context",
+    )
+    result_assertion = """      - name: Assert hardening matrix succeeded
+        run: |
+          if [ "${{ needs.hardening.result }}" != "success" ]; then
+            echo "hardening matrix result: ${{ needs.hardening.result }}"
+            exit 1
+          fi
+"""
+    require(
+        result_assertion in aggregate,
+        "build hardening aggregate must fail unless the complete hardening matrix succeeds",
+    )
+    require("paths:" not in text and "paths-ignore:" not in text, "build workflow must not use path filters")
+
+
 def check_workflow() -> None:
     workflows = sorted(path.name for path in (ROOT / ".github/workflows").glob("*.y*ml"))
     require(
@@ -2391,6 +2466,7 @@ def check_workflow() -> None:
     build = read(".github/workflows/build.yaml")
     nightly = read(".github/workflows/nightly.yaml")
     refresh = read(".github/workflows/rpm-lock-refresh.yaml")
+    check_build_hardening_matrix(build)
     check_rpm_lock_refresh_workflow(refresh)
     gate_runner = read("tools/run-test-gates.sh")
     for source, source_text in [
