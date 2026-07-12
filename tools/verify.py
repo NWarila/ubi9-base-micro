@@ -8,10 +8,12 @@
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 from pathlib import Path
 from typing import Any, cast
@@ -166,6 +168,45 @@ def read(relative_path: str) -> str:
     path = ROOT / relative_path
     require(path.is_file(), f"missing required file: {relative_path}")
     return path.read_text(encoding="utf-8")
+
+
+def check_gitattributes_archive_visibility() -> None:
+    tracked_result = subprocess.run(
+        ["git", "ls-tree", "-r", "-z", "--name-only", "HEAD", "--", ".github/"],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+    )
+    require(
+        tracked_result.returncode == 0,
+        "git ls-tree failed: " + tracked_result.stderr.decode(errors="replace").strip(),
+    )
+    tracked_paths = {
+        field.decode("utf-8", errors="surrogateescape") for field in tracked_result.stdout.split(b"\0") if field
+    }
+    require(tracked_paths, "HEAD must contain tracked .github/ files")
+
+    archive_result = subprocess.run(
+        ["git", "archive", "--format=tar", "--worktree-attributes", "HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+    )
+    require(
+        archive_result.returncode == 0,
+        "git archive failed: " + archive_result.stderr.decode(errors="replace").strip(),
+    )
+    try:
+        with tarfile.open(fileobj=io.BytesIO(archive_result.stdout), mode="r:") as archive:
+            archived_paths = {member.name for member in archive.getmembers()}
+    except (OSError, tarfile.TarError) as exc:
+        raise VerifyError(f"git archive returned an unreadable tar stream: {exc}") from exc
+
+    hidden_paths = sorted(tracked_paths - archived_paths)
+    require(
+        not hidden_paths,
+        ".gitattributes must keep every tracked .github/ file archive-visible:\n  " + "\n  ".join(hidden_paths),
+    )
 
 
 def reject_stale_fixable_cve_claims(sources: dict[str, str]) -> None:
@@ -4468,6 +4509,7 @@ def check_no_internal_process_residue() -> None:
 def main() -> int:
     checks = [
         check_required_files,
+        check_gitattributes_archive_visibility,
         check_image_contract_files,
         check_community_profile,
         check_renovate_config,
