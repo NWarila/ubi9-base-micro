@@ -12,8 +12,8 @@ product-specific status rather than an informal ignore list.
 
 ## Decision
 
-The publish and test gate paths run both Trivy and Grype. Fixable HIGH and
-CRITICAL findings fail closed in either scanner. A second pass collects unfixed
+The publish and test gate paths run both Trivy and Grype. Fixable MEDIUM, HIGH,
+and CRITICAL findings fail closed in either scanner. A second pass collects unfixed
 HIGH and CRITICAL findings, and `tools/assert-vex.py` requires each one to have
 a matching reviewed OpenVEX statement under the CODEOWNERS-gated `vex/` path.
 Publish runs attach VEX documents with Cosign when present and verify the

@@ -165,6 +165,22 @@ def read(relative_path: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def reject_stale_fixable_cve_claims(sources: dict[str, str]) -> None:
+    stale_patterns = [
+        r"fixable HIGH and CRITICAL",
+        r"fixable HIGH or CRITICAL",
+        r"fixable HIGH/CRITICAL",
+        r"--fail-on high\b",
+        r"--severity HIGH,CRITICAL[ \t]+--ignore-unfixed",
+    ]
+    for source, source_text in sources.items():
+        for pattern in stale_patterns:
+            require(
+                re.search(pattern, source_text, flags=re.IGNORECASE) is None,
+                f"{source} retains stale fixable-CVE policy form matching: {pattern}",
+            )
+
+
 def load_json_object(relative_path: str) -> dict[str, Any]:
     try:
         loaded = json.loads(read(relative_path))
@@ -2769,6 +2785,16 @@ def check_nist_800_190_scripts() -> None:
         "--self-test",
     ]:
         require(marker in generator, f"NIST predicate generator missing marker: {marker}")
+    generated_truth_markers = [
+        "Fixable MEDIUM, HIGH, and CRITICAL OS/library findings fail closed through both",
+        "Trivy fixable MEDIUM/HIGH/CRITICAL gate",
+        "Grype fixable MEDIUM/HIGH/CRITICAL gate",
+    ]
+    for marker in generated_truth_markers:
+        require(
+            generator.count(marker) == 2,
+            f"NIST predicate generator production and self-test must both pin marker: {marker}",
+        )
 
     secrets = read("tools/assert-no-rootfs-secrets.py")
     for marker in [
@@ -3000,11 +3026,14 @@ def check_docs() -> None:
     tech_debt = read("docs/TECH-DEBT.md")
     docs_index = read("docs/README.md")
     verify = read("docs/reference/verify.md")
+    adr_0006 = read("docs/decision-records/repo/0006-rpm-lock-cve-absorption-loop.md")
+    adr_0007 = read("docs/decision-records/repo/0007-dual-scanner-openvex-default-deny.md")
     gates = read("docs/reference/gates.md")
     verification_contract = read("docs/reference/verification-contract.md")
     fips_mechanism = read("docs/explanation/fips-mechanism.md")
     vex_doc = read("docs/compliance/vex.md")
     nist_doc = read("docs/compliance/nist-800-190.md")
+    nist_generator = read("tools/generate-nist-800-190-predicate.py")
     footprint_doc = read("docs/explanation/footprint.md")
     reproducibility_doc = read("docs/explanation/reproducibility.md")
     stig_doc = read("docs/compliance/stig.md")
@@ -3014,6 +3043,60 @@ def check_docs() -> None:
     gate_howto = read("docs/how-to/run-a-gate-locally.md")
     consume_howto = read("docs/how-to/consume-base-micro-as-from-base.md")
     tutorial = read("docs/tutorials/getting-started-build-and-verify.md")
+    verify_lines = verify.splitlines()
+    verify_summary_marker = "gates fixable MEDIUM, HIGH, and CRITICAL findings with both Trivy and Grype"
+    require(
+        len(verify_lines) >= 3 and verify_summary_marker in verify_lines[2],
+        "docs/reference/verify.md line 3 must state the fixable MEDIUM/HIGH/CRITICAL gate",
+    )
+    cve_heading = "## CVE And OpenVEX Policy"
+    sbom_heading = "## SBOM Source"
+    cve_start = verify.find(cve_heading)
+    cve_end = verify.find(sbom_heading, cve_start + len(cve_heading))
+    require(cve_start >= 0 and cve_end > cve_start, "docs/reference/verify.md must retain the CVE policy section")
+    verify_cve_policy = verify[cve_start:cve_end]
+    for marker in [
+        "fixable MEDIUM, HIGH, and CRITICAL",
+        "--severity MEDIUM,HIGH,CRITICAL",
+        "--ignore-unfixed",
+        "--exit-code 1",
+        "security/cve-ignore.trivyignore.yaml",
+        "--only-fixed",
+        "--fail-on medium",
+        "security/cve-ignore.grype.yaml",
+        "TD-6",
+        "CVE-2026-31790",
+        "`openssl-fips-provider`",
+        "`openssl-fips-provider-so`",
+        "3.0.7-8.el9",
+        "2026-10-10",
+    ]:
+        require(marker in verify_cve_policy, f"docs/reference/verify.md CVE policy missing marker: {marker}")
+    require(
+        "The nightly sentinel detects fixable MEDIUM, HIGH, and CRITICAL findings" in adr_0006,
+        "ADR-0006 must state that the nightly sentinel detects fixable MEDIUM/HIGH/CRITICAL findings",
+    )
+    require(
+        re.search(
+            r"Fixable MEDIUM, HIGH,\s+and CRITICAL findings fail closed in either scanner\.",
+            adr_0007,
+        )
+        is not None,
+        "ADR-0007 must state that fixable MEDIUM/HIGH/CRITICAL findings fail closed",
+    )
+    require(
+        "Fixable MEDIUM, HIGH, and CRITICAL OS/library findings fail closed through both Trivy and Grype." in nist_doc,
+        "docs/compliance/nist-800-190.md must state the fixable MEDIUM/HIGH/CRITICAL posture",
+    )
+    reject_stale_fixable_cve_claims(
+        {
+            "docs/reference/verify.md": verify,
+            "docs/decision-records/repo/0006-rpm-lock-cve-absorption-loop.md": adr_0006,
+            "docs/decision-records/repo/0007-dual-scanner-openvex-default-deny.md": adr_0007,
+            "docs/compliance/nist-800-190.md": nist_doc,
+            "tools/generate-nist-800-190-predicate.py": nist_generator,
+        }
+    )
     verify_hero_heading = "## Verify From a Clean Machine (No Auth)"
     verify_headings = re.findall(r"^## Verify(?:[ \t]+.*)?$", readme, flags=re.MULTILINE)
     require(

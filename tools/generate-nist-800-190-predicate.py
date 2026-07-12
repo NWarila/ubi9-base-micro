@@ -78,7 +78,7 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
                 "countermeasure": "Image vulnerabilities",
                 "status": "addressed",
                 "posture": (
-                    "Fixable HIGH and CRITICAL OS/library findings fail closed through both "
+                    "Fixable MEDIUM, HIGH, and CRITICAL OS/library findings fail closed through both "
                     "Trivy and Grype, with OpenVEX default-deny for unfixed HIGH/CRITICAL "
                     "findings and rpmdb-derived package evidence."
                 ),
@@ -86,12 +86,12 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
                     evidence(
                         "workflow",
                         ".github/workflows/publish-image.yaml#Run Trivy fixable vulnerability gates",
-                        "Trivy fixable HIGH/CRITICAL gate",
+                        "Trivy fixable MEDIUM/HIGH/CRITICAL gate",
                     ),
                     evidence(
                         "workflow",
                         ".github/workflows/publish-image.yaml#Run Grype fixable vulnerability gates",
-                        "Grype fixable HIGH/CRITICAL gate",
+                        "Grype fixable MEDIUM/HIGH/CRITICAL gate",
                     ),
                     evidence(
                         "workflow",
@@ -299,6 +299,19 @@ def run_self_test() -> None:
         )
         predicate = generate_predicate(args)
         validate_predicate(predicate)
+        vulnerability_control = predicate["controls"][0]
+        expected_fixable_posture = (
+            "Fixable MEDIUM, HIGH, and CRITICAL OS/library findings fail closed through both Trivy and Grype"
+        )
+        if not vulnerability_control["posture"].startswith(expected_fixable_posture):
+            raise SystemExit("self-test 4.1.1 fixable-severity posture mismatch")
+        evidence_descriptions = {item["description"] for item in vulnerability_control["evidence"]}
+        expected_scanner_labels = {
+            "Trivy fixable MEDIUM/HIGH/CRITICAL gate",
+            "Grype fixable MEDIUM/HIGH/CRITICAL gate",
+        }
+        if not expected_scanner_labels.issubset(evidence_descriptions):
+            raise SystemExit("self-test 4.1.1 scanner evidence labels mismatch")
 
         predicate["controls"][0]["evidence"] = []
         try:
