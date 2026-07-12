@@ -171,9 +171,7 @@ def read(relative_path: str) -> str:
 def check_gitattributes_archive_visibility() -> None:
     github_paths = [".github", ".github/"]
     github_paths.extend(
-        path.relative_to(ROOT).as_posix()
-        for path in sorted((ROOT / ".github").rglob("*"))
-        if path.is_file()
+        path.relative_to(ROOT).as_posix() for path in sorted((ROOT / ".github").rglob("*")) if path.is_file()
     )
     result = subprocess.run(
         ["git", "check-attr", "-z", "export-ignore", "--", *github_paths],
