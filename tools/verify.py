@@ -2246,7 +2246,7 @@ def publish_trust_policy_errors(text: str) -> list[str]:
 def check_publish_trust_policy_mutations(text: str) -> int:
     require(not publish_trust_policy_errors(text), "publish trust-policy baseline fixture must pass")
     print("publish trust-policy baseline probe accepted")
-    mutations = COSIGN_TRUST_MUTATIONS + [("check-claims-false", "--check-claims=false")]
+    mutations = [*COSIGN_TRUST_MUTATIONS, ("check-claims-false", "--check-claims=false")]
     rejected = 0
     for label, marker in mutations:
         mutated = text + f"\n{marker}\n"
