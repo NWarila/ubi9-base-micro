@@ -33,17 +33,22 @@ that is the same architecture path used by the publish workflow. Native arm64
 hosted runners would be a cleaner fallback if QEMU ever produces a byte diff, but
 QEMU is currently in scope and hard-gated because arm64 is a published artifact.
 
-The QEMU input is pinned by
-`docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130`.
+The setup-action code is pinned by
+`docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8`.
+Its binfmt emulator image defaults to `docker.io/tonistiigi/binfmt:latest`,
+which is mutable, with `cache-image: true` caching the selected image within a
+run.
 
 The `linux/amd64` byte-identity claim is native and toolchain-independent: no
 emulator participates in that build path. The `linux/arm64` byte-identity claim
-is emulator-relative: it is reproducible relative to the pinned QEMU/binfmt
-emulator above. The build-twice CI gate proves same-environment determinism for
-arm64 with that pinned QEMU; it does not claim byte-identity across arbitrary
-QEMU versions. A third-party arm64 reproducer needs the same pinned QEMU
-input unless they are deliberately testing a different emulator or native arm64
-path. That boundary is intrinsic to cross-architecture reproducible builds.
+is emulator-relative: it is reproducible relative to the binfmt emulator image
+selected and cached for that run. The build-twice CI gate proves same-run,
+same-cached-emulator determinism for arm64; because the image tag is mutable, it
+does not immutably guarantee byte-identity across time or hosts. A third-party
+arm64 reproducer needs the same emulator image, not merely the same action SHA,
+unless they are deliberately testing a different emulator or native arm64 path.
+Immutably pinning the emulator image is tracked follow-up. That boundary is
+intrinsic to cross-architecture reproducible builds.
 
 The two-builds-in-one-CI-run gate is necessary for the F3 claim because any rootfs
 difference fails the build, but it is not sufficient by itself for a broad
@@ -55,9 +60,11 @@ scope.
 
 - `SOURCE_DATE_EPOCH=1704067200` is the committed timestamp input.
 - Buildx uses `rewrite-timestamp=true` on local, CI, and publish image exporters.
-- `docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130` pins
-  the QEMU/binfmt emulator used for the cross-architecture `linux/arm64` build
-  path on GitHub-hosted amd64 runners.
+- `docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8` pins
+  the setup-action code for the cross-architecture `linux/arm64` build path on
+  GitHub-hosted amd64 runners. Its `docker.io/tonistiigi/binfmt:latest` emulator
+  image is mutable and cached within a run; an immutable image pin is tracked
+  follow-up.
 - Runtime RPM inputs are locked by per-architecture transaction files in
   `rpm-lock/`. Every lock row has a `# direct_rpm:` entry with a
   `https://cdn-ubi.redhat.com/` URL and whole-RPM SHA-256. The build fetches
