@@ -211,11 +211,11 @@ def check_gitattributes_archive_visibility() -> None:
 
 def reject_stale_fixable_cve_claims(sources: dict[str, str]) -> None:
     stale_patterns = [
-        r"fixable HIGH and CRITICAL",
-        r"fixable HIGH or CRITICAL",
-        r"fixable HIGH/CRITICAL",
-        r"--fail-on high\b",
-        r"--severity HIGH,CRITICAL[ \t]+--ignore-unfixed",
+        r"fixable\s+HIGH\s+and\s+CRITICAL",
+        r"fixable\s+HIGH\s+or\s+CRITICAL",
+        r"fixable\s+HIGH/CRITICAL",
+        r"--fail-on\s+high\b",
+        r"--severity\s+HIGH,CRITICAL\s+--ignore-unfixed",
     ]
     for source, source_text in sources.items():
         for pattern in stale_patterns:
@@ -223,6 +223,39 @@ def reject_stale_fixable_cve_claims(sources: dict[str, str]) -> None:
                 re.search(pattern, source_text, flags=re.IGNORECASE) is None,
                 f"{source} retains stale fixable-CVE policy form matching: {pattern}",
             )
+
+
+def check_stale_fixable_cve_claims_self_test() -> None:
+    stale_mutations = [
+        ("fixable HIGH and CRITICAL", "fixable   HIGH\tand\nCRITICAL"),
+        ("fixable HIGH or CRITICAL", "fixable\tHIGH\nor   CRITICAL"),
+        ("fixable HIGH/CRITICAL", "fixable\nHIGH/CRITICAL"),
+        ("--fail-on high", "--fail-on\nhigh"),
+        ("--severity HIGH,CRITICAL --ignore-unfixed", "--severity\tHIGH,CRITICAL\n--ignore-unfixed"),
+    ]
+    rejected = 0
+    for label, fixture in stale_mutations:
+        try:
+            reject_stale_fixable_cve_claims({f"self-test stale mutation ({label})": fixture})
+        except VerifyError:
+            rejected += 1
+        else:
+            raise VerifyError(f"stale fixable-CVE whitespace mutation unexpectedly passed: {label}")
+
+    reject_stale_fixable_cve_claims(
+        {
+            "self-test clean and near-miss fixtures": (
+                "fixable MEDIUM, HIGH, and CRITICAL\n"
+                "fixable MEDIUM/HIGH/CRITICAL\n"
+                "--fail-on medium\n"
+                "--severity MEDIUM,HIGH,CRITICAL --ignore-unfixed\n"
+            )
+        }
+    )
+    print(
+        f"Stale fixable-CVE whitespace mutation probes: {rejected}/{len(stale_mutations)} rejected; "
+        "clean and near-miss fixtures accepted"
+    )
 
 
 def load_json_object(relative_path: str) -> dict[str, Any]:
@@ -486,6 +519,7 @@ def cosign_certificate_identity() -> str:
 def cosign_workflow_certificate_identity() -> str:
     identity = cosign_certificate_identity()
     github_prefix = "https://github.com/"
+    require("/.github/" in identity, "Cosign certificate identity must contain a /.github/ workflow path")
     workflow_index = identity.index("/.github/")
     return github_prefix + "${{ github.repository }}" + identity[workflow_index:].replace("<ref>", "${{ github.ref }}")
 
@@ -1464,6 +1498,12 @@ def check_dockerfile() -> None:
         '--openssl-fips-provider-so-rpm-sha256-aarch64 "${OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64}" > "${rt_tmp}"'
     )
     runtime_mapfile = 'mapfile -t rt_names < "${rt_tmp}"'
+    for marker, label in [
+        ("set -eux;", "strict-mode marker"),
+        (runtime_capture, "runtime filename capture"),
+        (runtime_mapfile, "runtime filename mapfile read"),
+    ]:
+        require(marker in rpm_rootfs, f"rpm-rootfs missing {label} required for ordering")
     require(
         rpm_rootfs.index("set -eux;")
         < rpm_rootfs.index(runtime_filenames)
@@ -1472,8 +1512,12 @@ def check_dockerfile() -> None:
         "rpm-rootfs must status-check rpm-filenames under set -e before reading its temporary output",
     )
     require(rpm_rootfs.count(runtime_filenames) == 1, "rpm-rootfs must invoke rpm-filenames exactly once")
+    builder_fetch = "bash /tmp/fetch-builder-rpms.sh"
+    rootfs_assembly = "mkdir -p /rootfs"
+    require(builder_fetch in rpm_rootfs, "rpm-rootfs missing builder RPM fetch required for ordering")
+    require(rootfs_assembly in rpm_rootfs, "rpm-rootfs missing /rootfs assembly marker required for ordering")
     require(
-        rpm_rootfs.index("bash /tmp/fetch-builder-rpms.sh") < rpm_rootfs.index("mkdir -p /rootfs"),
+        rpm_rootfs.index(builder_fetch) < rpm_rootfs.index(rootfs_assembly),
         "builder Python must be installed before any /rootfs assembly",
     )
     builder_install = 'rpm -Uvh --oldpackage --replacepkgs --excludedocs "${builder_rpm_paths[@]}"'
@@ -1484,6 +1528,17 @@ def check_dockerfile() -> None:
     helper_invocation = "python3.12 /tmp/build-runtime-rootfs.py build"
     writer_invocation = "python3.12 /tmp/write-fips-status.py --contract /tmp/image-manifest.json"
     terminal_touch = 'find /rootfs -xdev -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +'
+    for marker, label in [
+        (builder_install, "builder RPM install"),
+        (runtime_install, "runtime RPM install"),
+        (microdnf_clean, "microdnf cleanup"),
+        (rootfs_cleanup, "rootfs cleanup"),
+        (hash_assertion, "RPM lock hash assertion"),
+        (helper_invocation, "production build helper"),
+        (writer_invocation, "FIPS status writer"),
+        (terminal_touch, "terminal rootfs touch"),
+    ]:
+        require(marker in rpm_rootfs, f"rpm-rootfs missing {label} required for ordering")
     require(
         rpm_rootfs.index(builder_install)
         < rpm_rootfs.index(runtime_filenames)
@@ -1563,6 +1618,14 @@ def check_dockerfile() -> None:
         require(marker in rootfs_helper, f"runtime-rootfs helper missing locked marker: {marker}")
     require("--source-date-epoch" not in rootfs_helper, "runtime-rootfs helper must not own the terminal touch")
     build_body = rootfs_helper.split("def build(\n", 1)[1].split("\ndef _parser()", 1)[0]
+    build_order_markers = [
+        "strip_packages(rootfs)",
+        "_verify_runtime_lock_floor(rootfs, runtime_lockfile)",
+        "_verify_fips(",
+        "_trim_filesystem(",
+    ]
+    for marker in build_order_markers:
+        require(marker in build_body, f"production build helper body missing ordering marker: {marker}")
     require(
         build_body.index("strip_packages(rootfs)")
         < build_body.index("_verify_runtime_lock_floor(rootfs, runtime_lockfile)")
@@ -2883,8 +2946,11 @@ def scanner_installer_errors(text: str, spec: dict[str, Any]) -> list[str]:
 
 
 def extract_cosign_block(text: str) -> str:
-    start = text.index("  cosign verify-blob \\")
+    start_marker = "  cosign verify-blob \\"
+    require(start_marker in text, "scanner installer missing Cosign verify-blob block start")
+    start = text.index(start_marker)
     final_line = '    "${checksums}"'
+    require(final_line in text[start:], "scanner installer Cosign verify-blob block missing final checksums line")
     end = text.index(final_line, start) + len(final_line)
     return text[start:end]
 
@@ -3897,7 +3963,15 @@ def check_docs() -> None:
     pipeline_heading = "## Supply Chain Pipeline"
     comparison_heading = "## Comparison at a Glance"
     image_family_heading = "## Image Family"
+    require(
+        pipeline_heading in readme[verify_hero_end:],
+        "README.md supply-chain pipeline heading must follow the verify hero",
+    )
     pipeline_start = readme.index(pipeline_heading, verify_hero_end)
+    require(
+        image_family_heading in readme[pipeline_start:],
+        "README.md image-family heading must follow the supply-chain pipeline",
+    )
     image_family_start = readme.index(image_family_heading, pipeline_start)
     showcase = readme[pipeline_start:image_family_start]
     require(
@@ -4668,6 +4742,7 @@ def main() -> int:
         check_nist_800_190_scripts,
         check_stig,
         check_decision_records,
+        check_stale_fixable_cve_claims_self_test,
         check_docs,
         check_helper_self_tests,
         check_no_attribution_residue,
