@@ -28,6 +28,10 @@ make test
 Run this for image, RPM lock, scanner, FIPS, STIG, SBOM, VEX, NIST, or
 publish-evidence changes:
 
+Cosign v2.5.2 is a required local prerequisite because the harness installs
+Syft, Trivy, and Grype only after verifying their signed release checksums.
+Confirm `cosign version` succeeds before running the harness.
+
 ```sh
 bash tools/run-test-gates.sh
 ```

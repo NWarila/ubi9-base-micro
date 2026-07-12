@@ -8,6 +8,11 @@
 
 set -euo pipefail
 
+if ! command -v cosign > /dev/null 2>&1; then
+  echo "cosign is required to verify the Trivy release" >&2
+  exit 1
+fi
+
 version="${TRIVY_VERSION:-0.71.0}"
 dest="${1:-dist/tools}"
 tmp_dir="$(mktemp -d)"
@@ -53,12 +58,22 @@ esac
 mkdir -p "${dest}"
 archive="trivy_${version}_${os}-${arch}.${archive_ext}"
 checksums="trivy_${version}_checksums.txt"
+bundle="${checksums}.sigstore.json"
 base_url="https://github.com/aquasecurity/trivy/releases/download/v${version}"
 
 (
   cd "${tmp_dir}"
   curl -fsSLO "${base_url}/${archive}"
   curl -fsSLO "${base_url}/${checksums}"
+  curl -fsSLO "${base_url}/${bundle}"
+  cosign verify-blob \
+    --bundle "${bundle}" \
+    --new-bundle-format \
+    --certificate-identity "https://github.com/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v${version}" \
+    --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    "${checksums}"
+  printf '%s  %s\n' '6860f51fa5adc71b603fc5b9cdd61a3eaae25ccf3ec5adf62281c89f1f3b9d38' "${checksums}" \
+    | sha256sum -c -
   grep " ${archive}\$" "${checksums}" | sha256sum -c -
 
   if [[ "${archive_ext}" == "tar.gz" ]]; then

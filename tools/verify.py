@@ -41,6 +41,9 @@ ACTIONLINT_HOOK_REV = "v1.7.12"
 ACTIONLINT_REVIEWDOG_ACTION_SHA = "6fb7acc99f4a1008869fa8a0f09cfca740837d9d"
 ACTIONLINT_REVIEWDOG_ACTION_TAG = "v1.72.0"
 ACTIONLINT_REVIEWDOG_TOOL_VERSION = "1.7.12"
+COSIGN_INSTALLER_ACTION = "sigstore/cosign-installer"
+COSIGN_INSTALLER_SHA = "f713795cb21599bc4e5c4b58cbad1da852d7eeb9"
+COSIGN_RELEASE = "v2.5.2"
 LINT_CONFIG_FILES = [
     ".hadolint.yaml",
     ".markdownlint-cli2.jsonc",
@@ -521,6 +524,25 @@ def check_harden_runner_audit_steps(text: str, source: str) -> None:
     require(
         text.count(f"{HARDEN_RUNNER}@{HARDEN_RUNNER_SHA}") == text.count("egress-policy: audit"),
         f"{source} harden-runner entries must all use egress-policy: audit",
+    )
+
+
+def cosign_installer_step() -> str:
+    return (
+        "      - name: Install Cosign\n"
+        f"        uses: {COSIGN_INSTALLER_ACTION}@{COSIGN_INSTALLER_SHA} # v3\n"
+        "        with:\n"
+        f"          cosign-release: {COSIGN_RELEASE}"
+    )
+
+
+def check_cosign_before_test_gates(text: str, source: str) -> None:
+    step = cosign_installer_step()
+    gate = "      - name: Run full test-only gate set\n        run: bash tools/run-test-gates.sh"
+    require(text.count(step) == 1, f"{source} must contain exactly one pinned Cosign v2.5.2 installer step")
+    require(
+        f"{step}\n\n{gate}" in text,
+        f"{source} must install pinned Cosign v2.5.2 immediately before run-test-gates.sh",
     )
 
 
@@ -1823,6 +1845,8 @@ def check_workflow() -> None:
 
     require("pull_request:" not in nightly, "nightly workflow must not run as PR CI")
     require("\npush:" not in nightly, "nightly workflow must not run on push")
+    check_cosign_before_test_gates(build, "build workflow")
+    check_cosign_before_test_gates(nightly, "nightly workflow")
 
     for marker in [
         "schedule:",
@@ -1958,7 +1982,6 @@ def check_workflow() -> None:
         "reusable-",
         "--" + "push",
         "docker " + "push",
-        "co" + "sign",
         "generator_container_" + "sl" + "sa3",
         "attest-build-" + "provenance",
         "continue-on-" + "error",
@@ -1971,6 +1994,9 @@ def check_workflow() -> None:
     ]:
         present = [marker for marker in forbidden if marker in source_text]
         require(not present, f"{source} contains out-of-scope marker(s): " + ", ".join(present))
+
+    for source, source_text in [("test gate runner", gate_runner), ("refresh workflow", refresh)]:
+        require("co" + "sign" not in source_text, f"{source} must not install or invoke Cosign")
 
     check_uses_pinned(build, "build workflow")
     check_uses_pinned(nightly, "nightly workflow")
@@ -2233,6 +2259,10 @@ def check_publish_workflow() -> None:
     ]
     missing = [marker for marker in required if marker not in text]
     require(not missing, "publish workflow missing required marker(s): " + ", ".join(missing))
+    require(
+        text.count(cosign_installer_step()) == 1,
+        "publish workflow must contain exactly one explicit pinned Cosign v2.5.2 installer step",
+    )
 
     publish_start = text.find("\n  publish:\n")
     publish_end = text.find("\n  slsa-provenance:\n", publish_start)
@@ -2546,28 +2576,266 @@ def check_rpm_locks() -> None:
             )
 
 
-def check_scanner_install_scripts() -> None:
-    trivy = read("tools/install-trivy.sh")
-    for marker in [
-        "TRIVY_VERSION:-0.71.0",
-        "github.com/aquasecurity/trivy/releases/download/v${version}",
-        "trivy_${version}_checksums.txt",
-        "sha256sum -c -",
-        "curl -fsSLO",
-        "tar xzf",
-    ]:
-        require(marker in trivy, f"Trivy installer missing marker: {marker}")
+def uncommented_shell(text: str) -> str:
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
 
-    grype = read("tools/install-grype.sh")
-    for marker in [
-        "GRYPE_VERSION:-0.115.0",
-        "github.com/anchore/grype/releases/download/v${version}",
-        "grype_${version}_checksums.txt",
-        "sha256sum -c -",
-        "curl -fsSLO",
-        "tar xzf",
-    ]:
-        require(marker in grype, f"Grype installer missing marker: {marker}")
+
+def shell_control_depth_at(text: str, target: str) -> int:
+    depth = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped == target:
+            return depth
+        if re.match(r"^(?:if|for|while|until)\b", stripped) or stripped.startswith("case "):
+            depth += 1
+        elif stripped in {"fi", "done", "esac"}:
+            depth = max(0, depth - 1)
+    return -1
+
+
+def scanner_installer_specs() -> list[dict[str, Any]]:
+    issuer = "https://token.actions.githubusercontent.com"
+    return [
+        {
+            "name": "Grype",
+            "path": "tools/install-grype.sh",
+            "version": "GRYPE_VERSION:-0.115.0",
+            "base_url": "github.com/anchore/grype/releases/download/v${version}",
+            "asset_assignments": [
+                'certificate="${checksums}.pem"',
+                'signature="${checksums}.sig"',
+            ],
+            "downloads": [
+                '  curl -fsSLO "${base_url}/${archive}"',
+                '  curl -fsSLO "${base_url}/${checksums}"',
+                '  curl -fsSLO "${base_url}/${certificate}"',
+                '  curl -fsSLO "${base_url}/${signature}"',
+            ],
+            "asset_flags": [
+                '    --certificate "${certificate}" \\',
+                '    --signature "${signature}" \\',
+            ],
+            "identity": "https://github.com/anchore/grype/.github/workflows/release.yaml@refs/heads/main",
+            "issuer": issuer,
+            "checksums_sha256": "dce654b6f5185d6e4e31cbdd966056562808c0d82b0acc233e9af03e1d4de2b8",
+        },
+        {
+            "name": "Syft",
+            "path": "tools/install-syft.sh",
+            "version": "SYFT_VERSION:-1.45.1",
+            "base_url": "github.com/anchore/syft/releases/download/v${version}",
+            "asset_assignments": [
+                'certificate="${checksums}.pem"',
+                'signature="${checksums}.sig"',
+            ],
+            "downloads": [
+                '  curl -fsSLO "${base_url}/${archive}"',
+                '  curl -fsSLO "${base_url}/${checksums}"',
+                '  curl -fsSLO "${base_url}/${certificate}"',
+                '  curl -fsSLO "${base_url}/${signature}"',
+            ],
+            "asset_flags": [
+                '    --certificate "${certificate}" \\',
+                '    --signature "${signature}" \\',
+            ],
+            "identity": "https://github.com/anchore/syft/.github/workflows/release.yaml@refs/heads/main",
+            "issuer": issuer,
+            "checksums_sha256": "9e477f098c1843bed38491a986d0ac80e54866c182fe511167c866b0edf1140c",
+        },
+        {
+            "name": "Trivy",
+            "path": "tools/install-trivy.sh",
+            "version": "TRIVY_VERSION:-0.71.0",
+            "base_url": "github.com/aquasecurity/trivy/releases/download/v${version}",
+            "asset_assignments": ['bundle="${checksums}.sigstore.json"'],
+            "downloads": [
+                '  curl -fsSLO "${base_url}/${archive}"',
+                '  curl -fsSLO "${base_url}/${checksums}"',
+                '  curl -fsSLO "${base_url}/${bundle}"',
+            ],
+            "asset_flags": [
+                '    --bundle "${bundle}" \\',
+                "    --new-bundle-format \\",
+            ],
+            "identity": (
+                "https://github.com/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v${version}"
+            ),
+            "issuer": issuer,
+            "checksums_sha256": "6860f51fa5adc71b603fc5b9cdd61a3eaae25ccf3ec5adf62281c89f1f3b9d38",
+        },
+    ]
+
+
+def scanner_installer_errors(text: str, spec: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    code = uncommented_shell(text)
+    name = cast(str, spec["name"])
+    identity = cast(str, spec["identity"])
+    issuer = cast(str, spec["issuer"])
+    checksum = cast(str, spec["checksums_sha256"])
+    guard = (
+        "if ! command -v cosign > /dev/null 2>&1; then\n"
+        f'  echo "cosign is required to verify the {name} release" >&2\n'
+        "  exit 1\n"
+        "fi"
+    )
+    identity_line = f'    --certificate-identity "{identity}" \\'
+    issuer_line = f'    --certificate-oidc-issuer "{issuer}" \\'
+    checksum_pin = f"printf '%s  %s\\n' '{checksum}' \"${{checksums}}\" \\\n    | sha256sum -c -"
+    archive_check = '  grep " ${archive}\\$" "${checksums}" | sha256sum -c -'
+    extraction = '    tar xzf "${archive}" "${binary}"'
+
+    def expect(condition: bool, message: str) -> None:
+        if not condition:
+            errors.append(message)
+
+    expect("set -euo pipefail" in code, "missing set -euo pipefail")
+    expect(code.count(guard) == 1, "missing exact fail-closed Cosign presence guard")
+    expect(
+        shell_control_depth_at(code, "if ! command -v cosign > /dev/null 2>&1; then") == 0,
+        "Cosign guard is conditional",
+    )
+    expect(code.count("command -v cosign") == 1, "Cosign presence guard must be unique")
+    expect(cast(str, spec["version"]) in code, "missing pinned scanner version")
+    expect(cast(str, spec["base_url"]) in code, "missing pinned release URL")
+
+    for marker in cast(list[str], spec["asset_assignments"]):
+        expect(marker in code, f"missing signature asset assignment: {marker}")
+    for marker in cast(list[str], spec["downloads"]):
+        expect(marker in code, f"missing release asset download: {marker}")
+        expect(shell_control_depth_at(code, marker.strip()) == 0, f"release asset download is conditional: {marker}")
+
+    expect(code.count("  cosign verify-blob \\") == 1, "missing unique cosign verify-blob invocation")
+    expect(shell_control_depth_at(code, "cosign verify-blob \\") == 0, "cosign verify-blob is conditional or dead")
+    for marker in cast(list[str], spec["asset_flags"]):
+        expect(marker in code, f"missing Cosign signature flag: {marker}")
+    identity_flags = [line.strip() for line in code.splitlines() if line.strip().startswith("--certificate-identity")]
+    issuer_flags = [line.strip() for line in code.splitlines() if line.strip().startswith("--certificate-oidc-issuer")]
+    expect(
+        identity_flags == [identity_line.strip()], "Cosign certificate identity must be the one exact pinned literal"
+    )
+    expect(issuer_flags == [issuer_line.strip()], "Cosign OIDC issuer must be the one exact pinned literal")
+    expect("--certificate-identity-regexp" not in code, "regexp certificate identity is forbidden")
+
+    expect(checksum_pin in code, "missing exact reviewed checksums-file SHA-256 verification")
+    expect(shell_control_depth_at(code, checksum_pin.splitlines()[0].strip()) == 0, "checksums-file pin is conditional")
+    expect(code.count(archive_check) == 1, "missing unique archive sha256sum verification")
+    expect(shell_control_depth_at(code, archive_check.strip()) == 0, "archive sha256sum verification is conditional")
+    expect(extraction in code, "missing archive extraction")
+
+    download_positions = [code.find(marker) for marker in cast(list[str], spec["downloads"])]
+    verify_position = code.find("  cosign verify-blob \\")
+    pin_position = code.find(checksum_pin)
+    archive_position = code.find(archive_check)
+    extraction_position = code.find(extraction)
+    positions_present = all(position >= 0 for position in download_positions) and all(
+        position >= 0 for position in [verify_position, pin_position, archive_position, extraction_position]
+    )
+    expect(
+        positions_present
+        and max(download_positions) < verify_position < pin_position < archive_position < extraction_position,
+        "required order is downloads < cosign verify < checksums-file pin < archive sha256sum < extraction",
+    )
+
+    soft_fail = re.search(r"\|\|\s*(?:true|:)(?:\s|$)|;\s*true(?:\s|$)|\bset\s+\+e\b", code)
+    expect(soft_fail is None, "soft-fail token is forbidden")
+    return errors
+
+
+def extract_cosign_block(text: str) -> str:
+    start = text.index("  cosign verify-blob \\")
+    final_line = '    "${checksums}"'
+    end = text.index(final_line, start) + len(final_line)
+    return text[start:end]
+
+
+def check_scanner_installer_mutations(text: str, spec: dict[str, Any]) -> int:
+    name = cast(str, spec["name"])
+    identity = cast(str, spec["identity"])
+    issuer = cast(str, spec["issuer"])
+    checksum = cast(str, spec["checksums_sha256"])
+    guard = (
+        "if ! command -v cosign > /dev/null 2>&1; then\n"
+        f'  echo "cosign is required to verify the {name} release" >&2\n'
+        "  exit 1\n"
+        "fi"
+    )
+    identity_line = f'    --certificate-identity "{identity}" \\'
+    issuer_line = f'    --certificate-oidc-issuer "{issuer}" \\'
+    archive_check = '  grep " ${archive}\\$" "${checksums}" | sha256sum -c -'
+    cosign_block = extract_cosign_block(text)
+    removal_markers = [
+        ("strict-mode", "set -euo pipefail"),
+        ("cosign-guard", guard),
+        ("cosign-invocation", "  cosign verify-blob \\"),
+        ("certificate-identity", identity_line),
+        ("oidc-issuer", issuer_line),
+        ("checksums-file-sha256", checksum),
+        ("archive-sha256sum", archive_check),
+        ("extraction", '    tar xzf "${archive}" "${binary}"'),
+    ]
+    removal_markers.extend(
+        (f"asset-assignment-{index}", marker)
+        for index, marker in enumerate(cast(list[str], spec["asset_assignments"]), start=1)
+    )
+    removal_markers.extend(
+        (f"asset-download-{index}", marker) for index, marker in enumerate(cast(list[str], spec["downloads"]), start=1)
+    )
+    removal_markers.extend(
+        (f"cosign-asset-flag-{index}", marker)
+        for index, marker in enumerate(cast(list[str], spec["asset_flags"]), start=1)
+    )
+
+    mutations: list[tuple[str, str]] = []
+    for label, marker in removal_markers:
+        mutated = text.replace(marker, "", 1)
+        require(mutated != text, f"{name} mutation fixture did not find marker: {label}")
+        mutations.append((f"remove-{label}", mutated))
+
+    without_cosign = text.replace(cosign_block + "\n", "", 1)
+    mutations.extend(
+        [
+            (
+                "reorder-cosign-after-archive-sha256",
+                without_cosign.replace(archive_check, archive_check + "\n" + cosign_block, 1),
+            ),
+            (
+                "comment-cosign-verification",
+                text.replace(cosign_block, "\n".join(f"# {line}" for line in cosign_block.splitlines()), 1),
+            ),
+            (
+                "dead-branch-cosign-verification",
+                text.replace(cosign_block, "  if false; then\n" + cosign_block + "\n  fi", 1),
+            ),
+            (
+                "conditional-skip-cosign-verification",
+                text.replace(cosign_block, '  if [[ "${SKIP_VERIFY:-}" != "1" ]]; then\n' + cosign_block + "\n  fi", 1),
+            ),
+            ("soft-fail-or-true", text.replace(cosign_block, cosign_block + " || true", 1)),
+            (
+                "regexp-identity-substitution",
+                text.replace("--certificate-identity ", "--certificate-identity-regexp ", 1),
+            ),
+            ("remove-pipefail", text.replace("set -euo pipefail", "set -eu", 1)),
+        ]
+    )
+
+    rejected = 0
+    for label, mutated in mutations:
+        require(scanner_installer_errors(mutated, spec), f"{name} installer mutation was not rejected: {label}")
+        print(f"scanner installer mutation rejected: {name.lower()}/{label}")
+        rejected += 1
+    return rejected
+
+
+def check_scanner_install_scripts() -> None:
+    total_mutations = 0
+    for spec in scanner_installer_specs():
+        text = read(cast(str, spec["path"]))
+        errors = scanner_installer_errors(text, spec)
+        require(not errors, f"{spec['name']} installer contract failed: " + "; ".join(errors))
+        total_mutations += check_scanner_installer_mutations(text, spec)
+    print(f"scanner installer mutation probes: {total_mutations}/{total_mutations} rejected")
 
     crane = read("tools/install-crane.sh")
     for marker in [
@@ -3571,8 +3839,11 @@ def check_docs() -> None:
         "RPM-lock how-to must cover controlled direct-RPM refresh",
     )
     require(
-        "python tools/verify.py" in gate_howto and "bash tools/run-test-gates.sh" in gate_howto,
-        "local gate how-to must cover verifier and full gate harness",
+        "python tools/verify.py" in gate_howto
+        and "bash tools/run-test-gates.sh" in gate_howto
+        and "Cosign v2.5.2" in gate_howto
+        and "required local prerequisite" in gate_howto,
+        "local gate how-to must cover the verifier, full gate harness, and pinned Cosign prerequisite",
     )
     require(
         "FROM ghcr.io/nwarila/ubi9-base-micro@sha256:<digest>" in consume_howto,

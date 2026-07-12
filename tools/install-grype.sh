@@ -8,6 +8,11 @@
 
 set -euo pipefail
 
+if ! command -v cosign > /dev/null 2>&1; then
+  echo "cosign is required to verify the Grype release" >&2
+  exit 1
+fi
+
 version="${GRYPE_VERSION:-0.115.0}"
 dest="${1:-dist/tools}"
 tmp_dir="$(mktemp -d)"
@@ -53,12 +58,24 @@ esac
 mkdir -p "${dest}"
 archive="grype_${version}_${os}_${arch}.${archive_ext}"
 checksums="grype_${version}_checksums.txt"
+certificate="${checksums}.pem"
+signature="${checksums}.sig"
 base_url="https://github.com/anchore/grype/releases/download/v${version}"
 
 (
   cd "${tmp_dir}"
   curl -fsSLO "${base_url}/${archive}"
   curl -fsSLO "${base_url}/${checksums}"
+  curl -fsSLO "${base_url}/${certificate}"
+  curl -fsSLO "${base_url}/${signature}"
+  cosign verify-blob \
+    --certificate "${certificate}" \
+    --signature "${signature}" \
+    --certificate-identity "https://github.com/anchore/grype/.github/workflows/release.yaml@refs/heads/main" \
+    --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    "${checksums}"
+  printf '%s  %s\n' 'dce654b6f5185d6e4e31cbdd966056562808c0d82b0acc233e9af03e1d4de2b8' "${checksums}" \
+    | sha256sum -c -
   grep " ${archive}\$" "${checksums}" | sha256sum -c -
 
   if [[ "${archive_ext}" == "tar.gz" ]]; then
