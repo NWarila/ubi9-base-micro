@@ -8,6 +8,11 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- Refreshed the digest-pinned Red Hat UBI 9 base images and updated the
+  byte-for-byte reproducibility baselines.
+
 ## [1.0.0] - 2026-07-12
 
 ### Added

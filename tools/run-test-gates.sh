@@ -14,7 +14,7 @@ set -euo pipefail
 runtime_image="${RUNTIME_IMAGE:-ghcr.io/nwarila/ubi9-base-micro:base-micro}"
 platform="${PLATFORM:-linux/amd64}"
 arch="${platform#linux/}"
-ubi_micro_image="${UBI_MICRO_IMAGE:-registry.access.redhat.com/ubi9/ubi-micro@sha256:b498b3ea26111ab4b81d65139f2ebd2ef9a2abb7a4588b7fdcc54889f95e9caa}"
+ubi_micro_image="${UBI_MICRO_IMAGE:-registry.access.redhat.com/ubi9/ubi-micro@sha256:35de56a9413112f1474e392ebc35e0cf6f0fb484c8e8877bbae59b513694b41f}"
 source_uri="github.com/${GITHUB_REPOSITORY:-NWarila/ubi9-base-micro}"
 revision="${GITHUB_SHA:-$(git rev-parse HEAD 2> /dev/null)}"
 revision="${revision:-local}"
