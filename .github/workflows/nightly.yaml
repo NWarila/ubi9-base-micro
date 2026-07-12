@@ -95,6 +95,7 @@ jobs:
       - name: Check shell script syntax
         run: |
           bash -n tests/hardening.sh
+          bash tests/hardening.sh --self-test
           bash -n tests/fips.sh
           bash -n tools/install-trivy.sh
           bash -n tools/install-grype.sh

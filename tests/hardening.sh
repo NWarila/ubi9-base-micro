@@ -22,8 +22,98 @@ Validates the base-micro runtime hardening baseline:
 USAGE
 }
 
+assert_no_shell_binaries() {
+  local file_list="$1"
+  local shell_hits
+
+  shell_hits="$(awk '/(^|\/)(usr\/)?s?bin\/(sh|bash|dash|ash|busybox|ksh|zsh|tcsh|csh)$/ { print }' "${file_list}")"
+  if [[ -n "${shell_hits}" ]]; then
+    echo "shell binary present in runtime image:" >&2
+    printf '%s\n' "${shell_hits}" | sed 's#^#  /#' >&2
+    exit 1
+  fi
+}
+
+assert_no_package_manager_executables() {
+  local file_list="$1"
+  local package_manager_hits
+
+  package_manager_hits="$(awk '/(^|\/)(usr\/)?s?bin\/(microdnf|dnf|rpm|yum)$/ { print }' "${file_list}")"
+  if [[ -n "${package_manager_hits}" ]]; then
+    echo "package-manager executable present in runtime image:" >&2
+    printf '%s\n' "${package_manager_hits}" | sed 's#^#  /#' >&2
+    exit 1
+  fi
+}
+
+run_self_test() (
+  local self_test_tmp_dir
+  local clean_file_list
+  local shell_file_list
+  local package_manager_file_list
+  local output
+  local status
+  local expected_diagnostic
+
+  self_test_tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${self_test_tmp_dir}"' EXIT
+
+  clean_file_list="${self_test_tmp_dir}/clean-files.txt"
+  shell_file_list="${self_test_tmp_dir}/shell-files.txt"
+  package_manager_file_list="${self_test_tmp_dir}/package-manager-files.txt"
+
+  printf '%s\n' 'usr/bin/application' > "${clean_file_list}"
+  printf '%s\n' 'usr/bin/sh' > "${shell_file_list}"
+  printf '%s\n' 'usr/bin/rpm' > "${package_manager_file_list}"
+
+  assert_no_shell_binaries "${clean_file_list}"
+  assert_no_package_manager_executables "${clean_file_list}"
+  echo "self-test clean fixture passed shell and package-manager checks"
+
+  status=0
+  output="$(
+    (
+      assert_no_shell_binaries "${shell_file_list}"
+    ) 2>&1
+  )" || status=$?
+  if [[ "${status}" -eq 0 ]]; then
+    echo "shell negative self-test unexpectedly passed" >&2
+    exit 1
+  fi
+  expected_diagnostic="shell binary present in runtime image:"
+  if [[ "${output}" != *"${expected_diagnostic}"* ]]; then
+    echo "shell negative self-test failed without the expected diagnostic" >&2
+    printf '%s\n' "${output}" >&2
+    exit 1
+  fi
+  printf 'self-test shell fixture failed as expected (status=%s):\n%s\n' "${status}" "${output}"
+
+  status=0
+  output="$(
+    (
+      assert_no_package_manager_executables "${package_manager_file_list}"
+    ) 2>&1
+  )" || status=$?
+  if [[ "${status}" -eq 0 ]]; then
+    echo "package-manager negative self-test unexpectedly passed" >&2
+    exit 1
+  fi
+  expected_diagnostic="package-manager executable present in runtime image:"
+  if [[ "${output}" != *"${expected_diagnostic}"* ]]; then
+    echo "package-manager negative self-test failed without the expected diagnostic" >&2
+    printf '%s\n' "${output}" >&2
+    exit 1
+  fi
+  printf 'self-test package-manager fixture failed as expected (status=%s):\n%s\n' "${status}" "${output}"
+)
+
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
+  exit 0
+fi
+
+if [[ "${1:-}" == "--self-test" ]]; then
+  run_self_test
   exit 0
 fi
 
@@ -121,19 +211,8 @@ for executable in \
   assert_entrypoint_missing "${executable}"
 done
 
-shell_hits="$(awk '/(^|\/)(usr\/)?s?bin\/(sh|bash|dash|ash|busybox|ksh|zsh|tcsh|csh)$/ { print }' "${tmp_dir}/files.txt")"
-if [[ -n "${shell_hits}" ]]; then
-  echo "shell binary present in runtime image:" >&2
-  printf '%s\n' "${shell_hits}" | sed 's#^#  /#' >&2
-  exit 1
-fi
-
-package_manager_hits="$(awk '/(^|\/)(usr\/)?s?bin\/(microdnf|dnf|rpm|yum)$/ { print }' "${tmp_dir}/files.txt")"
-if [[ -n "${package_manager_hits}" ]]; then
-  echo "package-manager executable present in runtime image:" >&2
-  printf '%s\n' "${package_manager_hits}" | sed 's#^#  /#' >&2
-  exit 1
-fi
+assert_no_shell_binaries "${tmp_dir}/files.txt"
+assert_no_package_manager_executables "${tmp_dir}/files.txt"
 
 runtime_user="$(docker image inspect --format '{{.Config.User}}' "${image_ref}")"
 if [[ "${runtime_user}" != "65532:65532" ]]; then
