@@ -276,6 +276,18 @@ def _count_by_scanner(trivy: list[Finding], grype: list[Finding]) -> dict[str, i
     }
 
 
+def _secret_scan_fields(path: Path) -> dict[str, int | bool]:
+    report = _object(_load_json(path, "secret-scan report"), "secret-scan report")
+    raw_result = report.get("result")
+    if raw_result not in {"passed", "failed"}:
+        raise SummaryError("secret-scan result must be passed or failed")
+    finding_count = len(_list(report.get("findings"), "secret-scan findings"))
+    passed = finding_count == 0
+    if (raw_result == "passed") != passed:
+        raise SummaryError("secret-scan result disagrees with finding count")
+    return {"finding_count": finding_count, "passed": passed}
+
+
 def _hardening_fields(
     arch: str,
     dist_dir: Path,
@@ -294,9 +306,7 @@ def _hardening_fields(
     ignore_entries = _trivy_ignore_entries(trivy_ignore)
 
     trivy_ignored = [finding for finding in trivy if finding.fixable and _trivy_ignored(finding, ignore_entries)]
-    trivy_actionable = [
-        finding for finding in trivy if finding.fixable and not _trivy_ignored(finding, ignore_entries)
-    ]
+    trivy_actionable = [finding for finding in trivy if finding.fixable and not _trivy_ignored(finding, ignore_entries)]
     grype_actionable = [finding for finding in grype_gate_active if finding.fixable]
     grype_ignored = [finding for finding in grype_gate_ignored if finding.fixable]
     ignored_ids = {finding.vulnerability for finding in trivy_ignored + grype_ignored}
@@ -304,8 +314,8 @@ def _hardening_fields(
 
     unfixed = {finding.vulnerability for finding in trivy + grype if not finding.fixable}
     statements = _vex_statements(vex_dir)
-    accepted_vex = sorted(vulnerability for vulnerability in unfixed if _accepted_vex(vulnerability, product, statements))
-    missing_vex = sorted(unfixed.difference(accepted_vex))
+    accepted_vex = {vulnerability for vulnerability in unfixed if _accepted_vex(vulnerability, product, statements)}
+    missing_vex = unfixed.difference(accepted_vex)
 
     stig_path = dist_dir / f"stig/{arch}/base-micro.{arch}.stig.summary.json"
     stig = _object(_load_json(stig_path, "STIG summary"), "STIG summary")
@@ -319,13 +329,7 @@ def _hardening_fields(
         raise SummaryError("STIG counts do not sum to total_rule_results")
 
     secret_path = dist_dir / f"rootfs-secret-scan/base-micro.{arch}.secret-scan.json"
-    secrets = _object(_load_json(secret_path, "secret-scan report"), "secret-scan report")
-    result = _string(secrets.get("result"), "secret-scan result")
-    findings = _list(secrets.get("findings"), "secret-scan findings")
-    if result not in {"passed", "failed"}:
-        raise SummaryError("secret-scan result must be passed or failed")
-    if (result == "passed") != (len(findings) == 0):
-        raise SummaryError("secret-scan result disagrees with findings")
+    secrets = _secret_scan_fields(secret_path)
 
     footprint_path = dist_dir / f"footprint/base-micro.{arch}.json"
     footprint = _object(_load_json(footprint_path, "footprint report"), "footprint report")
@@ -340,8 +344,8 @@ def _hardening_fields(
     return {
         "cves": {
             "raw": _count_by_scanner(trivy, grype),
-            "ignored": {"unique": len(ignored_ids), "ids": sorted(ignored_ids)},
-            "actionable": {"unique": len(actionable_ids), "ids": sorted(actionable_ids)},
+            "ignored": {"unique": len(ignored_ids)},
+            "actionable": {"unique": len(actionable_ids)},
         },
         "stig": {
             "total_rule_results": total_rule_results,
@@ -349,7 +353,7 @@ def _hardening_fields(
             "fail": fail_count,
             "not_selected": not_selected,
         },
-        "secrets": {"result": result, "finding_count": len(findings)},
+        "secrets": secrets,
         "footprint": {
             "regular_file_bytes": regular_file_bytes,
             "limit_bytes": limit_bytes,
@@ -357,9 +361,7 @@ def _hardening_fields(
         },
         "vex": {
             "accepted": len(accepted_vex),
-            "accepted_ids": accepted_vex,
             "missing": len(missing_vex),
-            "missing_ids": missing_vex,
         },
     }
 
@@ -397,12 +399,12 @@ def summarize_hardening(
             reasons.append(f"{arch} has findings missing VEX")
         envelope["complete"] = True
         envelope["attention_reasons"] = reasons
-    except (SummaryError, KeyError, TypeError, ValueError) as exc:
-        envelope["attention_reasons"] = [str(exc)]
+    except (SummaryError, KeyError, TypeError, ValueError):
+        envelope["attention_reasons"] = ["hardening evidence is missing or malformed"]
     return envelope
 
 
-def _repro_fields(arch: str, report_path: Path, expected_rootfs: str, expected_rpmdb: str) -> dict[str, Any]:
+def _repro_fields(report_path: Path, expected_rootfs: str, expected_rpmdb: str) -> dict[str, Any]:
     report = _object(_load_json(report_path, "reproducibility report"), "reproducibility report")
     byte_identical = _boolean(report.get("byte_identical"), "reproducibility byte_identical")
     builds = _list(report.get("builds"), "reproducibility builds")
@@ -429,7 +431,7 @@ def summarize_repro(arch: str, report: Path, contract: Path) -> dict[str, Any]:
         if arch not in ARCHES:
             raise SummaryError(f"unsupported architecture: {arch}")
         _, expected_rootfs, expected_rpmdb = _contract_values(contract, arch)
-        envelope.update(_repro_fields(arch, report, expected_rootfs, expected_rpmdb))
+        envelope.update(_repro_fields(report, expected_rootfs, expected_rpmdb))
         reproducibility = _object(envelope["reproducibility"], "reproducibility")
         reasons: list[str] = []
         if not _boolean(reproducibility["byte_identical"], "byte_identical"):
@@ -440,8 +442,8 @@ def summarize_repro(arch: str, report: Path, contract: Path) -> dict[str, Any]:
             reasons.append(f"{arch} rpmdb digest needs rebaseline")
         envelope["complete"] = True
         envelope["attention_reasons"] = reasons
-    except (SummaryError, KeyError, TypeError, ValueError) as exc:
-        envelope["attention_reasons"] = [str(exc)]
+    except (SummaryError, KeyError, TypeError, ValueError):
+        envelope["attention_reasons"] = ["reproducibility evidence is missing or malformed"]
     return envelope
 
 
@@ -471,13 +473,10 @@ def main(argv: list[str]) -> int:
             args.product,
         )
     else:
-        report = args.repro_report or (
-            args.dist_dir / f"reproducibility/base-micro.{args.arch}.reproducibility.json"
-        )
+        report = args.repro_report or (args.dist_dir / f"reproducibility/base-micro.{args.arch}.reproducibility.json")
         envelope = summarize_repro(args.arch, report, args.contract)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(envelope, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps(envelope, sort_keys=True))
     return 0
 
 

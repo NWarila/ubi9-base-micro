@@ -54,10 +54,6 @@ def _boolean(value: Any, label: str) -> bool:
     return value
 
 
-def _string_array(value: Any, label: str) -> list[str]:
-    return [_string(item, f"{label} item") for item in _array(value, label)]
-
-
 def _one_line(value: str) -> str:
     return " ".join(value.split())
 
@@ -100,10 +96,10 @@ def _check_snapshot(snapshot_value: Any, context: dict[str, Any]) -> list[str]:
             matches = contexts_by_name.get(required_context, [])
             if not matches:
                 reasons.append(f"required check missing: {required_context}")
-            elif len(matches) > 1:
-                reasons.append(f"required check duplicated: {required_context}")
-            elif matches[0] != "success":
-                reasons.append(f"required check {required_context} is {matches[0]}")
+                continue
+            non_success = list(dict.fromkeys(result for result in matches if result != "success"))
+            if non_success:
+                reasons.append(f"required check {required_context} has non-success run(s): {', '.join(non_success)}")
     except (RenderError, KeyError, TypeError, ValueError) as exc:
         reasons.append(f"malformed check snapshot: {exc}")
     return reasons
@@ -121,10 +117,6 @@ def _hardening_view(envelope: dict[str, Any], arch: str) -> tuple[dict[str, int]
     vex = _object(envelope.get("vex"), f"{arch} VEX")
     raw_trivy = _integer(raw.get("trivy"), f"{arch} raw Trivy CVEs")
     raw_grype = _integer(raw.get("grype"), f"{arch} raw Grype CVEs")
-    ignored_ids = _string_array(ignored.get("ids"), f"{arch} ignored CVE ids")
-    actionable_ids = _string_array(actionable.get("ids"), f"{arch} actionable CVE ids")
-    accepted_vex_ids = _string_array(vex.get("accepted_ids"), f"{arch} accepted VEX ids")
-    missing_vex_ids = _string_array(vex.get("missing_ids"), f"{arch} missing VEX ids")
     view = {
         "raw": _integer(raw.get("unique"), f"{arch} raw CVEs"),
         "ignored": _integer(ignored.get("unique"), f"{arch} ignored CVEs"),
@@ -140,25 +132,17 @@ def _hardening_view(envelope: dict[str, Any], arch: str) -> tuple[dict[str, int]
         "accepted_vex": _integer(vex.get("accepted"), f"{arch} accepted VEX"),
     }
     footprint_passed = _boolean(footprint.get("passed"), f"{arch} footprint passed")
-    secret_result = _string(secrets.get("result"), f"{arch} secret result")
+    secret_passed = _boolean(secrets.get("passed"), f"{arch} secret scan passed")
     if raw_trivy > view["raw"] or raw_grype > view["raw"]:
         raise RenderError(f"{arch} raw scanner CVE count exceeds the unique count")
     if view["ignored"] > view["raw"] or view["actionable"] > view["raw"]:
         raise RenderError(f"{arch} classified CVE count exceeds the raw unique count")
     if view["accepted_vex"] > view["raw"] or view["missing_vex"] > view["raw"]:
         raise RenderError(f"{arch} VEX count exceeds the raw unique CVE count")
-    if len(set(ignored_ids)) != view["ignored"]:
-        raise RenderError(f"{arch} ignored CVE ids disagree with the count")
-    if len(set(actionable_ids)) != view["actionable"]:
-        raise RenderError(f"{arch} actionable CVE ids disagree with the count")
-    if len(set(accepted_vex_ids)) != view["accepted_vex"]:
-        raise RenderError(f"{arch} accepted VEX ids disagree with the count")
-    if len(set(missing_vex_ids)) != view["missing_vex"]:
-        raise RenderError(f"{arch} missing VEX ids disagree with the count")
     if view["stig_pass"] + view["stig_fail"] + view["stig_not_selected"] > view["stig_total"]:
         raise RenderError(f"{arch} STIG counts exceed total rule results")
-    if secret_result not in {"passed", "failed"} or (secret_result == "passed") != (view["secrets"] == 0):
-        raise RenderError(f"{arch} secret result disagrees with finding count")
+    if secret_passed != (view["secrets"] == 0):
+        raise RenderError(f"{arch} secret status disagrees with finding count")
     if footprint_passed != (view["footprint_bytes"] <= view["footprint_limit"]):
         raise RenderError(f"{arch} footprint passed flag disagrees with byte counts")
     if view["actionable"]:
@@ -179,9 +163,7 @@ def _repro_view(envelope: dict[str, Any], arch: str) -> tuple[dict[str, bool], l
     repro = _object(envelope.get("reproducibility"), f"{arch} reproducibility")
     view = {
         "byte_identical": _boolean(repro.get("byte_identical"), f"{arch} byte_identical"),
-        "rootfs_matches_contract": _boolean(
-            repro.get("rootfs_matches_contract"), f"{arch} rootfs_matches_contract"
-        ),
+        "rootfs_matches_contract": _boolean(repro.get("rootfs_matches_contract"), f"{arch} rootfs_matches_contract"),
         "rpmdb_matches_contract": _boolean(repro.get("rpmdb_matches_contract"), f"{arch} rpmdb_matches_contract"),
     }
     reasons: list[str] = []
@@ -226,8 +208,7 @@ def _envelopes(envelope_values: list[Any]) -> tuple[dict[str, dict[str, int]], d
                 for item in attention:
                     _string(item, f"{arch} {kind} attention reason")
                 if not complete:
-                    reason = _safe_text(_string(attention[0], f"{arch} {kind} incomplete reason")) if attention else "no reason"
-                    reasons.append(f"incomplete {kind} envelope for {arch}: {reason}")
+                    reasons.append(f"incomplete {kind} envelope for {arch}")
                     continue
                 if kind == "hardening":
                     hardening_views[arch], actionable_reasons = _hardening_view(envelope, arch)
@@ -235,7 +216,7 @@ def _envelopes(envelope_values: list[Any]) -> tuple[dict[str, dict[str, int]], d
                     repro_views[arch], actionable_reasons = _repro_view(envelope, arch)
                 reasons.extend(actionable_reasons)
                 if attention and not actionable_reasons:
-                    reasons.append(f"{arch} {kind}: {_safe_text(_string(attention[0], 'attention reason'))}")
+                    reasons.append(f"{arch} {kind} producer reported an inconsistency")
             except (RenderError, KeyError, TypeError, ValueError) as exc:
                 reasons.append(f"malformed {kind} envelope for {arch}: {exc}")
     return hardening_views, repro_views, reasons
@@ -309,7 +290,8 @@ def render_decision(envelope_values: list[Any], context_value: Any, snapshot_val
         "",
         "**Current posture**",
         "",
-        "| Arch | Raw HIGH/CRITICAL CVEs | Policy-ignored CVEs / accepted VEX | Actionable CVEs | STIG | Secrets / missing VEX |",
+        "| Arch | Raw HIGH/CRITICAL CVEs | Policy-ignored CVEs / accepted VEX | "
+        "Actionable CVEs | STIG | Secrets / missing VEX |",
         "|---|---:|---:|---:|---|---:|",
         _posture_row("amd64", hardening.get("amd64")),
         _posture_row("arm64", hardening.get("arm64")),
@@ -338,7 +320,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--repro-arm64", required=True, type=Path)
     parser.add_argument("--pr-context", required=True, type=Path)
     parser.add_argument("--check-snapshot", required=True, type=Path)
-    parser.add_argument("--output", type=Path)
+    parser.add_argument("--output", required=True, type=Path)
     return parser.parse_args(argv)
 
 
@@ -355,11 +337,8 @@ def main(argv: list[str]) -> int:
         _load(args.pr_context, "PR context"),
         _load(args.check_snapshot, "check snapshot"),
     )
-    if args.output is not None:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(body, encoding="utf-8")
-    else:
-        sys.stdout.write(body)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(body, encoding="utf-8")
     return 0
 
 

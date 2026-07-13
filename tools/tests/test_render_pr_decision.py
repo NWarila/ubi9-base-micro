@@ -39,13 +39,13 @@ def _hardening(arch: str) -> dict[str, Any]:
         "attention_reasons": [],
         "cves": {
             "raw": {"trivy": 1, "grype": 1, "unique": 1},
-            "ignored": {"unique": 1, "ids": ["CVE-2026-31790"]},
-            "actionable": {"unique": 0, "ids": []},
+            "ignored": {"unique": 1},
+            "actionable": {"unique": 0},
         },
         "stig": {"total_rule_results": 1532, "pass": 39, "fail": 0, "not_selected": 1491},
-        "secrets": {"result": "passed", "finding_count": 0},
+        "secrets": {"finding_count": 0, "passed": True},
         "footprint": {"regular_file_bytes": 23841246, "limit_bytes": 26214400, "passed": True},
-        "vex": {"accepted": 0, "accepted_ids": [], "missing": 0, "missing_ids": []},
+        "vex": {"accepted": 0, "missing": 0},
     }
 
 
@@ -97,7 +97,9 @@ def _assert_attention(markdown: str) -> None:
     assert "SAFE TO APPROVE" not in markdown
 
 
-def test_clean_pr_is_safe_and_explicit(clean_inputs: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]) -> None:
+def test_clean_pr_is_safe_and_explicit(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]],
+) -> None:
     markdown = _render(clean_inputs)
 
     assert markdown.startswith("## ✅ SAFE TO APPROVE\n")
@@ -108,10 +110,8 @@ def test_clean_pr_is_safe_and_explicit(clean_inputs: tuple[list[dict[str, Any]],
     assert markdown.count(RENDERER.MARKER) == 1
 
 
-def test_actionable_cve_is_attention(
-    clean_inputs: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]
-) -> None:
-    clean_inputs[0][0]["cves"]["actionable"] = {"unique": 1, "ids": ["CVE-2099-9999"]}
+def test_actionable_cve_is_attention(clean_inputs: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]) -> None:
+    clean_inputs[0][0]["cves"]["actionable"] = {"unique": 1}
 
     _assert_attention(_render(clean_inputs))
 
@@ -125,9 +125,9 @@ def test_unexplained_envelope_attention_reason_cannot_be_safe(
 
 
 def test_arm64_only_finding_is_attention(
-    clean_inputs: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]],
 ) -> None:
-    clean_inputs[0][1]["secrets"] = {"result": "failed", "finding_count": 1}
+    clean_inputs[0][1]["secrets"] = {"finding_count": 1, "passed": False}
 
     markdown = _render(clean_inputs)
     _assert_attention(markdown)
@@ -135,7 +135,7 @@ def test_arm64_only_finding_is_attention(
 
 
 def test_needs_rebaseline_is_attention(
-    clean_inputs: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]],
 ) -> None:
     clean_inputs[0][2]["reproducibility"]["rootfs_matches_contract"] = False
 
@@ -185,14 +185,12 @@ def test_every_non_success_required_check_is_attention(
     _assert_attention(_render(clean_inputs))
 
 
-@pytest.mark.parametrize("case", ["missing", "duplicate", "empty-required", "stale"])
+@pytest.mark.parametrize("case", ["missing", "empty-required", "stale"])
 def test_incomplete_check_snapshot_is_attention(
     clean_inputs: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]], case: str
 ) -> None:
     if case == "missing":
         clean_inputs[2]["contexts"].pop()
-    elif case == "duplicate":
-        clean_inputs[2]["contexts"].append(copy.deepcopy(clean_inputs[2]["contexts"][0]))
     elif case == "empty-required":
         clean_inputs[2]["required_contexts"] = []
     else:
@@ -201,9 +199,44 @@ def test_incomplete_check_snapshot_is_attention(
     _assert_attention(_render(clean_inputs))
 
 
-def test_api_error_is_attention(
-    clean_inputs: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]
+def test_duplicate_required_context_runs_all_success_are_safe(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]],
 ) -> None:
+    clean_inputs[2]["contexts"].append(copy.deepcopy(clean_inputs[2]["contexts"][0]))
+
+    markdown = _render(clean_inputs)
+
+    assert markdown.startswith("## ✅ SAFE TO APPROVE\n")
+    assert "duplicated" not in markdown
+
+
+def test_duplicate_required_context_with_failure_is_attention(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]],
+) -> None:
+    duplicate = copy.deepcopy(clean_inputs[2]["contexts"][0])
+    duplicate["conclusion"] = "failure"
+    clean_inputs[2]["contexts"].append(duplicate)
+
+    markdown = _render(clean_inputs)
+
+    _assert_attention(markdown)
+    assert "repo contract has non-success run(s): failure" in markdown
+
+
+def test_envelope_attention_text_is_not_rendered(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]],
+) -> None:
+    raw_secret = "RAW-MATCHED-SECRET-MUST-NOT-ESCAPE"
+    clean_inputs[0][0]["complete"] = False
+    clean_inputs[0][0]["attention_reasons"] = [raw_secret]
+
+    markdown = _render(clean_inputs)
+
+    _assert_attention(markdown)
+    assert raw_secret not in markdown
+
+
+def test_api_error_is_attention(clean_inputs: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]) -> None:
     clean_inputs[2].update(
         {
             "api_error": "ruleset query failed",

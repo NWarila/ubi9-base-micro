@@ -383,10 +383,10 @@ jobs:
                 [. as $contexts | $required[0][] as $name
                  | [$contexts[] | select(.context == $name)] as $matches
                  | select(($matches | length) == 0
-                     or (($matches | length) == 1
-                         and ($matches[0].conclusion == "pending"
-                              or $matches[0].conclusion == "queued"
-                              or $matches[0].conclusion == "in_progress")))]
+                     or any($matches[];
+                       .conclusion == "pending"
+                       or .conclusion == "queued"
+                       or .conclusion == "in_progress"))]
                 | length > 0' "${contexts}" > /dev/null; then
                 break
               fi

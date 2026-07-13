@@ -159,15 +159,11 @@ def test_clean_hardening_separates_raw_accepted_and_actionable(hardening_inputs:
     assert envelope["attention_reasons"] == []
     assert envelope["cves"] == {
         "raw": {"trivy": 2, "grype": 1, "unique": 2},
-        "ignored": {"unique": 1, "ids": ["CVE-2026-31790"]},
-        "actionable": {"unique": 0, "ids": []},
+        "ignored": {"unique": 1},
+        "actionable": {"unique": 0},
     }
-    assert envelope["vex"] == {
-        "accepted": 1,
-        "accepted_ids": ["CVE-2099-0001"],
-        "missing": 0,
-        "missing_ids": [],
-    }
+    assert envelope["vex"] == {"accepted": 1, "missing": 0}
+    assert envelope["secrets"] == {"finding_count": 0, "passed": True}
     assert envelope["stig"] == {"total_rule_results": 10, "pass": 3, "fail": 0, "not_selected": 7}
 
 
@@ -181,14 +177,35 @@ def test_actionable_cve_is_not_hidden_by_raw_or_ignored_counts(hardening_inputs:
     envelope = _summarize(hardening_inputs)
 
     assert envelope["complete"] is True
-    assert envelope["cves"]["actionable"] == {"unique": 1, "ids": ["CVE-2099-9999"]}
+    assert envelope["cves"]["actionable"] == {"unique": 1}
     assert envelope["attention_reasons"] == ["amd64 has actionable HIGH/CRITICAL CVEs"]
 
 
+def test_secret_scan_exports_only_count_and_derived_status(hardening_inputs: dict[str, Path]) -> None:
+    raw_secret = "RAW-MATCHED-SECRET-MUST-NOT-ESCAPE"
+    raw_path = "/root/private-key.pem"
+    path = hardening_inputs["dist"] / "rootfs-secret-scan/base-micro.amd64.secret-scan.json"
+    _write(
+        path,
+        {
+            "result": "failed",
+            "findings": [{"path": raw_path, "match": raw_secret, "rule": "private-key"}],
+        },
+    )
+
+    envelope = _summarize(hardening_inputs)
+    serialized = json.dumps(envelope, sort_keys=True)
+
+    assert envelope["complete"] is True
+    assert envelope["secrets"] == {"finding_count": 1, "passed": False}
+    assert envelope["attention_reasons"] == ["amd64 has secret-scan findings"]
+    assert raw_secret not in serialized
+    assert raw_path not in serialized
+    assert "findings" not in envelope["secrets"]
+
+
 @pytest.mark.parametrize("failure", ["missing", "malformed"])
-def test_missing_or_malformed_input_emits_incomplete_envelope(
-    hardening_inputs: dict[str, Path], failure: str
-) -> None:
+def test_missing_or_malformed_input_emits_incomplete_envelope(hardening_inputs: dict[str, Path], failure: str) -> None:
     path = hardening_inputs["dist"] / "rootfs-secret-scan/base-micro.amd64.secret-scan.json"
     if failure == "missing":
         path.unlink()
@@ -198,8 +215,7 @@ def test_missing_or_malformed_input_emits_incomplete_envelope(
     envelope = _summarize(hardening_inputs)
 
     assert envelope["complete"] is False
-    assert envelope["attention_reasons"]
-    assert "secret-scan report" in envelope["attention_reasons"][0]
+    assert envelope["attention_reasons"] == ["hardening evidence is missing or malformed"]
 
 
 def test_cli_exits_zero_when_input_is_incomplete(hardening_inputs: dict[str, Path], tmp_path: Path) -> None:
@@ -232,6 +248,7 @@ def test_cli_exits_zero_when_input_is_incomplete(hardening_inputs: dict[str, Pat
     )
 
     assert result.returncode == 0
+    assert result.stdout == ""
     assert json.loads(output.read_text(encoding="utf-8"))["complete"] is False
 
 
@@ -244,7 +261,7 @@ def test_invalid_vex_statement_is_malformed_input(hardening_inputs: dict[str, Pa
     envelope = _summarize(hardening_inputs)
 
     assert envelope["complete"] is False
-    assert "invalid not_affected justification" in envelope["attention_reasons"][0]
+    assert envelope["attention_reasons"] == ["hardening evidence is missing or malformed"]
 
 
 def test_repro_matches_each_build_against_contract(tmp_path: Path) -> None:
