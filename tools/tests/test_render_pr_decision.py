@@ -110,6 +110,17 @@ def test_clean_pr_is_safe_and_explicit(
     assert markdown.count(RENDERER.MARKER) == 1
 
 
+def test_additive_envelope_schema_keeps_g1_renderer_safe(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]],
+) -> None:
+    for envelope in clean_inputs[0]:
+        envelope["schema_version"] = "1.1.0"
+
+    markdown = _render(clean_inputs)
+
+    assert markdown.startswith("## ✅ SAFE TO APPROVE\n")
+
+
 def test_actionable_cve_is_attention(clean_inputs: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]) -> None:
     clean_inputs[0][0]["cves"]["actionable"] = {"unique": 1}
 

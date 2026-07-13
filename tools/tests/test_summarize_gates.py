@@ -160,7 +160,7 @@ def test_clean_hardening_separates_raw_accepted_and_actionable(hardening_inputs:
     assert envelope["cves"] == {
         "raw": {"trivy": 2, "grype": 1, "unique": 2},
         "ignored": {"unique": 1},
-        "actionable": {"unique": 0},
+        "actionable": {"unique": 0, "findings": []},
     }
     assert envelope["vex"] == {"accepted": 1, "missing": 0}
     assert envelope["secrets"] == {"finding_count": 0, "passed": True}
@@ -177,7 +177,19 @@ def test_actionable_cve_is_not_hidden_by_raw_or_ignored_counts(hardening_inputs:
     envelope = _summarize(hardening_inputs)
 
     assert envelope["complete"] is True
-    assert envelope["cves"]["actionable"] == {"unique": 1}
+    assert envelope["schema_version"] == "1.1.0"
+    assert envelope["cves"]["actionable"] == {
+        "unique": 1,
+        "findings": [
+            {
+                "id": "CVE-2099-9999",
+                "severity": "HIGH",
+                "package": "bad",
+                "fixable": True,
+                "fixed_version": "2",
+            }
+        ],
+    }
     assert envelope["attention_reasons"] == ["amd64 has actionable HIGH/CRITICAL CVEs"]
 
 

@@ -15,14 +15,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: nightly-base-micro-${{ github.ref }}
+  group: nightly-base-micro
   cancel-in-progress: false
 
 env:
   IMAGE_REPOSITORY: ghcr.io/nwarila/ubi9-base-micro
   RUNTIME_IMAGE: ghcr.io/nwarila/ubi9-base-micro:base-micro
   DEV_IMAGE: ghcr.io/nwarila/ubi9-base-micro:base-micro-dev
-  PLATFORM: linux/amd64
   SYFT_VERSION: "1.45.1"
   TRIVY_VERSION: "0.71.0"
   GRYPE_VERSION: "0.115.0"
@@ -157,11 +156,41 @@ jobs:
             --workdir "dist/reproducibility/work.${ARCH}"
           cat "dist/reproducibility/base-micro.${ARCH}.reproducibility.txt"
 
-  build:
-    name: build and hardening
+      - name: Emit reproducibility decision envelope
+        if: ${{ always() }}
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          python3 tools/summarize-gates.py \
+            --kind repro \
+            --arch "${ARCH}" \
+            --contract contracts/image-manifest.json \
+            --output "dist/summary/base-micro.${ARCH}.repro.json"
+
+      - name: Upload reproducibility decision envelope
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: nightly-decision-repro-${{ matrix.arch }}
+          path: dist/summary/base-micro.${{ matrix.arch }}.repro.json
+          if-no-files-found: error
+          retention-days: 7
+
+  hardening:
+    name: hardening (${{ matrix.arch }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+          - platform: linux/arm64
+            arch: arm64
+    env:
+      PLATFORM: ${{ matrix.platform }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -173,6 +202,12 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          platforms: amd64,arm64
+          image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
@@ -183,3 +218,232 @@ jobs:
 
       - name: Run full test-only gate set
         run: bash tools/run-test-gates.sh
+
+      - name: Emit hardening decision envelope
+        if: ${{ always() }}
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          python3 tools/summarize-gates.py \
+            --kind hardening \
+            --arch "${ARCH}" \
+            --contract contracts/image-manifest.json \
+            --output "dist/summary/base-micro.${ARCH}.hardening.json"
+
+      - name: Upload hardening decision envelope
+        if: ${{ always() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: nightly-decision-hardening-${{ matrix.arch }}
+          path: dist/summary/base-micro.${{ matrix.arch }}.hardening.json
+          if-no-files-found: error
+          retention-days: 7
+
+  build:
+    name: build and hardening
+    runs-on: ubuntu-24.04
+    needs: hardening
+    if: ${{ always() }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Assert hardening matrix succeeded
+        run: |
+          if [ "${{ needs.hardening.result }}" != "success" ]; then
+            echo "hardening matrix result: ${{ needs.hardening.result }}"
+            exit 1
+          fi
+
+  alert:
+    name: nightly drift alert
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    needs:
+      - hardening
+      - build
+      - reproducibility-gate
+    if: ${{ always() && github.event_name != 'pull_request' }}
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download all four nightly decision envelopes
+        if: ${{ always() }}
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: nightly-decision-*
+          path: dist/summary
+          merge-multiple: true
+
+      - name: Capture nightly job results and run context
+        if: ${{ always() }}
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir -p dist/nightly-alert
+          jq -n \
+            --arg hardening "${{ needs.hardening.result }}" \
+            --arg build "${{ needs.build.result }}" \
+            --arg reproducibility "${{ needs.reproducibility-gate.result }}" \
+            '{
+              hardening: $hardening,
+              build: $build,
+              "reproducibility-gate": $reproducibility
+            }' > dist/nightly-alert/job-results.json
+          jq -n \
+            --arg run_url "${RUN_URL}" \
+            --arg date "$(date -u +%F)" \
+            '{run_url: $run_url, date: $date}' > dist/nightly-alert/run-context.json
+
+      - name: Render nightly drift issue
+        if: ${{ always() }}
+        run: |
+          python3 tools/render-drift-issue.py \
+            --hardening-amd64 dist/summary/base-micro.amd64.hardening.json \
+            --hardening-arm64 dist/summary/base-micro.arm64.hardening.json \
+            --repro-amd64 dist/summary/base-micro.amd64.repro.json \
+            --repro-arm64 dist/summary/base-micro.arm64.repro.json \
+            --job-results dist/nightly-alert/job-results.json \
+            --run-context dist/nightly-alert/run-context.json \
+            --body-output dist/nightly-alert/issue-body.md \
+            --decision-output dist/nightly-alert/decision.json
+
+      - name: Log nightly drift decision
+        if: ${{ always() }}
+        run: |
+          cat dist/nightly-alert/decision.json
+          cat dist/nightly-alert/issue-body.md
+          cat dist/nightly-alert/issue-body.md >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Maintain sticky nightly drift issue
+        if: ${{ always() }}
+        env:
+          BODY_FILE: dist/nightly-alert/issue-body.md
+          DECISION_FILE: dist/nightly-alert/decision.json
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_TITLE: "Nightly drift: base-micro security sentinel"
+          MARKER: "<!-- ubi9-base-micro-nightly-drift:v1 -->"
+          OWNER: NWarila
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          alert_dir=dist/nightly-alert
+          attention="$(jq -er '.attention | if . then "true" else "false" end' "${DECISION_FILE}")"
+          run_date="$(jq -er '.date' "${alert_dir}/run-context.json")"
+
+          gh api --paginate --slurp \
+            "repos/${REPOSITORY}/issues?state=all&per_page=100" \
+            > "${alert_dir}/all-issues.json"
+          jq \
+            --arg bot "github-actions[bot]" \
+            --arg marker "${MARKER}" \
+            --arg title "${ISSUE_TITLE}" \
+            '[.[][] | select(.pull_request == null)
+              | select(.user.login == $bot and .title == $title and ((.body // "") | contains($marker)))]' \
+            "${alert_dir}/all-issues.json" > "${alert_dir}/matching-issues.json"
+          match_count="$(jq -er 'length' "${alert_dir}/matching-issues.json")"
+          if [[ "${match_count}" -gt 1 ]]; then
+            echo "Multiple matching nightly drift issues found; refusing an ambiguous mutation." >&2
+            exit 1
+          fi
+
+          if [[ "${attention}" == "true" ]]; then
+            jq -n \
+              --arg title "${ISSUE_TITLE}" \
+              --rawfile body "${BODY_FILE}" \
+              --arg owner "${OWNER}" \
+              '{title: $title, body: $body, assignees: [$owner]}' \
+              > "${alert_dir}/create-issue-request.json"
+            jq -n \
+              --rawfile body "${BODY_FILE}" \
+              --arg owner "${OWNER}" \
+              '{body: $body, assignees: [$owner]}' \
+              > "${alert_dir}/update-open-issue-request.json"
+            jq -n \
+              --rawfile body "${BODY_FILE}" \
+              --arg owner "${OWNER}" \
+              '{body: $body, state: "open", state_reason: "reopened", assignees: [$owner]}' \
+              > "${alert_dir}/reopen-issue-request.json"
+
+            if [[ "${match_count}" == "0" ]]; then
+              gh api --method POST \
+                "repos/${REPOSITORY}/issues" \
+                --input "${alert_dir}/create-issue-request.json" \
+                > "${alert_dir}/issue-response.json"
+              issue_number="$(jq -er '.number' "${alert_dir}/issue-response.json")"
+            else
+              issue_number="$(jq -er '.[0].number' "${alert_dir}/matching-issues.json")"
+              issue_state="$(jq -er '.[0].state' "${alert_dir}/matching-issues.json")"
+              if [[ "${issue_state}" == "open" ]]; then
+                gh api --method PATCH \
+                  "repos/${REPOSITORY}/issues/${issue_number}" \
+                  --input "${alert_dir}/update-open-issue-request.json" \
+                  > "${alert_dir}/issue-response.json"
+              elif [[ "${issue_state}" == "closed" ]]; then
+                gh api --method PATCH \
+                  "repos/${REPOSITORY}/issues/${issue_number}" \
+                  --input "${alert_dir}/reopen-issue-request.json" \
+                  > "${alert_dir}/issue-response.json"
+              else
+                echo "Matching nightly drift issue has unknown state: ${issue_state}" >&2
+                exit 1
+              fi
+            fi
+
+            run_marker="<!-- ubi9-base-micro-nightly-drift-run:${RUN_ID} -->"
+            gh api --paginate --slurp \
+              "repos/${REPOSITORY}/issues/${issue_number}/comments?per_page=100" \
+              > "${alert_dir}/issue-comments.json"
+            comment_count="$(jq -r --arg marker "${run_marker}" \
+              '[.[][] | select(.user.login == "github-actions[bot]" and ((.body // "") | contains($marker)))]
+              | length' "${alert_dir}/issue-comments.json")"
+            if [[ "${comment_count}" -gt 1 ]]; then
+              echo "Multiple per-run nightly drift comments found; refusing an ambiguous notification." >&2
+              exit 1
+            fi
+            if [[ "${comment_count}" == "0" ]]; then
+              jq -n \
+                --arg body "@${OWNER} nightly drift needs attention: ${RUN_URL}\n\n${run_marker}" \
+                '{body: $body}' > "${alert_dir}/attention-comment-request.json"
+              gh api --method POST \
+                "repos/${REPOSITORY}/issues/${issue_number}/comments" \
+                --input "${alert_dir}/attention-comment-request.json" \
+                > "${alert_dir}/comment-response.json"
+            fi
+          elif [[ "${match_count}" == "1" ]]; then
+            issue_number="$(jq -er '.[0].number' "${alert_dir}/matching-issues.json")"
+            issue_state="$(jq -er '.[0].state' "${alert_dir}/matching-issues.json")"
+            if [[ "${issue_state}" == "open" ]]; then
+              jq -n \
+                --arg body "resolved: clean on ${run_date}" \
+                '{body: $body}' > "${alert_dir}/resolved-comment-request.json"
+              jq -n \
+                '{state: "closed", state_reason: "completed"}' \
+                > "${alert_dir}/close-issue-request.json"
+              gh api --method POST \
+                "repos/${REPOSITORY}/issues/${issue_number}/comments" \
+                --input "${alert_dir}/resolved-comment-request.json" \
+                > "${alert_dir}/resolved-comment-response.json"
+              gh api --method PATCH \
+                "repos/${REPOSITORY}/issues/${issue_number}" \
+                --input "${alert_dir}/close-issue-request.json" \
+                > "${alert_dir}/close-issue-response.json"
+            elif [[ "${issue_state}" != "closed" ]]; then
+              echo "Matching nightly drift issue has unknown state: ${issue_state}" >&2
+              exit 1
+            fi
+          fi
