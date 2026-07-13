@@ -101,7 +101,7 @@ BINFMT_SITE = re.compile(
 )
 BINFMT_DIGEST_SITES = {
     ".github/workflows/build.yaml": 2,
-    ".github/workflows/nightly.yaml": 1,
+    ".github/workflows/nightly.yaml": 2,
     ".github/workflows/publish-image.yaml": 1,
     ".github/workflows/rpm-lock-refresh.yaml": 2,
 }
@@ -387,7 +387,7 @@ def require_binfmt_digest_equality(sources: Mapping[str, str]) -> None:
 
     digests = {digest for _, digest in site_digests}
     require(
-        len(site_digests) == 6 and len(digests) == 1,
+        len(site_digests) == 7 and len(digests) == 1,
         "binfmt digest mismatch: " + ", ".join(f"{site}=sha256:{digest}" for site, digest in site_digests),
     )
 
@@ -454,7 +454,7 @@ def check_binfmt_digest_equality_self_test() -> None:
     }
     require_binfmt_digest_equality(consistent)
     print(
-        "binfmt digest mutation probes: unchanged and all-6-pinned-equal replacements accepted; "
+        "binfmt digest mutation probes: unchanged and all-7-pinned-equal replacements accepted; "
         f"{rejected}/3 rejected (unpinned site, divergent digit, missing site)"
     )
 
@@ -1168,6 +1168,7 @@ def check_required_files() -> None:
         "tools/tests/test_write_fips_status.py",
         "tools/tests/test_summarize_gates.py",
         "tools/tests/test_render_pr_decision.py",
+        "tools/tests/test_render_drift_issue.py",
         "tools/generate-rpm-lock.sh",
         "tools/install-syft.sh",
         "tools/install-trivy.sh",
@@ -1188,6 +1189,7 @@ def check_required_files() -> None:
         "tools/generate-stig-arf-predicate.py",
         "tools/summarize-gates.py",
         "tools/render-pr-decision.py",
+        "tools/render-drift-issue.py",
         "tools/install-openscap.sh",
         "tools/build-stig-datastream.sh",
         "tools/run-stig-arf.sh",
@@ -2449,6 +2451,172 @@ def check_build_hardening_matrix(text: str) -> None:
     require("paths:" not in text and "paths-ignore:" not in text, "build workflow must not use path filters")
 
 
+def check_nightly_hardening_matrix(text: str) -> None:
+    hardening = workflow_job_block(text, "hardening", "nightly workflow")
+    aggregate = workflow_job_block(text, "build", "nightly workflow")
+
+    matrix_shape = """    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+          - platform: linux/arm64
+            arch: arm64
+    env:
+      PLATFORM: ${{ matrix.platform }}
+"""
+    require(matrix_shape in hardening, "nightly hardening job must keep the exact amd64/arm64 matrix shape")
+    for marker in [
+        "    name: hardening (${{ matrix.arch }})",
+        "    runs-on: ubuntu-24.04",
+        "    timeout-minutes: 45",
+        "    needs: verify",
+        "        run: bash tools/run-test-gates.sh",
+    ]:
+        require(marker in hardening, f"nightly hardening job missing exact marker: {marker.strip()}")
+    require(
+        re.search(r"^    if:", hardening, flags=re.MULTILINE) is None,
+        "nightly hardening matrix job must not have a job-level if condition",
+    )
+    require(
+        len(list(BINFMT_SITE.finditer(hardening))) == 1,
+        "nightly hardening job must contain exactly one fully pinned amd64/arm64 QEMU setup",
+    )
+    buildx = "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0"
+    require(hardening.count(buildx) == 1, "nightly hardening job must contain exactly one pinned Buildx setup")
+    require(
+        hardening.count("      PLATFORM: ${{ matrix.platform }}") == 1,
+        "nightly hardening job must derive PLATFORM once at job-level env",
+    )
+
+    for marker in [
+        "    name: build and hardening",
+        "    runs-on: ubuntu-24.04",
+        "    needs: hardening",
+        "    if: ${{ always() }}",
+    ]:
+        require(marker in aggregate, f"nightly hardening aggregate missing exact marker: {marker.strip()}")
+    require(
+        text.count("    name: build and hardening") == 1,
+        "nightly workflow must expose exactly one bare build and hardening check context",
+    )
+    result_assertion = """      - name: Assert hardening matrix succeeded
+        run: |
+          if [ "${{ needs.hardening.result }}" != "success" ]; then
+            echo "hardening matrix result: ${{ needs.hardening.result }}"
+            exit 1
+          fi
+"""
+    require(
+        result_assertion in aggregate,
+        "nightly hardening aggregate must fail unless the complete hardening matrix succeeds",
+    )
+
+
+def check_nightly_drift_alert(text: str) -> None:
+    reproducibility = workflow_job_block(text, "reproducibility-gate", "nightly workflow")
+    hardening = workflow_job_block(text, "hardening", "nightly workflow")
+    alert = workflow_job_block(text, "alert", "nightly workflow")
+
+    for block, kind in [(reproducibility, "reproducibility"), (hardening, "hardening")]:
+        emit = f"      - name: Emit {kind} decision envelope\n        if: ${{{{ always() }}}}"
+        upload = f"      - name: Upload {kind} decision envelope\n        if: ${{{{ always() }}}}"
+        require(emit in block, f"nightly {kind} producer must emit with if: always()")
+        require(upload in block, f"nightly {kind} producer must upload with if: always()")
+        require(block.index(emit) < block.index(upload), f"nightly {kind} envelope must be emitted before upload")
+    require_action_sha_pin(text, "nightly workflow", "actions/upload-artifact", count=2)
+    require_action_sha_pin(text, "nightly workflow", "actions/download-artifact", count=1)
+
+    for marker in [
+        "concurrency:\n  group: nightly-base-micro\n  cancel-in-progress: false",
+        "    name: nightly drift alert",
+        "    runs-on: ubuntu-24.04",
+        "    timeout-minutes: 10",
+        "    needs:\n      - hardening\n      - build\n      - reproducibility-gate",
+        "    if: ${{ always() && github.event_name != 'pull_request' }}",
+        "    permissions:\n      contents: read\n      issues: write",
+        "      - name: Download all four nightly decision envelopes\n        if: ${{ always() }}",
+        "      - name: Capture nightly job results and run context\n        if: ${{ always() }}",
+        "      - name: Render nightly drift issue\n        if: ${{ always() }}",
+        "      - name: Log nightly drift decision\n        if: ${{ always() }}",
+        "      - name: Maintain sticky nightly drift issue\n        if: ${{ always() }}",
+        "tools/render-drift-issue.py",
+        "dist/nightly-alert/job-results.json",
+        "dist/nightly-alert/run-context.json",
+        "dist/nightly-alert/issue-body.md",
+        "dist/nightly-alert/decision.json",
+        "base-micro.amd64.hardening.json",
+        "base-micro.arm64.hardening.json",
+        "base-micro.amd64.repro.json",
+        "base-micro.arm64.repro.json",
+        "pattern: nightly-decision-*",
+        '"repos/${REPOSITORY}/issues?state=all&per_page=100"',
+        "gh api --paginate --slurp",
+        "select(.pull_request == null)",
+        '.user.login == $bot and .title == $title and ((.body // "") | contains($marker))',
+        'ISSUE_TITLE: "Nightly drift: base-micro security sentinel"',
+        'MARKER: "<!-- ubi9-base-micro-nightly-drift:v1 -->"',
+        "OWNER: NWarila",
+        "assignees: [$owner]",
+        '"@${OWNER} nightly drift needs attention:',
+        "Multiple matching nightly drift issues found; refusing an ambiguous mutation.",
+        'state: "open", state_reason: "reopened"',
+        'state: "closed", state_reason: "completed"',
+        "resolved: clean on ${run_date}",
+        "create-issue-request.json",
+        "update-open-issue-request.json",
+        "reopen-issue-request.json",
+        "attention-comment-request.json",
+        "resolved-comment-request.json",
+        "close-issue-request.json",
+        'run_marker="<!-- ubi9-base-micro-nightly-drift-run:${RUN_ID} -->"',
+        '--rawfile body "${BODY_FILE}"',
+        '--input "${alert_dir}/',
+    ]:
+        require(
+            marker in text if marker.startswith("concurrency:") else marker in alert,
+            f"nightly alert missing marker: {marker}",
+        )
+
+    for marker in [
+        "nightly-decision-hardening-${{ matrix.arch }}",
+        "nightly-decision-repro-${{ matrix.arch }}",
+    ]:
+        require(marker in text, f"nightly envelope producers missing marker: {marker}")
+
+    permissions_match = re.search(r"^    permissions:\n(?P<body>(?:      [^\n]+\n)+)", alert, flags=re.MULTILINE)
+    if permissions_match is None:
+        raise VerifyError("nightly alert must declare job-scoped permissions")
+    require(
+        permissions_match.group("body") == "      contents: read\n      issues: write\n",
+        "nightly alert permissions must contain only contents: read and issues: write",
+    )
+    first_steps = """    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+"""
+    require(first_steps in alert, "nightly alert must run the pinned harden-runner action first")
+    require(
+        alert.count("--method ") == alert.count("--input ") == 6,
+        "every nightly alert mutation must use an input file",
+    )
+    require(
+        alert.index("      - name: Log nightly drift decision")
+        < alert.index("      - name: Maintain sticky nightly drift issue"),
+        "nightly drift body must be logged before the sticky issue lifecycle",
+    )
+    for forbidden in [
+        "continue-on-" + "error",
+        "id-token:",
+        "packages:",
+        "checks:",
+        "statuses:",
+        "pull-requests:",
+    ]:
+        require(forbidden not in alert, f"nightly alert has forbidden permission or soft-fail marker: {forbidden}")
+
+
 def check_pr_decision_surface(text: str) -> None:
     reproducibility = workflow_job_block(text, "reproducibility-gate", "build workflow")
     hardening = workflow_job_block(text, "hardening", "build workflow")
@@ -2528,6 +2696,8 @@ def check_workflow() -> None:
     refresh = read(".github/workflows/rpm-lock-refresh.yaml")
     check_build_hardening_matrix(build)
     check_pr_decision_surface(build)
+    check_nightly_hardening_matrix(nightly)
+    check_nightly_drift_alert(nightly)
     check_rpm_lock_refresh_workflow(refresh)
     gate_runner = read("tools/run-test-gates.sh")
     for source, source_text in [
@@ -5187,7 +5357,10 @@ def check_lint_setup() -> None:
         "entry: python -m pytest tools/tests/test_generate_runtime_lock.py -q",
         "id: decision-surface-pytest",
         "name: decision surface pytest",
-        "entry: python -m pytest tools/tests/test_summarize_gates.py tools/tests/test_render_pr_decision.py -q",
+        (
+            "entry: python -m pytest tools/tests/test_summarize_gates.py tools/tests/test_render_pr_decision.py "
+            "tools/tests/test_render_drift_issue.py -q"
+        ),
         "language: python",
         "always_run: true",
     ]:
@@ -5254,14 +5427,17 @@ def check_lint_setup() -> None:
     decision_hook = precommit.split("- id: decision-surface-pytest", 1)[1]
     for marker in [
         "name: decision surface pytest",
-        "entry: python -m pytest tools/tests/test_summarize_gates.py tools/tests/test_render_pr_decision.py -q",
+        (
+            "entry: python -m pytest tools/tests/test_summarize_gates.py tools/tests/test_render_pr_decision.py "
+            "tools/tests/test_render_drift_issue.py -q"
+        ),
         "language: python",
         "additional_dependencies: [pytest==8.4.1]",
         "pass_filenames: false",
         "always_run: true",
         (
-            "files: ^(tools/(summarize-gates|render-pr-decision)\\.py|"
-            "tools/tests/test_(summarize_gates|render_pr_decision)\\.py)$"
+            "files: ^(tools/(summarize-gates|render-pr-decision|render-drift-issue)\\.py|"
+            "tools/tests/test_(summarize_gates|render_pr_decision|render_drift_issue)\\.py)$"
         ),
     ]:
         require(marker in decision_hook, f"decision surface pytest hook missing locked marker: {marker}")

@@ -17,7 +17,7 @@ from typing import Any
 
 ARCHES = ("amd64", "arm64")
 MARKER = "<!-- ubi9-base-micro-pr-decision:v1 -->"
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSIONS = {"1.0.0", "1.1.0"}
 
 
 class RenderError(Exception):
@@ -182,7 +182,7 @@ def _envelopes(envelope_values: list[Any]) -> tuple[dict[str, dict[str, int]], d
     for index, value in enumerate(envelope_values):
         try:
             envelope = _object(value, f"envelope {index}")
-            if envelope.get("schema_version") != SCHEMA_VERSION:
+            if envelope.get("schema_version") not in SCHEMA_VERSIONS:
                 raise RenderError(f"envelope {index} has unsupported schema version")
             kind = _string(envelope.get("kind"), f"envelope {index} kind")
             arch = _string(envelope.get("arch"), f"envelope {index} arch")

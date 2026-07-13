@@ -25,7 +25,7 @@ OPENVEX_NOT_AFFECTED_JUSTIFICATIONS = {
     "vulnerable_code_cannot_be_controlled_by_adversary",
     "inline_mitigations_already_exist",
 }
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 
 
 class SummaryError(Exception):
@@ -39,6 +39,7 @@ class Finding:
     version: str
     severity: str
     fixable: bool
+    fixed_version: str | None = None
     purl: str | None = None
 
 
@@ -134,7 +135,7 @@ def _trivy_findings(path: Path) -> list[Finding]:
             identifier = finding.get("PkgIdentifier")
             if isinstance(identifier, dict) and isinstance(identifier.get("PURL"), str):
                 purl = identifier["PURL"].strip() or None
-            findings.append(Finding(vulnerability, package, version, severity, fixable, purl))
+            findings.append(Finding(vulnerability, package, version, severity, fixable, fixed_version or None, purl))
     return findings
 
 
@@ -155,8 +156,10 @@ def _grype_match(raw_match: Any, label: str) -> Finding | None:
     fix = vulnerability.get("fix")
     fix_object = fix if isinstance(fix, dict) else {}
     versions = fix_object.get("versions")
-    fixable = bool(versions) or str(fix_object.get("state") or "").lower() == "fixed"
-    return Finding(vulnerability_id, package, version, severity, fixable, purl)
+    fixed_versions = [str(value).strip() for value in versions] if isinstance(versions, list) else []
+    fixed_version = ", ".join(value for value in fixed_versions if value) or None
+    fixable = bool(fixed_version) or str(fix_object.get("state") or "").lower() == "fixed"
+    return Finding(vulnerability_id, package, version, severity, fixable, fixed_version, purl)
 
 
 def _grype_findings(path: Path, key: str = "matches") -> list[Finding]:
@@ -276,6 +279,30 @@ def _count_by_scanner(trivy: list[Finding], grype: list[Finding]) -> dict[str, i
     }
 
 
+def _actionable_cve_list(findings: list[Finding]) -> list[dict[str, str | bool | None]]:
+    selected: dict[str, Finding] = {}
+    for finding in sorted(
+        findings,
+        key=lambda item: (
+            item.vulnerability,
+            item.severity != "CRITICAL",
+            item.package,
+            item.fixed_version or "",
+        ),
+    ):
+        selected.setdefault(finding.vulnerability, finding)
+    return [
+        {
+            "id": finding.vulnerability,
+            "severity": finding.severity,
+            "package": finding.package,
+            "fixable": finding.fixable,
+            "fixed_version": finding.fixed_version,
+        }
+        for finding in selected.values()
+    ]
+
+
 def _secret_scan_fields(path: Path) -> dict[str, int | bool]:
     report = _object(_load_json(path, "secret-scan report"), "secret-scan report")
     raw_result = report.get("result")
@@ -310,7 +337,8 @@ def _hardening_fields(
     grype_actionable = [finding for finding in grype_gate_active if finding.fixable]
     grype_ignored = [finding for finding in grype_gate_ignored if finding.fixable]
     ignored_ids = {finding.vulnerability for finding in trivy_ignored + grype_ignored}
-    actionable_ids = {finding.vulnerability for finding in trivy_actionable + grype_actionable}
+    actionable_findings = trivy_actionable + grype_actionable
+    actionable_ids = {finding.vulnerability for finding in actionable_findings}
 
     unfixed = {finding.vulnerability for finding in trivy + grype if not finding.fixable}
     statements = _vex_statements(vex_dir)
@@ -345,7 +373,10 @@ def _hardening_fields(
         "cves": {
             "raw": _count_by_scanner(trivy, grype),
             "ignored": {"unique": len(ignored_ids)},
-            "actionable": {"unique": len(actionable_ids)},
+            "actionable": {
+                "unique": len(actionable_ids),
+                "findings": _actionable_cve_list(actionable_findings),
+            },
         },
         "stig": {
             "total_rule_results": total_rule_results,
