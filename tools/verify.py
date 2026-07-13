@@ -1166,6 +1166,8 @@ def check_required_files() -> None:
         "tools/tests/test_rpmlock.py",
         "tools/tests/test_verify_fips_provider.py",
         "tools/tests/test_write_fips_status.py",
+        "tools/tests/test_summarize_gates.py",
+        "tools/tests/test_render_pr_decision.py",
         "tools/generate-rpm-lock.sh",
         "tools/install-syft.sh",
         "tools/install-trivy.sh",
@@ -1184,6 +1186,8 @@ def check_required_files() -> None:
         "tools/assert-rootfs-identity.py",
         "tools/assert-stig-arf.py",
         "tools/generate-stig-arf-predicate.py",
+        "tools/summarize-gates.py",
+        "tools/render-pr-decision.py",
         "tools/install-openscap.sh",
         "tools/build-stig-datastream.sh",
         "tools/run-stig-arf.sh",
@@ -2445,6 +2449,62 @@ def check_build_hardening_matrix(text: str) -> None:
     require("paths:" not in text and "paths-ignore:" not in text, "build workflow must not use path filters")
 
 
+def check_pr_decision_surface(text: str) -> None:
+    reproducibility = workflow_job_block(text, "reproducibility-gate", "build workflow")
+    hardening = workflow_job_block(text, "hardening", "build workflow")
+    decision = workflow_job_block(text, "decision-surface", "build workflow")
+
+    for block, kind in [(reproducibility, "reproducibility"), (hardening, "hardening")]:
+        emit = f"      - name: Emit {kind} decision envelope\n        if: ${{{{ always() }}}}"
+        upload = f"      - name: Upload {kind} decision envelope\n        if: ${{{{ always() }}}}"
+        require(emit in block, f"{kind} decision producer must emit with if: always()")
+        require(upload in block, f"{kind} decision producer must upload with if: always()")
+        require(block.index(emit) < block.index(upload), f"{kind} decision envelope must be emitted before upload")
+    require_action_sha_pin(text, "build workflow", "actions/upload-artifact", count=2)
+    require_action_sha_pin(text, "build workflow", "actions/download-artifact", count=1)
+
+    for marker in [
+        "    name: PR decision surface",
+        "    runs-on: ubuntu-24.04",
+        "    timeout-minutes: 10",
+        "    needs:\n      - reproducibility-gate\n      - hardening\n      - build",
+        "    if: ${{ always() && github.event_name == 'pull_request' }}",
+        (
+            "    permissions:\n"
+            "      contents: read\n"
+            "      checks: read\n"
+            "      statuses: read\n"
+            "      pull-requests: write"
+        ),
+        "github.event.pull_request.head.sha",
+        'select(.name == "Pull Request Gate" and .enforcement == "active")',
+        "required_status_checks",
+        "check-runs?per_page=100",
+        "status-rollup.json",
+        "for attempt in 1 2 3 4 5 6; do",
+        "sleep 15",
+        "tools/render-pr-decision.py",
+        "cat dist/decision/pr-comment.md",
+        'cat dist/decision/pr-comment.md >> "${GITHUB_STEP_SUMMARY}"',
+        'if [[ "${HEAD_REPOSITORY}" != "${REPOSITORY}" ]]; then',
+        "Fork PR trust boundary: sticky comment write skipped",
+        '"repos/${REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100"',
+        '.user.login == "github-actions[bot]"',
+        'jq -n --rawfile body "${BODY_FILE}"',
+        "gh api --method PATCH",
+        "gh api --method POST",
+        "<!-- ubi9-base-micro-pr-decision:v1 -->",
+    ]:
+        require(marker in decision, f"PR decision surface missing exact marker: {marker.strip()}")
+    require(
+        decision.index("      - name: Log PR decision")
+        < decision.index("      - name: Post or update sticky PR decision"),
+        "PR decision body must be logged before the sticky write",
+    )
+    for forbidden in ["continue-on-" + "error", "pull_request_target", "id-token:", "packages:", "issues:"]:
+        require(forbidden not in decision, f"PR decision surface has forbidden permission/event marker: {forbidden}")
+
+
 def check_workflow() -> None:
     workflows = sorted(path.name for path in (ROOT / ".github/workflows").glob("*.y*ml"))
     require(
@@ -2467,6 +2527,7 @@ def check_workflow() -> None:
     nightly = read(".github/workflows/nightly.yaml")
     refresh = read(".github/workflows/rpm-lock-refresh.yaml")
     check_build_hardening_matrix(build)
+    check_pr_decision_surface(build)
     check_rpm_lock_refresh_workflow(refresh)
     gate_runner = read("tools/run-test-gates.sh")
     for source, source_text in [
@@ -5124,14 +5185,17 @@ def check_lint_setup() -> None:
         "id: generate-runtime-lock-pytest",
         "name: generate runtime lock pytest",
         "entry: python -m pytest tools/tests/test_generate_runtime_lock.py -q",
+        "id: decision-surface-pytest",
+        "name: decision surface pytest",
+        "entry: python -m pytest tools/tests/test_summarize_gates.py tools/tests/test_render_pr_decision.py -q",
         "language: python",
         "always_run: true",
     ]:
         require(marker in precommit, f".pre-commit-config.yaml missing marker: {marker}")
     require(precommit.count("repo: local") == 1, ".pre-commit-config.yaml must carry exactly one local hook block")
     require(
-        precommit.count("pass_filenames: false") == 7,
-        ".pre-commit-config.yaml must keep exactly mypy and six pytest hooks filename-independent",
+        precommit.count("pass_filenames: false") == 8,
+        ".pre-commit-config.yaml must keep exactly mypy and seven pytest hooks filename-independent",
     )
     status_hook = precommit.split("- id: write-fips-status-pytest", 1)[1]
     for marker in [
@@ -5186,6 +5250,21 @@ def check_lint_setup() -> None:
         ("files: ^(tools/generate-runtime-lock\\.py|tools/rpmlock\\.py|tools/tests/test_generate_runtime_lock\\.py)$"),
     ]:
         require(marker in generator_hook, f"runtime lock generator pytest hook missing locked marker: {marker}")
+
+    decision_hook = precommit.split("- id: decision-surface-pytest", 1)[1]
+    for marker in [
+        "name: decision surface pytest",
+        "entry: python -m pytest tools/tests/test_summarize_gates.py tools/tests/test_render_pr_decision.py -q",
+        "language: python",
+        "additional_dependencies: [pytest==8.4.1]",
+        "pass_filenames: false",
+        "always_run: true",
+        (
+            "files: ^(tools/(summarize-gates|render-pr-decision)\\.py|"
+            "tools/tests/test_(summarize_gates|render_pr_decision)\\.py)$"
+        ),
+    ]:
+        require(marker in decision_hook, f"decision surface pytest hook missing locked marker: {marker}")
 
     lint = read(".github/workflows/lint.yaml")
     require_action_sha_pin(lint, "lint workflow", HARDEN_RUNNER, count=1)

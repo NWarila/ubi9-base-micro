@@ -111,3 +111,11 @@ repos:
         pass_filenames: false
         always_run: true
         files: ^(tools/generate-runtime-lock\.py|tools/rpmlock\.py|tools/tests/test_generate_runtime_lock\.py)$
+      - id: decision-surface-pytest
+        name: decision surface pytest
+        entry: python -m pytest tools/tests/test_summarize_gates.py tools/tests/test_render_pr_decision.py -q
+        language: python
+        additional_dependencies: [pytest==8.4.1]
+        pass_filenames: false
+        always_run: true
+        files: ^(tools/(summarize-gates|render-pr-decision)\.py|tools/tests/test_(summarize_gates|render_pr_decision)\.py)$
