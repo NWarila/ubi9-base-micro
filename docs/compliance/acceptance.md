@@ -17,9 +17,13 @@ or covered by the post-publish claims below.
 
 Pull-request checks prove only pre-publication properties. Publication evidence
 is produced only on pushes to `main` and `v*` tags, and anonymous verification
-is a separate post-publish check against immutable digests. The repository runs
-the named checks when their workflows are triggered, but required status checks
-are not enforced; these checks are not claimed to block merges.
+is a separate post-publish check against immutable digests. The active
+`Pull Request Gate` ruleset requires its 11 named status-check contexts, which
+block non-bypass merges. Its Repository Admin bypass (`RepositoryRole` 5,
+`bypass_mode=always`) can bypass every rule in this ruleset; the solo maintainer
+uses that bypass routinely because the approval requirements cannot be
+self-satisfied. Required status checks have `strict=false`, so the pull-request
+head need not be current with the base branch.
 
 ## Criteria and gates
 

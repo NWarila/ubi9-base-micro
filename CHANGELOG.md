@@ -10,6 +10,8 @@ and this project adheres to
 
 ### Changed
 
+- Corrected enforcement, reproducibility, and published-image verification claims
+  to match the active ruleset, builder scope, and index-versus-child digest routing.
 - Suppressed repeat owner pings for unchanged unresolved nightly drift while preserving alerts for
   new, changed, or recurring incidents.
 - Surfaced the failing gate's captured diagnostic line in nightly drift alerts.

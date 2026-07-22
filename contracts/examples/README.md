@@ -1,14 +1,26 @@
 # Consumer Verification Example
 
 This example verifies a pulled `ubi9-base-micro` digest against the declared
-image manifest. Set the digest, publish ref, and platform architecture first:
+image manifest. Set the immutable index digest, publish ref, and platform
+architecture first, then resolve both platform children from that index:
 
 ```sh
-IMAGE_REF="ghcr.io/nwarila/ubi9-base-micro@sha256:<digest>"
+IMAGE="ghcr.io/nwarila/ubi9-base-micro"
+INDEX_REF="${IMAGE}@sha256:<index-digest>"
+AMD64_DIGEST="$(crane digest --platform linux/amd64 "${INDEX_REF}")"
+AMD64_REF="${IMAGE}@${AMD64_DIGEST}"
+ARM64_DIGEST="$(crane digest --platform linux/arm64 "${INDEX_REF}")"
+ARM64_REF="${IMAGE}@${ARM64_DIGEST}"
 PUBLISH_REF="refs/heads/main"
 ARCH="amd64"
 PLATFORM="linux/${ARCH}"
 MANIFEST="contracts/image-manifest.json"
+
+case "${ARCH}" in
+  amd64) CHILD_REF="${AMD64_REF}" ;;
+  arm64) CHILD_REF="${ARM64_REF}" ;;
+  *) printf 'unsupported architecture: %s\n' "${ARCH}" >&2; exit 1 ;;
+esac
 ```
 
 Validate the manifest and read the expected FIPS status:
@@ -33,8 +45,8 @@ Pull by digest, export the runtime files, and compare `fips-status.json`,
 `fips.so`, the rpmdb package floor, and the footprint ceiling to the manifest:
 
 ```sh
-docker pull --platform "${PLATFORM}" "${IMAGE_REF}"
-container_id="$(docker create --platform "${PLATFORM}" "${IMAGE_REF}")"
+docker pull --platform "${PLATFORM}" "${CHILD_REF}"
+container_id="$(docker create --platform "${PLATFORM}" "${CHILD_REF}")"
 mkdir -p contract-check/rootfs
 docker cp "${container_id}:/etc/nwarila/fips-status.json" contract-check/fips-status.json
 docker export "${container_id}" -o contract-check/rootfs.tar
@@ -116,14 +128,15 @@ PY
 ```
 
 ```sh
-cosign verify "${IMAGE_REF}" \
+cosign verify "${INDEX_REF}" \
   --certificate-identity "${CERT_IDENTITY}" \
   --certificate-oidc-issuer "${OIDC_ISSUER}"
 ```
 
 ```sh
-for type_name in spdx cyclonedx openvex nist_800_190 stig_arf; do
-  predicate_type="$(python - "${MANIFEST}" "${type_name}" <<'PY'
+for CHILD_REF in "${AMD64_REF}" "${ARM64_REF}"; do
+  for type_name in spdx cyclonedx openvex nist_800_190 stig_arf; do
+    predicate_type="$(python - "${MANIFEST}" "${type_name}" <<'PY'
 import json
 import sys
 
@@ -131,9 +144,10 @@ manifest_path, type_name = sys.argv[1:3]
 print(json.load(open(manifest_path, encoding="utf-8"))["provenance"]["attestation_predicate_types"][type_name])
 PY
 )"
-  cosign verify-attestation --type "${predicate_type}" "${IMAGE_REF}" \
-    --certificate-identity "${CERT_IDENTITY}" \
-    --certificate-oidc-issuer "${OIDC_ISSUER}"
+    cosign verify-attestation --type "${predicate_type}" "${CHILD_REF}" \
+      --certificate-identity "${CERT_IDENTITY}" \
+      --certificate-oidc-issuer "${OIDC_ISSUER}"
+  done
 done
 ```
 
@@ -145,7 +159,7 @@ import sys
 print(json.load(open(sys.argv[1], encoding="utf-8"))["provenance"]["slsa"]["builder_id"])
 PY
 )"
-slsa-verifier verify-image "${IMAGE_REF}" \
+slsa-verifier verify-image "${INDEX_REF}" \
   --source-uri github.com/NWarila/ubi9-base-micro \
   --builder-id "${SLSA_BUILDER_ID}"
 ```

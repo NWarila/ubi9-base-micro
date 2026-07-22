@@ -5105,6 +5105,54 @@ def check_decision_records() -> None:
         require(marker in joined, f"repo ADRs missing load-bearing marker: {marker}")
 
 
+_ENFORCEMENT_CLAIM_MARKER = (
+    "The active `Pull Request Gate` ruleset requires its 11 named status-check contexts, which "
+    "block non-bypass merges. Its Repository Admin bypass (`RepositoryRole` 5, "
+    "`bypass_mode=always`) can bypass every rule in this ruleset; the solo maintainer "
+    "uses that bypass routinely because the approval requirements cannot be "
+    "self-satisfied. Required status checks have `strict=false`, so the pull-request "
+    "head need not be current with the base branch."
+)
+_FORBIDDEN_ENFORCEMENT_CLAIMS = [
+    (r"required status checks\s+are\s+not\s+enforced", "obsolete non-enforcement"),
+    (r"not\s+claimed\s+to\s+block\s+merges?", "checks-not-claimed-to-block"),
+    (r"\bnone\b[^.]{0,60}\bblock(?:ing)?\s+(?:a\s+|the\s+)?merges?", "none-can-block-merge"),
+    (r"\bno\s+(?:named\s+)?checks?\b[^.]{0,40}\bblock", "no-checks-block"),
+    (r"\bcan(?:not|\s+not|'?t)\b[^.]{0,40}\bblock(?:ing)?\s+(?:a\s+|the\s+)?merges?", "checks-cannot-block-merge"),
+    (r"\bcan(?:not|\s+not|'?t)\s+be\s+bypass(?:ed)?", "cannot-be-bypassed overclaim"),
+    (r"\bunbypassable\b", "unbypassable overclaim"),
+    (r"\bno\s+(?:actor|one|admin\w*)\s+can\s+bypass", "no-actor-can-bypass overclaim"),
+]
+
+
+def _forbidden_enforcement_claim(acceptance_text: str) -> str | None:
+    for pattern, label in _FORBIDDEN_ENFORCEMENT_CLAIMS:
+        if re.search(pattern, acceptance_text, re.IGNORECASE):
+            return label
+    return None
+
+
+def check_acceptance_enforcement_claim_self_test() -> None:
+    # true canonical statement must be accepted (no forbidden hit)
+    if _forbidden_enforcement_claim(_ENFORCEMENT_CLAIM_MARKER) is not None:
+        raise AssertionError("enforcement self-test: true marker wrongly flagged as false claim")
+    # each regression variant must be rejected
+    mutants = [
+        "Required status checks are not enforced.",
+        "In practice, none of the named checks can block a merge.",
+        "All merges are blocked until all checks pass; no actor can bypass them.",
+        "The named checks cannot block a merge.",
+        "These contexts are not claimed to block merges.",
+        "The admin bypass is unbypassable in practice.",
+    ]
+    for m in mutants:
+        if _forbidden_enforcement_claim(m) is None:
+            raise AssertionError(f"enforcement self-test: false claim not rejected: {m!r}")
+    # a realistic regression (true text + a capitalized re-add) must still be caught
+    if _forbidden_enforcement_claim(_ENFORCEMENT_CLAIM_MARKER + " Required status checks are NOT enforced.") is None:
+        raise AssertionError("enforcement self-test: capitalized re-add not caught")
+
+
 def check_docs() -> None:
     for relative_path in [
         "docs/tutorials",
@@ -5349,9 +5397,15 @@ def check_docs() -> None:
         not stale_publish_order,
         "acceptance.md contains stale publish-order phrase(s): " + ", ".join(stale_publish_order),
     )
+    enforced_bypass_marker = _ENFORCEMENT_CLAIM_MARKER
     require(
-        re.search(r"required status checks\s+are not enforced", acceptance) is not None,
-        "acceptance.md must not claim merge-blocking checks",
+        enforced_bypass_marker in " ".join(acceptance.split()),
+        "acceptance.md must state the active required-check enforcement and always-available admin bypass",
+    )
+    forbidden = _forbidden_enforcement_claim(acceptance)
+    require(
+        forbidden is None,
+        f"acceptance.md must not reintroduce a false enforcement claim ({forbidden})",
     )
     require(
         "cosign " + "download sbom" not in acceptance,
@@ -5615,23 +5669,37 @@ def check_docs() -> None:
     ]:
         require(marker in verify, f"docs/reference/verify.md missing marker: {marker}")
 
-    for doc_name, doc in [
-        ("docs/reference/verify.md", verify),
-        ("docs/how-to/verify-a-published-image.md", verify_howto),
+    for marker in [
+        'INDEX_REF="${IMAGE}@${INDEX_DIGEST}"',
+        'CHILD_REF="${IMAGE}@${CHILD_DIGEST}"',
+        'cosign verify "${INDEX_REF}"',
+        'cosign verify-attestation --type spdxjson "${CHILD_REF}"',
+        'cosign verify-attestation --type cyclonedx "${CHILD_REF}"',
+        'cosign verify-attestation --type openvex "${CHILD_REF}"',
+        f'cosign verify-attestation --type {predicate_type("nist_800_190")} "${{CHILD_REF}}"',
+        f'cosign verify-attestation --type {predicate_type("stig_arf")} "${{CHILD_REF}}"',
+        'cosign verify-attestation --type slsaprovenance "${INDEX_REF}"',
+        'slsa-verifier verify-image "${INDEX_REF}"',
     ]:
-        for marker in [
-            'INDEX_REF="${IMAGE}@${INDEX_DIGEST}"',
-            'CHILD_REF="${IMAGE}@${CHILD_DIGEST}"',
-            'cosign verify "${INDEX_REF}"',
-            'cosign verify-attestation --type spdxjson "${CHILD_REF}"',
-            'cosign verify-attestation --type cyclonedx "${CHILD_REF}"',
-            'cosign verify-attestation --type openvex "${CHILD_REF}"',
-            f'cosign verify-attestation --type {predicate_type("nist_800_190")} "${{CHILD_REF}}"',
-            f'cosign verify-attestation --type {predicate_type("stig_arf")} "${{CHILD_REF}}"',
-            'cosign verify-attestation --type slsaprovenance "${INDEX_REF}"',
-            'slsa-verifier verify-image "${INDEX_REF}"',
-        ]:
-            require(marker in doc, f"{doc_name} missing digest-routing marker: {marker}")
+        require(marker in verify, f"docs/reference/verify.md missing digest-routing marker: {marker}")
+    for marker in [
+        'INDEX_REF="${IMAGE}@${INDEX_DIGEST}"',
+        'AMD64_REF="${IMAGE}@${AMD64_DIGEST}"',
+        'ARM64_REF="${IMAGE}@${ARM64_DIGEST}"',
+        'for CHILD_REF in "${AMD64_REF}" "${ARM64_REF}"; do',
+        'cosign verify "${INDEX_REF}"',
+        'cosign verify-attestation --type spdxjson "${CHILD_REF}"',
+        'cosign verify-attestation --type cyclonedx "${CHILD_REF}"',
+        'cosign verify-attestation --type openvex "${CHILD_REF}"',
+        f'cosign verify-attestation --type {predicate_type("nist_800_190")} "${{CHILD_REF}}"',
+        f'cosign verify-attestation --type {predicate_type("stig_arf")} "${{CHILD_REF}}"',
+        'cosign verify-attestation --type slsaprovenance "${INDEX_REF}"',
+        'slsa-verifier verify-image "${INDEX_REF}"',
+    ]:
+        require(
+            marker in verify_howto,
+            f"docs/how-to/verify-a-published-image.md missing digest-routing marker: {marker}",
+        )
     for residue in ["P1.8", "one-time owner visibility change"]:
         require(residue not in verify, f"docs/reference/verify.md retains false anonymous-pull residue: {residue}")
 
@@ -6074,6 +6142,7 @@ def main() -> int:
         check_binfmt_digest_equality_self_test,
         check_pin_invariant_self_test,
         check_nightly_drift_signature_self_test,
+        check_acceptance_enforcement_claim_self_test,
         check_dockerfile,
         check_rpm_lock_generator,
         check_dockerfile_forbidden_scan_self_test,

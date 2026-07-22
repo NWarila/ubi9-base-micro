@@ -18,10 +18,11 @@ field is octal, and the final field is empty for entries without file or link
 content. This keeps the digest tied to rootfs content and metadata rather than
 Python `tarfile` archive encoding.
 
-`canonical_rootfs_digest` is asserted at the scope of this repository's pinned
-CI builder path: Docker Buildx with `rewrite-timestamp=true`. Because the line
-format includes entry metadata (`uname`, `gname`, and `mtime`) along with file
-content, a different builder such as buildah or kaniko can export
+`canonical_rootfs_digest` is asserted at the scope of this repository's Docker
+Buildx path with `rewrite-timestamp=true`. The setup action is SHA-pinned, but it
+installs Buildx `latest`, so the Buildx version itself is not pinned. Because
+the line format includes entry metadata (`uname`, `gname`, and `mtime`) along
+with file content, a different builder such as buildah or kaniko can export
 byte-identical file contents while producing a different
 `canonical_rootfs_digest`. The builder-portable checks available today are the
 per-file content digests recorded in the contract, specifically `rpmdb_sha256`
@@ -40,14 +41,16 @@ Its binfmt emulator image is immutably pinned to
 with `cache-image: true` persisting the selected image to the GitHub Actions
 cache across runs.
 
-The `linux/amd64` byte-identity claim is native and toolchain-independent: no
-emulator participates in that build path. The `linux/arm64` byte-identity claim
-is emulator-relative: it is reproducible relative to that pinned binfmt
-emulator image. The build-twice CI gate proves determinism for arm64 with the
-immutable emulator input. A third-party arm64 reproducer uses the same pinned
-action SHA and emulator digest unless they are deliberately testing a different
-emulator or native arm64 path. That boundary is intrinsic to
-cross-architecture reproducible builds.
+The `linux/amd64` byte-identity claim is native: no emulator participates in
+that build path. It remains scoped to this repository's Docker Buildx and
+`rewrite-timestamp=true` path and is not portable across arbitrary builders or
+toolchain versions. The `linux/arm64` byte-identity claim is emulator-relative:
+it is reproducible relative to that pinned binfmt emulator image. The
+build-twice CI gate proves determinism for arm64 with the immutable emulator
+input. A third-party arm64 reproducer uses the same pinned action SHA and
+emulator digest unless they are deliberately testing a different emulator or
+native arm64 path. That boundary is intrinsic to cross-architecture
+reproducible builds.
 
 The two-builds-in-one-CI-run gate is necessary for the F3 claim because any rootfs
 difference fails the build, but it is not sufficient by itself for a broad
