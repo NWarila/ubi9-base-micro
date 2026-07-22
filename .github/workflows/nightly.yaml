@@ -358,12 +358,12 @@ jobs:
           MARKER: "<!-- ubi9-base-micro-nightly-drift:v1 -->"
           OWNER: NWarila
           REPOSITORY: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           alert_dir=dist/nightly-alert
           attention="$(jq -er '.attention | if . then "true" else "false" end' "${DECISION_FILE}")"
+          SIGNATURE="$(jq -er '.signature | select(type == "string" and test("^[0-9a-f]{64}$"))' "${DECISION_FILE}")"
           run_date="$(jq -er '.date' "${alert_dir}/run-context.json")"
 
           gh api --paginate --slurp \
@@ -401,6 +401,7 @@ jobs:
               > "${alert_dir}/reopen-issue-request.json"
 
             if [[ "${match_count}" == "0" ]]; then
+              issue_event=create
               gh api --method POST \
                 "repos/${REPOSITORY}/issues" \
                 --input "${alert_dir}/create-issue-request.json" \
@@ -410,11 +411,13 @@ jobs:
               issue_number="$(jq -er '.[0].number' "${alert_dir}/matching-issues.json")"
               issue_state="$(jq -er '.[0].state' "${alert_dir}/matching-issues.json")"
               if [[ "${issue_state}" == "open" ]]; then
+                issue_event=update
                 gh api --method PATCH \
                   "repos/${REPOSITORY}/issues/${issue_number}" \
                   --input "${alert_dir}/update-open-issue-request.json" \
                   > "${alert_dir}/issue-response.json"
               elif [[ "${issue_state}" == "closed" ]]; then
+                issue_event=reopen
                 gh api --method PATCH \
                   "repos/${REPOSITORY}/issues/${issue_number}" \
                   --input "${alert_dir}/reopen-issue-request.json" \
@@ -425,20 +428,39 @@ jobs:
               fi
             fi
 
-            run_marker="<!-- ubi9-base-micro-nightly-drift-run:${RUN_ID} -->"
+            signature_marker="<!-- ubi9-base-micro-nightly-drift-signature:v1:${SIGNATURE} -->"
             gh api --paginate --slurp \
-              "repos/${REPOSITORY}/issues/${issue_number}/comments?per_page=100" \
-              > "${alert_dir}/issue-comments.json"
-            comment_count="$(jq -r --arg marker "${run_marker}" \
-              '[.[][] | select(.user.login == "github-actions[bot]" and ((.body // "") | contains($marker)))]
-              | length' "${alert_dir}/issue-comments.json")"
-            if [[ "${comment_count}" -gt 1 ]]; then
-              echo "Multiple per-run nightly drift comments found; refusing an ambiguous notification." >&2
-              exit 1
-            fi
-            if [[ "${comment_count}" == "0" ]]; then
+              "repos/${REPOSITORY}/issues/${issue_number}/timeline?per_page=100" \
+              > "${alert_dir}/issue-timeline.json"
+            latest_signature="$(jq -r \
+              --arg alert_prefix "@${OWNER} nightly drift needs attention:" \
+              --arg bot "github-actions[bot]" \
+              --arg signature_pattern '<!-- ubi9-base-micro-nightly-drift-signature:v1:(?<signature>[0-9a-f]{64}) -->' \
+              '[.[][]] as $timeline
+              | ([$timeline | to_entries[]
+                  | select(
+                      (.value.event == "reopened")
+                      or (
+                        .value.event == "commented"
+                        and ((.value.user.login // .value.actor.login // "") == $bot)
+                        and ((.value.body // "") | startswith("resolved: clean on "))
+                      )
+                    )
+                  | .key] | max // -1) as $incident_boundary
+              | ([$timeline | to_entries[]
+                  | select(
+                      .key > $incident_boundary
+                      and .value.event == "commented"
+                      and ((.value.user.login // .value.actor.login // "") == $bot)
+                      and ((.value.body // "") | startswith($alert_prefix))
+                    )
+                  | (.value.body // "")] | last // "") as $latest_alert
+              | try ($latest_alert | capture($signature_pattern).signature) catch ""' \
+              "${alert_dir}/issue-timeline.json")"
+            if [[ "${issue_event}" == "create" || "${issue_event}" == "reopen" \
+              || "${latest_signature}" != "${SIGNATURE}" ]]; then
               jq -n \
-                --arg body "@${OWNER} nightly drift needs attention: ${RUN_URL}\n\n${run_marker}" \
+                --arg body "@${OWNER} nightly drift needs attention: ${RUN_URL}\n\n${signature_marker}" \
                 '{body: $body}' > "${alert_dir}/attention-comment-request.json"
               gh api --method POST \
                 "repos/${REPOSITORY}/issues/${issue_number}/comments" \

@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import copy
 import io
 import json
 import re
@@ -2607,6 +2608,42 @@ def check_nightly_hardening_matrix(text: str) -> None:
     )
 
 
+def nightly_notification_state_errors(alert: str) -> list[str]:
+    ping_condition = (
+        '            if [[ "${issue_event}" == "create" || "${issue_event}" == "reopen" \\\n'
+        '              || "${latest_signature}" != "${SIGNATURE}" ]]; then'
+    )
+    ping_post = """              gh api --method POST \\
+                "repos/${REPOSITORY}/issues/${issue_number}/comments" \\
+                --input "${alert_dir}/attention-comment-request.json" \\
+                > "${alert_dir}/comment-response.json"
+"""
+    required = {
+        "validated decision signature": (
+            'SIGNATURE="$(jq -er \'.signature | select(type == "string" and '
+            'test("^[0-9a-f]{64}$"))\' "${DECISION_FILE}")"'
+        ),
+        "versioned signature marker": (
+            'signature_marker="<!-- ubi9-base-micro-nightly-drift-signature:v1:${SIGNATURE} -->"'
+        ),
+        "ordered issue timeline": '"repos/${REPOSITORY}/issues/${issue_number}/timeline?per_page=100"',
+        "reopen incident boundary": '(.value.event == "reopened")',
+        "clean-resolution incident boundary": 'startswith("resolved: clean on ")',
+        "post-boundary alert selection": ".key > $incident_boundary",
+        "latest in-incident alert selection": '| last // "") as $latest_alert',
+        "latest signature extraction": "capture($signature_pattern).signature",
+        "create/reopen/signature-change ping condition": ping_condition,
+        "signature-bearing owner ping": (
+            '--arg body "@${OWNER} nightly drift needs attention: ${RUN_URL}\\n\\n${signature_marker}"'
+        ),
+        "attention comment mutation": ping_post,
+    }
+    errors = [label for label, marker in required.items() if marker not in alert]
+    if "ubi9-base-micro-nightly-drift-run:" in alert or "RUN_ID:" in alert:
+        errors.append("obsolete per-run notification identity")
+    return errors
+
+
 def check_nightly_drift_alert(text: str) -> None:
     reproducibility = workflow_job_block(text, "reproducibility-gate", "nightly workflow")
     hardening = workflow_job_block(text, "hardening", "nightly workflow")
@@ -2735,10 +2772,11 @@ def check_nightly_drift_alert(text: str) -> None:
         "create-issue-request.json",
         "update-open-issue-request.json",
         "reopen-issue-request.json",
+        "issue-timeline.json",
         "attention-comment-request.json",
         "resolved-comment-request.json",
         "close-issue-request.json",
-        'run_marker="<!-- ubi9-base-micro-nightly-drift-run:${RUN_ID} -->"',
+        'signature_marker="<!-- ubi9-base-micro-nightly-drift-signature:v1:${SIGNATURE} -->"',
         '--rawfile body "${BODY_FILE}"',
         '--input "${alert_dir}/',
     ]:
@@ -2769,6 +2807,19 @@ def check_nightly_drift_alert(text: str) -> None:
         alert.count("--method ") == alert.count("--input ") == 6,
         "every nightly alert mutation must use an input file",
     )
+    state_errors = nightly_notification_state_errors(alert)
+    require(not state_errors, f"nightly notification state is incomplete: {', '.join(state_errors)}")
+    ping_post = """              gh api --method POST \\
+                "repos/${REPOSITORY}/issues/${issue_number}/comments" \\
+                --input "${alert_dir}/attention-comment-request.json" \\
+                > "${alert_dir}/comment-response.json"
+"""
+    without_ping = alert.replace(ping_post, "", 1)
+    require(without_ping != alert, "nightly ping-removal mutation fixture did not change")
+    require(
+        nightly_notification_state_errors(without_ping),
+        "nightly ping-removal mutation unexpectedly passed",
+    )
     require(
         alert.index("      - name: Log nightly drift decision")
         < alert.index("      - name: Maintain sticky nightly drift issue"),
@@ -2783,6 +2834,203 @@ def check_nightly_drift_alert(text: str) -> None:
         "pull-requests:",
     ]:
         require(forbidden not in alert, f"nightly alert has forbidden permission or soft-fail marker: {forbidden}")
+
+
+NightlyDriftInputs = tuple[list[dict[str, Any]], dict[str, str], dict[str, str]]
+
+
+def nightly_drift_signature_fixture() -> NightlyDriftInputs:
+    hardening_amd64: dict[str, Any] = {
+        "schema_version": "1.1.0",
+        "kind": "hardening",
+        "arch": "amd64",
+        "complete": True,
+        "attention_reasons": ["amd64 hardening requires attention"],
+        "cves": {
+            "raw": {"trivy": 1, "grype": 1, "unique": 1},
+            "ignored": {"unique": 1},
+            "actionable": {
+                "unique": 1,
+                "findings": [
+                    {
+                        "id": "CVE-2099-0001",
+                        "severity": "HIGH",
+                        "package": "openssl-libs",
+                        "fixable": True,
+                        "fixed_version": "3.1.0-1",
+                    }
+                ],
+            },
+        },
+        "stig": {"total_rule_results": 1532, "pass": 39, "fail": 1, "not_selected": 1492},
+        "secrets": {"finding_count": 1, "passed": False},
+        "footprint": {"regular_file_bytes": 23841246, "limit_bytes": 26214400, "passed": True},
+        "vex": {"accepted": 0, "missing": 0},
+    }
+    hardening_arm64 = copy.deepcopy(hardening_amd64)
+    hardening_arm64.update(
+        {
+            "arch": "arm64",
+            "attention_reasons": [],
+            "cves": {
+                "raw": {"trivy": 0, "grype": 0, "unique": 0},
+                "ignored": {"unique": 0},
+                "actionable": {"unique": 0, "findings": []},
+            },
+            "stig": {"total_rule_results": 1532, "pass": 39, "fail": 0, "not_selected": 1493},
+            "secrets": {"finding_count": 0, "passed": True},
+        }
+    )
+
+    def repro(arch: str) -> dict[str, Any]:
+        return {
+            "schema_version": "1.1.0",
+            "kind": "repro",
+            "arch": arch,
+            "complete": True,
+            "attention_reasons": [],
+            "reproducibility": {
+                "byte_identical": True,
+                "rootfs_matches_contract": True,
+                "rpmdb_matches_contract": True,
+            },
+        }
+
+    envelopes = [hardening_amd64, hardening_arm64, repro("amd64"), repro("arm64")]
+    job_results = {"hardening": "success", "build": "success", "reproducibility-gate": "success"}
+    run_context = {
+        "run_url": "https://github.com/NWarila/ubi9-base-micro/actions/runs/123",
+        "date": "2026-07-13",
+    }
+    return envelopes, job_results, run_context
+
+
+def nightly_drift_signature_from_cli(temp_root: Path, label: str, inputs: NightlyDriftInputs) -> str:
+    envelopes, job_results, run_context = inputs
+    envelope_paths = [
+        temp_root / "hardening-amd64.json",
+        temp_root / "hardening-arm64.json",
+        temp_root / "repro-amd64.json",
+        temp_root / "repro-arm64.json",
+    ]
+    for path, envelope in zip(envelope_paths, envelopes, strict=True):
+        path.write_text(json.dumps(envelope, sort_keys=True) + "\n", encoding="utf-8")
+    job_results_path = temp_root / "job-results.json"
+    job_results_path.write_text(json.dumps(job_results, sort_keys=True) + "\n", encoding="utf-8")
+    run_context_path = temp_root / "run-context.json"
+    run_context_path.write_text(json.dumps(run_context, sort_keys=True) + "\n", encoding="utf-8")
+    body_path = temp_root / "issue-body.md"
+    decision_path = temp_root / "decision.json"
+
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "tools/render-drift-issue.py"),
+                "--hardening-amd64",
+                str(envelope_paths[0]),
+                "--hardening-arm64",
+                str(envelope_paths[1]),
+                "--repro-amd64",
+                str(envelope_paths[2]),
+                "--repro-arm64",
+                str(envelope_paths[3]),
+                "--job-results",
+                str(job_results_path),
+                "--run-context",
+                str(run_context_path),
+                "--body-output",
+                str(body_path),
+                "--decision-output",
+                str(decision_path),
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise VerifyError(f"nightly drift signature mutation {label!r} could not invoke the renderer: {exc}") from exc
+    require(
+        result.returncode == 0,
+        f"nightly drift signature mutation {label!r} failed to render:\n"
+        f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
+    )
+    try:
+        decision_value: Any = json.loads(decision_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise VerifyError(f"nightly drift signature mutation {label!r} produced no valid decision JSON: {exc}") from exc
+    require(isinstance(decision_value, dict), f"nightly drift signature mutation {label!r} decision is not an object")
+    signature = decision_value.get("signature")
+    require(
+        isinstance(signature, str) and re.fullmatch(r"[0-9a-f]{64}", signature) is not None,
+        f"nightly drift signature mutation {label!r} produced an invalid signature",
+    )
+    return cast(str, signature)
+
+
+def mutate_nightly_drift_input(inputs: NightlyDriftInputs, path: tuple[str | int, ...], value: Any) -> None:
+    require(bool(path), "nightly drift signature mutation path must not be empty")
+    target: Any = inputs
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+
+
+def check_nightly_drift_signature_self_test() -> None:
+    baseline_inputs = nightly_drift_signature_fixture()
+    severity_mutations: list[tuple[str, tuple[str | int, ...], Any]] = [
+        ("actionable CVE identity A-to-B", (0, 0, "cves", "actionable", "findings", 0, "id"), "CVE-2099-0002"),
+        ("STIG fail count 1-to-17", (0, 0, "stig", "fail"), 17),
+        ("repro byte-identical boolean", (0, 2, "reproducibility", "byte_identical"), False),
+        ("repro rootfs-contract boolean", (0, 2, "reproducibility", "rootfs_matches_contract"), False),
+        ("repro RPMDB-contract boolean", (0, 2, "reproducibility", "rpmdb_matches_contract"), False),
+        ("footprint pass-to-fail", (0, 0, "footprint", "passed"), False),
+        ("job-result state", (1, "build"), "failure"),
+        ("run-context validity", (2, "run_url"), "http://invalid.example/run/123"),
+        ("producer-attention presence", (0, 0, "attention_reasons"), []),
+        ("secret finding count", (0, 0, "secrets", "finding_count"), 3),
+        ("missing-VEX count", (0, 0, "vex", "missing"), 4),
+        ("safe failure_detail", (0, 2, "failure_detail"), "rpmdb digest mismatch: expected a, actual b"),
+    ]
+    stability_mutations: list[tuple[str, tuple[str | int, ...], Any]] = [
+        ("run_url", (2, "run_url"), "https://github.com/NWarila/ubi9-base-micro/actions/runs/999"),
+        ("date", (2, "date"), "2099-12-31"),
+        ("accepted non-actionable VEX", (0, 0, "vex", "accepted"), 947),
+        ("raw Trivy scanner count", (0, 0, "cves", "raw", "trivy"), 700),
+        ("raw Grype scanner count", (0, 0, "cves", "raw", "grype"), 800),
+        ("raw unique scanner count", (0, 0, "cves", "raw", "unique"), 900),
+        ("ignored scanner count", (0, 0, "cves", "ignored", "unique"), 901),
+        ("footprint regular-file bytes", (0, 0, "footprint", "regular_file_bytes"), 1),
+        ("footprint limit bytes", (0, 0, "footprint", "limit_bytes"), 30000000),
+        ("STIG total results", (0, 0, "stig", "total_rule_results"), 9000),
+        ("STIG pass count", (0, 0, "stig", "pass"), 8000),
+        ("STIG not-selected count", (0, 0, "stig", "not_selected"), 1000),
+    ]
+
+    with tempfile.TemporaryDirectory(prefix=".verify-drift-signature-", dir=ROOT) as tmp:
+        temp_root = Path(tmp)
+        baseline_signature = nightly_drift_signature_from_cli(temp_root, "baseline", baseline_inputs)
+        for label, path, value in severity_mutations:
+            mutated_inputs = copy.deepcopy(baseline_inputs)
+            mutate_nightly_drift_input(mutated_inputs, path, value)
+            mutated_signature = nightly_drift_signature_from_cli(temp_root, label, mutated_inputs)
+            require(
+                mutated_signature != baseline_signature,
+                f"nightly drift signature severity invariant failed for {label}: signature did not change",
+            )
+        for label, path, value in stability_mutations:
+            mutated_inputs = copy.deepcopy(baseline_inputs)
+            mutate_nightly_drift_input(mutated_inputs, path, value)
+            mutated_signature = nightly_drift_signature_from_cli(temp_root, label, mutated_inputs)
+            require(
+                mutated_signature == baseline_signature,
+                f"nightly drift signature stability invariant failed for {label}: signature changed",
+            )
+    print(
+        f"Nightly drift signature mutation probes: {len(severity_mutations)}/{len(severity_mutations)} severity "
+        f"mutations changed; {len(stability_mutations)}/{len(stability_mutations)} stability mutations preserved"
+    )
 
 
 def check_pr_decision_surface(text: str) -> None:
@@ -5825,6 +6073,7 @@ def main() -> int:
         check_binfmt_digest_equality,
         check_binfmt_digest_equality_self_test,
         check_pin_invariant_self_test,
+        check_nightly_drift_signature_self_test,
         check_dockerfile,
         check_rpm_lock_generator,
         check_dockerfile_forbidden_scan_self_test,

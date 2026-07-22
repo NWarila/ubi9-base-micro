@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
 import re
@@ -19,6 +20,7 @@ ARCHES = ("amd64", "arm64")
 EXPECTED_KEYS = tuple((kind, arch) for kind in ("hardening", "repro") for arch in ARCHES)
 MARKER = "<!-- ubi9-base-micro-nightly-drift:v1 -->"
 SCHEMA_VERSION = "1.1.0"
+SIGNATURE_VERSION = "v1"
 FAILURE_DETAIL_LIMIT = 500
 JOB_RESULTS = {
     "hardening": "hardening matrix",
@@ -67,23 +69,28 @@ def _safe_text(value: str) -> str:
     return re.sub(r"([\\`*_{}\[\]()#+.!|>~-])", r"\\\1", escaped)
 
 
-def _job_result_reasons(value: Any) -> list[str]:
+def _job_result_view(value: Any) -> tuple[dict[str, str], list[str]]:
     try:
         results = _object(value, "job results")
     except RenderError:
-        return ["nightly job-results input is malformed"]
+        return (dict.fromkeys(JOB_RESULTS, "missing_or_malformed"), ["nightly job-results input is malformed"])
 
+    view: dict[str, str] = {}
     reasons: list[str] = []
     for key, label in JOB_RESULTS.items():
         result = results.get(key)
         if not isinstance(result, str) or not result.strip():
+            view[key] = "missing_or_malformed"
             reasons.append(f"{label} result is missing or malformed")
-        elif result.strip().lower() != "success":
-            reasons.append(f"{label} result is {_safe_text(result.strip().lower())}, not success")
-    return reasons
+            continue
+        normalized = result.strip().lower()
+        view[key] = normalized
+        if normalized != "success":
+            reasons.append(f"{label} result is {_safe_text(normalized)}, not success")
+    return view, reasons
 
 
-def _context(value: Any) -> tuple[str, str, list[str]]:
+def _context(value: Any) -> tuple[str, str, bool, list[str]]:
     reasons: list[str] = []
     run_url = ""
     date = "unknown date"
@@ -97,7 +104,7 @@ def _context(value: Any) -> tuple[str, str, list[str]]:
             raise RenderError("run date must be YYYY-MM-DD")
     except RenderError:
         reasons.append("nightly run context is missing or malformed")
-    return run_url, date, reasons
+    return run_url, date, not reasons, reasons
 
 
 def _actionable_cves(value: Any, arch: str) -> tuple[list[dict[str, str | bool | None]], list[str]]:
@@ -131,6 +138,14 @@ def _actionable_cves(value: Any, arch: str) -> tuple[list[dict[str, str | bool |
         )
     if count != len(findings):
         raise RenderError(f"{arch} actionable CVE count disagrees with its sanitized list")
+    findings.sort(
+        key=lambda finding: (
+            str(finding["id"]),
+            str(finding["severity"]),
+            str(finding["package"]),
+            str(finding["fixed_version"]),
+        )
+    )
     reasons = [f"{arch} has {count} actionable HIGH/CRITICAL CVE(s)"] if count else []
     return findings, reasons
 
@@ -190,11 +205,22 @@ def _envelopes(
     dict[str, dict[str, Any]],
     dict[str, dict[str, bool]],
     dict[tuple[str, str], str],
+    dict[str, Any],
     list[str],
 ]:
     indexed: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    malformed_keys: set[tuple[str, str]] = set()
+    unassigned_malformed = 0
     reasons: list[str] = []
     for index, value in enumerate(values):
+        claimed_key: tuple[str, str] | None = None
+        if isinstance(value, dict):
+            raw_kind = value.get("kind")
+            raw_arch = value.get("arch")
+            if isinstance(raw_kind, str) and isinstance(raw_arch, str):
+                candidate = (raw_kind.strip(), raw_arch.strip())
+                if candidate in EXPECTED_KEYS:
+                    claimed_key = candidate
         try:
             envelope = _object(value, f"envelope {index}")
             if envelope.get("schema_version") != SCHEMA_VERSION:
@@ -206,14 +232,37 @@ def _envelopes(
             indexed.setdefault((kind, arch), []).append(envelope)
         except RenderError:
             reasons.append(f"envelope {index} is malformed")
+            if claimed_key is None:
+                unassigned_malformed += 1
+            else:
+                malformed_keys.add(claimed_key)
 
     hardening: dict[str, dict[str, Any]] = {}
     repro: dict[str, dict[str, bool]] = {}
     failure_details: dict[tuple[str, str], str] = {}
+    projection: dict[str, Any] = {
+        "arches": {
+            arch: {
+                kind: {
+                    "failure_detail": None,
+                    "producer_reported_attention": False,
+                    "state": "missing",
+                    "view": None,
+                }
+                for kind in ("hardening", "repro")
+            }
+            for arch in ARCHES
+        },
+        "unassigned_malformed_envelopes": unassigned_malformed,
+    }
     for kind, arch in EXPECTED_KEYS:
+        incident = projection["arches"][arch][kind]
         matches = indexed.get((kind, arch), [])
         if len(matches) != 1:
             state = "missing" if not matches else "duplicated"
+            if (kind, arch) in malformed_keys:
+                state = "malformed" if not matches else "duplicated_or_malformed"
+            incident["state"] = state
             reasons.append(f"{arch} {kind} envelope is {state}")
             continue
         envelope = matches[0]
@@ -224,12 +273,15 @@ def _envelopes(
                 if len(failure_detail) > FAILURE_DETAIL_LIMIT:
                     raise RenderError(f"{arch} {kind} failure detail exceeds the length limit")
                 failure_details[(kind, arch)] = failure_detail
+                incident["failure_detail"] = failure_detail
             if not _boolean(envelope.get("complete"), f"{arch} {kind} complete"):
+                incident["state"] = "incomplete"
                 reasons.append(f"{arch} {kind} envelope is incomplete")
                 continue
             producer_reasons = _array(envelope.get("attention_reasons"), f"{arch} {kind} attention reasons")
             if any(not isinstance(reason, str) for reason in producer_reasons):
                 raise RenderError("producer attention reasons are malformed")
+            incident["producer_reported_attention"] = bool(producer_reasons)
             if producer_reasons:
                 reasons.append(f"{arch} {kind} producer reported attention")
             if kind == "hardening":
@@ -238,10 +290,19 @@ def _envelopes(
             else:
                 repro_view, view_reasons = _repro_view(envelope, arch)
                 repro[arch] = repro_view
+                view = repro_view
+            incident["state"] = "complete" if (kind, arch) not in malformed_keys else "malformed_or_duplicated"
+            incident["view"] = view
             reasons.extend(view_reasons)
         except RenderError:
+            incident["state"] = "malformed"
             reasons.append(f"{arch} {kind} envelope content is malformed")
-    return hardening, repro, failure_details, list(dict.fromkeys(reasons))
+    return hardening, repro, failure_details, projection, list(dict.fromkeys(reasons))
+
+
+def _signature(projection: dict[str, Any]) -> str:
+    canonical = json.dumps(projection, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _arch_section(
@@ -294,14 +355,22 @@ def _arch_section(
     return lines
 
 
-def render_issue(envelope_values: list[Any], results_value: Any, context_value: Any) -> tuple[str, bool]:
-    reasons = _job_result_reasons(results_value)
-    run_url, date, context_reasons = _context(context_value)
+def render_issue(envelope_values: list[Any], results_value: Any, context_value: Any) -> tuple[str, bool, str]:
+    job_results, reasons = _job_result_view(results_value)
+    run_url, date, run_context_valid, context_reasons = _context(context_value)
     reasons.extend(context_reasons)
-    hardening, repro, failure_details, envelope_reasons = _envelopes(envelope_values)
+    hardening, repro, failure_details, envelope_projection, envelope_reasons = _envelopes(envelope_values)
     reasons.extend(envelope_reasons)
     reasons = list(dict.fromkeys(reasons))
     attention = bool(reasons)
+    signature = _signature(
+        {
+            "envelopes": envelope_projection,
+            "job_results": job_results,
+            "run_context_valid": run_context_valid,
+            "version": SIGNATURE_VERSION,
+        }
+    )
 
     lines = [
         "## ⚠️ Action needed: nightly base-micro drift" if attention else "## ✅ Nightly base-micro sentinel clean",
@@ -321,7 +390,7 @@ def render_issue(envelope_values: list[Any], results_value: Any, context_value: 
     if run_url:
         lines.extend([f'<a href="{html.escape(run_url, quote=True)}">Open the complete nightly run</a>', ""])
     lines.append(MARKER)
-    return "\n".join(lines) + "\n", attention
+    return "\n".join(lines) + "\n", attention, signature
 
 
 def _load(path: Path) -> Any:
@@ -352,11 +421,13 @@ def main(argv: list[str]) -> int:
         _load(args.repro_amd64),
         _load(args.repro_arm64),
     ]
-    body, attention = render_issue(envelopes, _load(args.job_results), _load(args.run_context))
+    body, attention, signature = render_issue(envelopes, _load(args.job_results), _load(args.run_context))
     args.body_output.parent.mkdir(parents=True, exist_ok=True)
     args.body_output.write_text(body, encoding="utf-8")
     args.decision_output.parent.mkdir(parents=True, exist_ok=True)
-    args.decision_output.write_text(json.dumps({"attention": attention}, sort_keys=True) + "\n", encoding="utf-8")
+    args.decision_output.write_text(
+        json.dumps({"attention": attention, "signature": signature}, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(f"attention={'true' if attention else 'false'}")
     return 0
 
