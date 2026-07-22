@@ -962,7 +962,19 @@ def check_cosign_before_test_gates(text: str, source: str) -> None:
     match = step_pattern.search(text)
     if match is None:
         raise VerifyError(f"{source} must keep the Cosign v2.5.2 installer step identifiable")
-    gate = "      - name: Run full test-only gate set\n        run: bash tools/run-test-gates.sh"
+    if source == "nightly workflow":
+        gate = (
+            "      - name: Run full test-only gate set\n"
+            "        id: hardening-gate\n"
+            "        env:\n"
+            "          ARCH: ${{ matrix.arch }}\n"
+            "        run: |\n"
+            "          set -euo pipefail\n"
+            "          mkdir -p dist/failure-logs\n"
+            '          bash tools/run-test-gates.sh 2>&1 | tee "dist/failure-logs/hardening.${ARCH}.log"'
+        )
+    else:
+        gate = "      - name: Run full test-only gate set\n        run: bash tools/run-test-gates.sh"
     require(
         f"{match.group(0)}\n\n{gate}" in text,
         f"{source} must install pinned Cosign v2.5.2 immediately before run-test-gates.sh",
@@ -2543,9 +2555,19 @@ def check_nightly_hardening_matrix(text: str) -> None:
         "    runs-on: ubuntu-24.04",
         "    timeout-minutes: 45",
         "    needs: verify",
-        "        run: bash tools/run-test-gates.sh",
     ]:
         require(marker in hardening, f"nightly hardening job missing exact marker: {marker.strip()}")
+    teed_gate = (
+        "      - name: Run full test-only gate set\n"
+        "        id: hardening-gate\n"
+        "        env:\n"
+        "          ARCH: ${{ matrix.arch }}\n"
+        "        run: |\n"
+        "          set -euo pipefail\n"
+        "          mkdir -p dist/failure-logs\n"
+        '          bash tools/run-test-gates.sh 2>&1 | tee "dist/failure-logs/hardening.${ARCH}.log"'
+    )
+    require(teed_gate in hardening, "nightly hardening job must preserve the exact teed test-gate command")
     require(
         re.search(r"^    if:", hardening, flags=re.MULTILINE) is None,
         "nightly hardening matrix job must not have a job-level if condition",
@@ -2590,12 +2612,87 @@ def check_nightly_drift_alert(text: str) -> None:
     hardening = workflow_job_block(text, "hardening", "nightly workflow")
     alert = workflow_job_block(text, "alert", "nightly workflow")
 
+    teed_repro_gate = (
+        "      - name: Build twice and assert rootfs byte identity\n"
+        "        id: repro-gate\n"
+        "        env:\n"
+        "          PLATFORM: ${{ matrix.platform }}\n"
+        "          ARCH: ${{ matrix.arch }}\n"
+        "        run: |\n"
+        "          set -euo pipefail\n"
+        "          mkdir -p dist/failure-logs\n"
+        "\n"
+        "          python tools/assert-reproducible.py \\\n"
+        '            --platform "${PLATFORM}" \\\n'
+        "            --assert-byte-identical \\\n"
+        '            --expect-from-contract "contracts/image-manifest.json" \\\n'
+        '            --report "dist/reproducibility/base-micro.${ARCH}.reproducibility.json" \\\n'
+        '            --summary "dist/reproducibility/base-micro.${ARCH}.reproducibility.txt" \\\n'
+        '            --workdir "dist/reproducibility/work.${ARCH}" \\\n'
+        '            2>&1 | tee "dist/failure-logs/repro.${ARCH}.log"\n'
+        '          cat "dist/reproducibility/base-micro.${ARCH}.reproducibility.txt"\n'
+    )
+    require(
+        teed_repro_gate in reproducibility,
+        "nightly reproducibility job must preserve the exact teed reproducibility gate command",
+    )
+
     for block, kind in [(reproducibility, "reproducibility"), (hardening, "hardening")]:
         emit = f"      - name: Emit {kind} decision envelope\n        if: ${{{{ always() }}}}"
         upload = f"      - name: Upload {kind} decision envelope\n        if: ${{{{ always() }}}}"
         require(emit in block, f"nightly {kind} producer must emit with if: always()")
         require(upload in block, f"nightly {kind} producer must upload with if: always()")
         require(block.index(emit) < block.index(upload), f"nightly {kind} envelope must be emitted before upload")
+
+    guarded_failure_log_steps = [
+        (
+            reproducibility,
+            "reproducibility",
+            """      - name: Emit reproducibility decision envelope
+        if: ${{ always() }}
+        env:
+          ARCH: ${{ matrix.arch }}
+          GATE_OUTCOME: ${{ steps.repro-gate.outcome }}
+        run: |
+          args=(
+            --kind repro
+            --arch "${ARCH}"
+            --contract contracts/image-manifest.json
+            --output "dist/summary/base-micro.${ARCH}.repro.json"
+          )
+          if [ "${GATE_OUTCOME}" = "failure" ]; then
+            args+=(--failure-log "dist/failure-logs/repro.${ARCH}.log")
+          fi
+          python3 tools/summarize-gates.py "${args[@]}"
+""",
+        ),
+        (
+            hardening,
+            "hardening",
+            """      - name: Emit hardening decision envelope
+        if: ${{ always() }}
+        env:
+          ARCH: ${{ matrix.arch }}
+          GATE_OUTCOME: ${{ steps.hardening-gate.outcome }}
+        run: |
+          args=(
+            --kind hardening
+            --arch "${ARCH}"
+            --contract contracts/image-manifest.json
+            --output "dist/summary/base-micro.${ARCH}.hardening.json"
+          )
+          if [ "${GATE_OUTCOME}" = "failure" ]; then
+            args+=(--failure-log "dist/failure-logs/hardening.${ARCH}.log")
+          fi
+          python3 tools/summarize-gates.py "${args[@]}"
+""",
+        ),
+    ]
+    for block, kind, guarded_step in guarded_failure_log_steps:
+        require(
+            guarded_step in block and block.count("--failure-log") == 1,
+            f"nightly {kind} producer must pass --failure-log only under its failed-step outcome guard",
+        )
     require_action_sha_pin(text, "nightly workflow", "actions/upload-artifact", count=2)
     require_action_sha_pin(text, "nightly workflow", "actions/download-artifact", count=1)
 

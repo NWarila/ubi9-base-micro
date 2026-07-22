@@ -19,6 +19,7 @@ ARCHES = ("amd64", "arm64")
 EXPECTED_KEYS = tuple((kind, arch) for kind in ("hardening", "repro") for arch in ARCHES)
 MARKER = "<!-- ubi9-base-micro-nightly-drift:v1 -->"
 SCHEMA_VERSION = "1.1.0"
+FAILURE_DETAIL_LIMIT = 500
 JOB_RESULTS = {
     "hardening": "hardening matrix",
     "build": "build and hardening aggregate",
@@ -185,7 +186,12 @@ def _repro_view(envelope: dict[str, Any], arch: str) -> tuple[dict[str, bool], l
 
 def _envelopes(
     values: list[Any],
-) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, bool]], list[str]]:
+) -> tuple[
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, bool]],
+    dict[tuple[str, str], str],
+    list[str],
+]:
     indexed: dict[tuple[str, str], list[dict[str, Any]]] = {}
     reasons: list[str] = []
     for index, value in enumerate(values):
@@ -203,6 +209,7 @@ def _envelopes(
 
     hardening: dict[str, dict[str, Any]] = {}
     repro: dict[str, dict[str, bool]] = {}
+    failure_details: dict[tuple[str, str], str] = {}
     for kind, arch in EXPECTED_KEYS:
         matches = indexed.get((kind, arch), [])
         if len(matches) != 1:
@@ -211,6 +218,12 @@ def _envelopes(
             continue
         envelope = matches[0]
         try:
+            raw_failure_detail = envelope.get("failure_detail")
+            if raw_failure_detail is not None:
+                failure_detail = _string(raw_failure_detail, f"{arch} {kind} failure detail")
+                if len(failure_detail) > FAILURE_DETAIL_LIMIT:
+                    raise RenderError(f"{arch} {kind} failure detail exceeds the length limit")
+                failure_details[(kind, arch)] = failure_detail
             if not _boolean(envelope.get("complete"), f"{arch} {kind} complete"):
                 reasons.append(f"{arch} {kind} envelope is incomplete")
                 continue
@@ -228,13 +241,14 @@ def _envelopes(
             reasons.extend(view_reasons)
         except RenderError:
             reasons.append(f"{arch} {kind} envelope content is malformed")
-    return hardening, repro, list(dict.fromkeys(reasons))
+    return hardening, repro, failure_details, list(dict.fromkeys(reasons))
 
 
 def _arch_section(
     arch: str,
     hardening: dict[str, dict[str, Any]],
     repro: dict[str, dict[str, bool]],
+    failure_details: dict[tuple[str, str], str],
 ) -> list[str]:
     hardening_view = hardening.get(arch)
     repro_view = repro.get(arch)
@@ -262,6 +276,9 @@ def _arch_section(
                 f"- Footprint: {'passed' if hardening_view['footprint_passed'] else 'failed'}",
             ]
         )
+    hardening_failure_detail = failure_details.get(("hardening", arch))
+    if hardening_failure_detail is not None:
+        lines.append(f"- Hardening failure detail: {_safe_text(hardening_failure_detail)}")
     if repro_view is None:
         lines.append("- Reproducibility evidence: unavailable or malformed")
     else:
@@ -271,6 +288,9 @@ def _arch_section(
             f"rootfs-contract={'match' if repro_view['rootfs_matches_contract'] else 'drift'}; "
             f"RPMDB-contract={'match' if repro_view['rpmdb_matches_contract'] else 'drift'}"
         )
+    repro_failure_detail = failure_details.get(("repro", arch))
+    if repro_failure_detail is not None:
+        lines.append(f"- Reproducibility failure detail: {_safe_text(repro_failure_detail)}")
     return lines
 
 
@@ -278,7 +298,7 @@ def render_issue(envelope_values: list[Any], results_value: Any, context_value: 
     reasons = _job_result_reasons(results_value)
     run_url, date, context_reasons = _context(context_value)
     reasons.extend(context_reasons)
-    hardening, repro, envelope_reasons = _envelopes(envelope_values)
+    hardening, repro, failure_details, envelope_reasons = _envelopes(envelope_values)
     reasons.extend(envelope_reasons)
     reasons = list(dict.fromkeys(reasons))
     attention = bool(reasons)
@@ -296,7 +316,7 @@ def render_issue(envelope_values: list[Any], results_value: Any, context_value: 
     else:
         lines.extend(["Both architectures are complete, reproducible, and free of actionable drift.", ""])
     for arch in ARCHES:
-        lines.extend(_arch_section(arch, hardening, repro))
+        lines.extend(_arch_section(arch, hardening, repro, failure_details))
         lines.append("")
     if run_url:
         lines.extend([f'<a href="{html.escape(run_url, quote=True)}">Open the complete nightly run</a>', ""])

@@ -141,11 +141,13 @@ jobs:
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Build twice and assert rootfs byte identity
+        id: repro-gate
         env:
           PLATFORM: ${{ matrix.platform }}
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
+          mkdir -p dist/failure-logs
 
           python tools/assert-reproducible.py \
             --platform "${PLATFORM}" \
@@ -153,19 +155,26 @@ jobs:
             --expect-from-contract "contracts/image-manifest.json" \
             --report "dist/reproducibility/base-micro.${ARCH}.reproducibility.json" \
             --summary "dist/reproducibility/base-micro.${ARCH}.reproducibility.txt" \
-            --workdir "dist/reproducibility/work.${ARCH}"
+            --workdir "dist/reproducibility/work.${ARCH}" \
+            2>&1 | tee "dist/failure-logs/repro.${ARCH}.log"
           cat "dist/reproducibility/base-micro.${ARCH}.reproducibility.txt"
 
       - name: Emit reproducibility decision envelope
         if: ${{ always() }}
         env:
           ARCH: ${{ matrix.arch }}
+          GATE_OUTCOME: ${{ steps.repro-gate.outcome }}
         run: |
-          python3 tools/summarize-gates.py \
-            --kind repro \
-            --arch "${ARCH}" \
-            --contract contracts/image-manifest.json \
+          args=(
+            --kind repro
+            --arch "${ARCH}"
+            --contract contracts/image-manifest.json
             --output "dist/summary/base-micro.${ARCH}.repro.json"
+          )
+          if [ "${GATE_OUTCOME}" = "failure" ]; then
+            args+=(--failure-log "dist/failure-logs/repro.${ARCH}.log")
+          fi
+          python3 tools/summarize-gates.py "${args[@]}"
 
       - name: Upload reproducibility decision envelope
         if: ${{ always() }}
@@ -217,18 +226,30 @@ jobs:
           cosign-release: v2.5.2
 
       - name: Run full test-only gate set
-        run: bash tools/run-test-gates.sh
+        id: hardening-gate
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/failure-logs
+          bash tools/run-test-gates.sh 2>&1 | tee "dist/failure-logs/hardening.${ARCH}.log"
 
       - name: Emit hardening decision envelope
         if: ${{ always() }}
         env:
           ARCH: ${{ matrix.arch }}
+          GATE_OUTCOME: ${{ steps.hardening-gate.outcome }}
         run: |
-          python3 tools/summarize-gates.py \
-            --kind hardening \
-            --arch "${ARCH}" \
-            --contract contracts/image-manifest.json \
+          args=(
+            --kind hardening
+            --arch "${ARCH}"
+            --contract contracts/image-manifest.json
             --output "dist/summary/base-micro.${ARCH}.hardening.json"
+          )
+          if [ "${GATE_OUTCOME}" = "failure" ]; then
+            args+=(--failure-log "dist/failure-logs/hardening.${ARCH}.log")
+          fi
+          python3 tools/summarize-gates.py "${args[@]}"
 
       - name: Upload hardening decision envelope
         if: ${{ always() }}

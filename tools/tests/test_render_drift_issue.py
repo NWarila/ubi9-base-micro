@@ -11,12 +11,19 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOL = ROOT / "tools/render-drift-issue.py"
+SUMMARY_TOOL = ROOT / "tools/summarize-gates.py"
+SHA_A = "a" * 64
+SHA_B = "b" * 64
+DIGEST_MISMATCH_LOG = (
+    f"rootfs_digest mismatch for left: expected {SHA_A} from /workspace/contracts/image-manifest.json, actual {SHA_B}"
+)
+DIGEST_MISMATCH_DETAIL = f"rootfs_digest mismatch for left: expected {SHA_A}, actual {SHA_B}"
 
 
 def _load_tool() -> ModuleType:
@@ -79,6 +86,43 @@ def clean_inputs() -> tuple[list[dict[str, Any]], dict[str, str], dict[str, str]
 def _render(inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]]) -> tuple[str, bool]:
     body, attention = RENDERER.render_issue(*inputs)
     return str(body), bool(attention)
+
+
+def _summarize_failed_repro(tmp_path: Path, failure_log: Path | None) -> dict[str, Any]:
+    contract = tmp_path / "image-manifest.json"
+    contract.write_text(
+        json.dumps(
+            {
+                "architectures": ["amd64", "arm64"],
+                "runtime": {"footprint_limit_bytes": 1000},
+                "reproducibility": {
+                    "canonical_rootfs_digest": {"amd64": SHA_A, "arm64": SHA_B},
+                    "rpmdb_sha256": {"amd64": SHA_B, "arm64": SHA_A},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "repro-amd64.json"
+    command = [
+        sys.executable,
+        str(SUMMARY_TOOL),
+        "--kind",
+        "repro",
+        "--arch",
+        "amd64",
+        "--dist-dir",
+        str(tmp_path / "dist"),
+        "--contract",
+        str(contract),
+        "--output",
+        str(output),
+    ]
+    if failure_log is not None:
+        command.extend(["--failure-log", str(failure_log)])
+    result = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert result.returncode == 0
+    return cast(dict[str, Any], json.loads(output.read_text(encoding="utf-8")))
 
 
 def test_clean_is_explicitly_no_attention(
@@ -183,6 +227,166 @@ def test_raw_secret_material_is_never_rendered(
     assert "Secret findings: 1 (count only; matched material is never rendered)" in body
     assert raw_secret not in body
     assert "/root/key" not in body
+
+
+def test_failed_gate_diagnostic_propagates_through_summary_and_render(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]], tmp_path: Path
+) -> None:
+    failure_log = tmp_path / "failed-gate.log"
+    failure_log.write_text(
+        f"setup completed\n\x1b[31mreproducibility assertion failed: {DIGEST_MISMATCH_LOG}\x1b[0m\n",
+        encoding="utf-8",
+    )
+    clean_inputs[0][2] = _summarize_failed_repro(tmp_path, failure_log)
+    clean_inputs[1]["reproducibility-gate"] = "failure"
+
+    body, attention = _render(clean_inputs)
+
+    assert attention is True
+    assert "- Reproducibility evidence: unavailable or malformed" in body
+    assert (
+        rf"- Reproducibility failure detail: rootfs\_digest mismatch for left: expected {SHA_A}"
+        rf", actual {SHA_B}" in body
+    )
+    assert "\x1b" not in body
+
+
+@pytest.mark.parametrize(
+    ("unsafe_line", "secret"),
+    [
+        ("ERROR: request failed password=CorrectHorseBattery123", "CorrectHorseBattery123"),
+        ("ERROR: request failed token=ghp_SECRET_TOKEN_123", "ghp_SECRET_TOKEN_123"),
+        ("ERROR: request failed Authorization: Bearer SECRET_AUTH_456", "SECRET_AUTH_456"),
+    ],
+)
+def test_failed_gate_secret_is_absent_from_envelope_and_rendered_issue(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]],
+    tmp_path: Path,
+    unsafe_line: str,
+    secret: str,
+) -> None:
+    failure_log = tmp_path / "failed-gate.log"
+    failure_log.write_text(f"{unsafe_line}\n", encoding="utf-8")
+    clean_inputs[0][2] = _summarize_failed_repro(tmp_path, failure_log)
+    clean_inputs[1]["reproducibility-gate"] = "failure"
+
+    serialized = json.dumps(clean_inputs[0][2], sort_keys=True)
+    body, attention = _render(clean_inputs)
+
+    assert attention is True
+    assert "failure_detail" not in clean_inputs[0][2]
+    assert secret not in serialized
+    assert secret not in body
+
+
+def test_digest_source_secret_is_absent_from_envelope_and_rendered_issue(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]], tmp_path: Path
+) -> None:
+    secret = "CorrectHorseBattery123"
+    failure_log = tmp_path / "failed-gate.log"
+    failure_log.write_text(
+        "reproducibility assertion failed: "
+        f"rootfs_digest mismatch for left: expected {SHA_A} "
+        f"from Authorization: Bearer {secret}, actual {SHA_B}\n",
+        encoding="utf-8",
+    )
+    clean_inputs[0][2] = _summarize_failed_repro(tmp_path, failure_log)
+    clean_inputs[1]["reproducibility-gate"] = "failure"
+
+    serialized = json.dumps(clean_inputs[0][2], sort_keys=True)
+    body, attention = _render(clean_inputs)
+
+    assert attention is True
+    assert clean_inputs[0][2]["failure_detail"] == DIGEST_MISMATCH_DETAIL
+    assert secret not in serialized
+    assert secret not in body
+
+
+@pytest.mark.parametrize("suffix", ["", ".x86_64"])
+def test_letter_led_nevra_secret_is_absent_from_envelope_and_rendered_issue(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]],
+    tmp_path: Path,
+    suffix: str,
+) -> None:
+    secret = "CorrectHorseBattery123"
+    failure_log = tmp_path / "failed-gate.log"
+    failure_log.write_text(
+        "runtime rootfs openssl-libs NEVRA does not match verified stage: "
+        f"openssl-libs-{secret}{suffix} != openssl-libs-1:3.5.5-5.el9_8.x86_64\n",
+        encoding="utf-8",
+    )
+    clean_inputs[0][2] = _summarize_failed_repro(tmp_path, failure_log)
+    clean_inputs[1]["reproducibility-gate"] = "failure"
+
+    serialized = json.dumps(clean_inputs[0][2], sort_keys=True)
+    body, attention = _render(clean_inputs)
+
+    assert attention is True
+    assert "failure_detail" not in clean_inputs[0][2]
+    assert secret not in serialized
+    assert secret not in body
+
+
+def test_osc_escape_is_absent_from_envelope_and_rendered_issue(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]], tmp_path: Path
+) -> None:
+    failure_log = tmp_path / "failed-gate.log"
+    failure_log.write_text(
+        f"\x1b]0;private build title\x1b\\reproducibility assertion failed: {DIGEST_MISMATCH_LOG}\n",
+        encoding="utf-8",
+    )
+    clean_inputs[0][2] = _summarize_failed_repro(tmp_path, failure_log)
+    clean_inputs[1]["reproducibility-gate"] = "failure"
+
+    serialized = json.dumps(clean_inputs[0][2], sort_keys=True)
+    body, attention = _render(clean_inputs)
+
+    assert attention is True
+    assert clean_inputs[0][2]["failure_detail"] == DIGEST_MISMATCH_DETAIL
+    assert "\x1b" not in clean_inputs[0][2]["failure_detail"]
+    assert "\x1b" not in serialized
+    assert "\x1b" not in body
+    assert "private build title" not in serialized
+    assert "private build title" not in body
+
+
+@pytest.mark.parametrize("case", ["absent_argument", "missing_file", "nonmatching"])
+def test_absent_or_unusable_failure_log_keeps_honest_fallback(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]], tmp_path: Path, case: str
+) -> None:
+    failure_log: Path | None = None
+    if case != "absent_argument":
+        failure_log = tmp_path / "failed-gate.log"
+        if case == "nonmatching":
+            failure_log.write_text("ordinary gate output only\n", encoding="utf-8")
+    clean_inputs[0][2] = _summarize_failed_repro(tmp_path, failure_log)
+    clean_inputs[1]["reproducibility-gate"] = "failure"
+
+    body, attention = _render(clean_inputs)
+
+    assert attention is True
+    assert "- Reproducibility evidence: unavailable or malformed" in body
+    assert "Reproducibility failure detail:" not in body
+
+
+def test_malformed_failure_detail_is_not_rendered(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]],
+) -> None:
+    clean_inputs[0][2] = {
+        "schema_version": "1.1.0",
+        "kind": "repro",
+        "arch": "amd64",
+        "complete": False,
+        "attention_reasons": ["reproducibility evidence is missing or malformed"],
+        "failure_detail": ["ERROR: unvalidated detail"],
+    }
+
+    body, attention = _render(clean_inputs)
+
+    assert attention is True
+    assert "- Reproducibility evidence: unavailable or malformed" in body
+    assert "Reproducibility failure detail:" not in body
+    assert "unvalidated detail" not in body
 
 
 def test_cli_writes_body_and_machine_decision(
