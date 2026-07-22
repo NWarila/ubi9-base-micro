@@ -53,8 +53,8 @@
       "arm64": "83158effe3624027e0a2877da64c75bb243a350fc7447eab95cb202ad15bbf04"
     },
     "rpmdb_sha256": {
-      "amd64": "610f66e9974a9c970323b08b9bee54ae3900d85cd54142baabf832960adebcf6",
-      "arm64": "af600c390b5d0cb9d0dbf20dc13d74936f610d170b145ea1c3e18ff13359b60c"
+      "amd64": "a93e0b7f56fb29ce4e48d1e2862226c1eaeef24e08f6de357eb2af86c2cd2ae3",
+      "arm64": "fbac10701b213793c227fbbb20521cc1ec6ea16e042c528c1d7d83f0cd2842b8"
     }
   },
   "provenance": {
