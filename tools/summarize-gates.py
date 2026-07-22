@@ -26,6 +26,46 @@ OPENVEX_NOT_AFFECTED_JUSTIFICATIONS = {
     "inline_mitigations_already_exist",
 }
 SCHEMA_VERSION = "1.1.0"
+FAILURE_DETAIL_LIMIT = 500
+NEVRA_CANDIDATE_LIMIT = 160
+NEVRA_EPOCH_LIMIT = 10
+NEVRA_VERSION_LIMIT = 32
+NEVRA_RELEASE_LIMIT = 48
+CONTROL_OR_ESCAPE_SEQUENCE = re.compile(
+    r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\|$)"
+    r"|\x1b[P^_X][^\x1b]*(?:\x1b\\|$)"
+    r"|\x1b\[[0-?]*[ -/]*[@-~]"
+    r"|\x1b[ -/]*[@-~]"
+    r"|[\x00-\x1f\x7f-\x9f]"
+)
+ROOTFS_FAILURE_PREFIX = r"(?:#[0-9]+ [0-9.]+ )?(?:runtime rootfs build failed: )?"
+OPENSSL_LIBS_NEVRA_MISMATCH = re.compile(
+    rf"^{ROOTFS_FAILURE_PREFIX}"
+    r"runtime rootfs openssl-libs NEVRA does not match verified stage: "
+    rf"(?P<actual>\S{{1,{NEVRA_CANDIDATE_LIMIT}}}) != "
+    rf"(?P<verified>\S{{1,{NEVRA_CANDIDATE_LIMIT}}})$"
+)
+PROVIDER_NEVRA_MISMATCH = re.compile(
+    rf"^{ROOTFS_FAILURE_PREFIX}"
+    r"runtime rootfs provider NEVRA does not match verified stage: "
+    rf"(?P<actual>\S{{1,{NEVRA_CANDIDATE_LIMIT}}}) != "
+    rf"(?P<verified>\S{{1,{NEVRA_CANDIDATE_LIMIT}}})$"
+)
+NEVRA = re.compile(
+    r"^(?P<name>openssl-libs|openssl-fips-provider-so)-"
+    r"(?:(?P<epoch>[0-9]+):)?"
+    r"(?P<version>[0-9][0-9.]*)-"
+    r"(?P<release>[0-9][0-9A-Za-z._+~]*)\."
+    r"(?P<arch>x86_64|aarch64|noarch)$"
+)
+DIGEST_MISMATCH = re.compile(
+    r"^(?:reproducibility assertion failed: )?"
+    r"(?P<fact>rootfs_digest|rpmdb_sha256) mismatch for "
+    r"(?P<side>left|right|single rootfs linux/(?:amd64|arm64)): expected "
+    r"(?P<expected>[0-9a-f]{64}) from "
+    r".+, actual "
+    r"(?P<actual>[0-9a-f]{64})$"
+)
 
 
 class SummaryError(Exception):
@@ -90,6 +130,63 @@ def _base_envelope(kind: str, arch: str) -> dict[str, Any]:
         "complete": False,
         "attention_reasons": [],
     }
+
+
+def _canonical_nevra(candidate: str, expected_name: str) -> str | None:
+    match = NEVRA.fullmatch(candidate)
+    if match is None or match.group("name") != expected_name:
+        return None
+    epoch = match.group("epoch")
+    version = match.group("version")
+    release = match.group("release")
+    arch = match.group("arch")
+    if (
+        (epoch is not None and len(epoch) > NEVRA_EPOCH_LIMIT)
+        or len(version) > NEVRA_VERSION_LIMIT
+        or len(release) > NEVRA_RELEASE_LIMIT
+    ):
+        return None
+    canonical_epoch = "" if epoch is None else f"{epoch}:"
+    return f"{expected_name}-{canonical_epoch}{version}-{release}.{arch}"
+
+
+def _reconstruct_failure_detail(line: str) -> str | None:
+    match = OPENSSL_LIBS_NEVRA_MISMATCH.fullmatch(line)
+    if match is not None:
+        actual = _canonical_nevra(match.group("actual"), "openssl-libs")
+        verified = _canonical_nevra(match.group("verified"), "openssl-libs")
+        if actual is None or verified is None:
+            return None
+        return f"runtime rootfs openssl-libs NEVRA does not match verified stage: {actual} != {verified}"
+
+    match = PROVIDER_NEVRA_MISMATCH.fullmatch(line)
+    if match is not None:
+        actual = _canonical_nevra(match.group("actual"), "openssl-fips-provider-so")
+        verified = _canonical_nevra(match.group("verified"), "openssl-fips-provider-so")
+        if actual is None or verified is None:
+            return None
+        return f"runtime rootfs provider NEVRA does not match verified stage: {actual} != {verified}"
+
+    match = DIGEST_MISMATCH.fullmatch(line)
+    if match is not None:
+        return (
+            f"{match.group('fact')} mismatch for {match.group('side')}: "
+            f"expected {match.group('expected')}, actual {match.group('actual')}"
+        )
+    return None
+
+
+def _failure_detail(path: Path) -> str | None:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (FileNotFoundError, OSError, UnicodeDecodeError):
+        return None
+    for line in lines:
+        sanitized = CONTROL_OR_ESCAPE_SEQUENCE.sub("", line).strip()
+        detail = _reconstruct_failure_detail(sanitized)
+        if detail is not None:
+            return detail[:FAILURE_DETAIL_LIMIT]
+    return None
 
 
 def _contract_values(contract_path: Path, arch: str) -> tuple[int, str, str]:
@@ -484,6 +581,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--arch", required=True, choices=sorted(ARCHES))
     parser.add_argument("--contract", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--failure-log", type=Path)
     parser.add_argument("--dist-dir", type=Path, default=Path("dist"))
     parser.add_argument("--repro-report", type=Path)
     parser.add_argument("--trivy-ignore", type=Path, default=Path("security/cve-ignore.trivyignore.yaml"))
@@ -506,6 +604,10 @@ def main(argv: list[str]) -> int:
     else:
         report = args.repro_report or (args.dist_dir / f"reproducibility/base-micro.{args.arch}.reproducibility.json")
         envelope = summarize_repro(args.arch, report, args.contract)
+    if args.failure_log is not None:
+        failure_detail = _failure_detail(args.failure_log)
+        if failure_detail is not None:
+            envelope["failure_detail"] = failure_detail
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(envelope, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return 0
