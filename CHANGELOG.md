@@ -10,6 +10,8 @@ and this project adheres to
 
 ### Changed
 
+- Suppressed repeat owner pings for unchanged unresolved nightly drift while preserving alerts for
+  new, changed, or recurring incidents.
 - Surfaced the failing gate's captured diagnostic line in nightly drift alerts.
 - Pinned the complete `fips-verify` OpenSSL closure to direct Red Hat UBI CDN
   RPMs, ending live-metadata package resolution in that stage.

@@ -84,8 +84,13 @@ def clean_inputs() -> tuple[list[dict[str, Any]], dict[str, str], dict[str, str]
 
 
 def _render(inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]]) -> tuple[str, bool]:
-    body, attention = RENDERER.render_issue(*inputs)
+    body, attention, _signature = RENDERER.render_issue(*inputs)
     return str(body), bool(attention)
+
+
+def _signature(inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]]) -> str:
+    _body, _attention, signature = RENDERER.render_issue(*inputs)
+    return str(signature)
 
 
 def _summarize_failed_repro(tmp_path: Path, failure_log: Path | None) -> dict[str, Any]:
@@ -389,6 +394,183 @@ def test_malformed_failure_detail_is_not_rendered(
     assert "unvalidated detail" not in body
 
 
+def test_signature_changes_again_on_a_to_b_to_a_against_latest(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]],
+) -> None:
+    clean_inputs[1]["build"] = "failure"
+    signature_a = _signature(clean_inputs)
+
+    clean_inputs[1]["build"] = "cancelled"
+    signature_b = _signature(clean_inputs)
+
+    clean_inputs[1]["build"] = "failure"
+    signature_a_again = _signature(clean_inputs)
+
+    assert signature_a != signature_b
+    assert signature_b != signature_a_again
+    assert signature_a_again == signature_a
+
+
+def test_signature_changes_for_different_cve_with_same_categorical_reason(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]],
+) -> None:
+    actionable = clean_inputs[0][0]["cves"]["actionable"]
+    actionable.update(
+        {
+            "unique": 1,
+            "findings": [
+                {
+                    "id": "CVE-2099-0001",
+                    "severity": "HIGH",
+                    "package": "openssl-libs",
+                    "fixable": True,
+                    "fixed_version": "3.1.0-1",
+                }
+            ],
+        }
+    )
+    clean_inputs[0][0]["attention_reasons"] = ["amd64 has actionable HIGH/CRITICAL CVEs"]
+    signature_a = _signature(clean_inputs)
+
+    actionable["findings"][0].update({"id": "CVE-2099-0002", "package": "libcrypto", "fixed_version": "3.1.0-2"})
+    signature_b = _signature(clean_inputs)
+
+    assert signature_a != signature_b
+
+
+def test_signature_changes_when_stig_failure_count_changes(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]],
+) -> None:
+    clean_inputs[0][1]["stig"]["fail"] = 1
+    clean_inputs[0][1]["attention_reasons"] = ["arm64 has failing STIG results"]
+    signature_one = _signature(clean_inputs)
+
+    clean_inputs[0][1]["stig"]["fail"] = 17
+    signature_many = _signature(clean_inputs)
+
+    assert signature_one != signature_many
+
+
+def test_signature_changes_for_job_result_and_malformed_envelope_states(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]],
+) -> None:
+    clean_inputs[1]["reproducibility-gate"] = "failure"
+    failed_job_signature = _signature(clean_inputs)
+    clean_inputs[1]["reproducibility-gate"] = "cancelled"
+    assert _signature(clean_inputs) != failed_job_signature
+
+    clean_inputs[0][3]["complete"] = False
+    incomplete_signature = _signature(clean_inputs)
+    clean_inputs[0][3]["complete"] = True
+    clean_inputs[0][3]["attention_reasons"] = {"malformed": True}
+    malformed_signature = _signature(clean_inputs)
+
+    assert incomplete_signature != malformed_signature
+
+
+def test_signature_ignores_volatile_run_context_values(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]],
+) -> None:
+    signature_a = _signature(clean_inputs)
+
+    clean_inputs[2]["run_url"] = "https://github.com/NWarila/ubi9-base-micro/actions/runs/999999"
+    clean_inputs[2]["date"] = "2099-12-31"
+
+    assert _signature(clean_inputs) == signature_a
+
+
+@pytest.mark.parametrize("field", ["accepted_vex", "raw_scanners", "footprint_bytes", "stig_totals"])
+def test_signature_ignores_non_actionable_producer_noise(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]], field: str
+) -> None:
+    signature_a = _signature(clean_inputs)
+
+    if field == "accepted_vex":
+        clean_inputs[0][0]["vex"]["accepted"] = 947
+    elif field == "raw_scanners":
+        clean_inputs[0][0]["cves"]["raw"] = {"trivy": 700, "grype": 800, "unique": 900}
+        clean_inputs[0][0]["cves"]["ignored"] = {"unique": 900}
+    elif field == "footprint_bytes":
+        clean_inputs[0][0]["footprint"]["regular_file_bytes"] = 1
+        clean_inputs[0][0]["footprint"]["limit_bytes"] = 2
+    else:
+        clean_inputs[0][0]["stig"].update({"total_rule_results": 9000, "pass": 8000, "not_selected": 1000})
+
+    assert _signature(clean_inputs) == signature_a
+
+
+def test_signature_is_canonical_across_input_and_cve_order(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]],
+) -> None:
+    findings = [
+        {"id": "CVE-2099-0002", "severity": "HIGH", "package": "zlib", "fixable": True, "fixed_version": None},
+        {
+            "id": "CVE-2099-0001",
+            "severity": "CRITICAL",
+            "package": "openssl-libs",
+            "fixable": True,
+            "fixed_version": "3.1.0-1",
+        },
+    ]
+    clean_inputs[0][0]["cves"]["actionable"] = {"unique": 2, "findings": findings}
+    clean_inputs[0][0]["attention_reasons"] = ["amd64 has actionable HIGH/CRITICAL CVEs"]
+    signature_a = _signature(clean_inputs)
+
+    clean_inputs[0].reverse()
+    findings.reverse()
+    clean_inputs[1].clear()
+    clean_inputs[1].update({"reproducibility-gate": " SUCCESS ", "build": " SUCCESS ", "hardening": " SUCCESS "})
+
+    assert _signature(clean_inputs) == signature_a
+
+
+def test_signature_tracks_context_validity_and_producer_attention_presence_only(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]],
+) -> None:
+    clean_signature = _signature(clean_inputs)
+
+    clean_inputs[2]["run_url"] = "http://invalid.example/run/123"
+    invalid_context_signature = _signature(clean_inputs)
+    assert invalid_context_signature != clean_signature
+
+    clean_inputs[2]["run_url"] = "https://valid.example/run/123"
+    clean_inputs[0][2]["attention_reasons"] = ["producer reason A"]
+    producer_attention_signature = _signature(clean_inputs)
+    clean_inputs[0][2]["attention_reasons"] = ["producer reason B"]
+
+    assert producer_attention_signature != clean_signature
+    assert _signature(clean_inputs) == producer_attention_signature
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("secret_count", 3),
+        ("missing_vex", 4),
+        ("footprint_failed", False),
+        ("reproducibility", False),
+        ("failure_detail", "rpmdb digest mismatch: expected a, actual b"),
+    ],
+)
+def test_signature_tracks_remaining_incident_projection_fields(
+    clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]], field: str, value: Any
+) -> None:
+    clean_signature = _signature(clean_inputs)
+
+    if field == "secret_count":
+        clean_inputs[0][0]["secrets"] = {"finding_count": value, "passed": False}
+    elif field == "missing_vex":
+        clean_inputs[0][0]["vex"]["missing"] = value
+    elif field == "footprint_failed":
+        clean_inputs[0][0]["footprint"]["passed"] = value
+    elif field == "reproducibility":
+        clean_inputs[0][2]["reproducibility"]["byte_identical"] = value
+    else:
+        clean_inputs[0][2]["failure_detail"] = value
+
+    assert _signature(clean_inputs) != clean_signature
+
+
 def test_cli_writes_body_and_machine_decision(
     clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]], tmp_path: Path
 ) -> None:
@@ -432,5 +614,9 @@ def test_cli_writes_body_and_machine_decision(
 
     assert result.returncode == 0
     assert result.stdout == "attention=false\n"
-    assert json.loads(decision.read_text(encoding="utf-8")) == {"attention": False}
+    decision_value = cast(dict[str, Any], json.loads(decision.read_text(encoding="utf-8")))
+    assert decision_value["attention"] is False
+    assert isinstance(decision_value["signature"], str)
+    assert len(decision_value["signature"]) == 64
+    assert set(decision_value["signature"]) <= set("0123456789abcdef")
     assert body.read_text(encoding="utf-8").count(RENDERER.MARKER) == 1
