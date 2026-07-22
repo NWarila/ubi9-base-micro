@@ -4,7 +4,7 @@
 # Micro-container candidate: gate-adjacent - host/CI validation and discarded-stage filename emission.
 # Build-process: yes - validates locks and emits runtime RPM filenames in the rpm-rootfs build stage.
 
-"""Parse and validate runtime and builder RPM lockfiles."""
+"""Parse and validate runtime, FIPS-verification, and builder RPM lockfiles."""
 
 from __future__ import annotations
 
@@ -472,6 +472,62 @@ def validate(lockfile: Lockfile, *, arch: str, policy: LockPolicy | None = None)
     )
 
 
+def validate_fips(
+    lockfile: Lockfile,
+    *,
+    arch: str,
+    source_date_epoch: str | None = None,
+) -> None:
+    """Validate the one-RPM, build-only OpenSSL CLI lock policy."""
+
+    rpm_arch = _rpm_arch_for_platform(arch)
+    expected_source_date_epoch = source_date_epoch or dockerfile_arg_default(
+        Path(__file__).resolve().parents[1],
+        "SOURCE_DATE_EPOCH",
+    )
+    _require(lockfile.headers.get("arch") == arch, f"{lockfile.path}: invalid arch header")
+    _require(
+        lockfile.headers.get("source_date_epoch") == expected_source_date_epoch,
+        f"{lockfile.path}: invalid source_date_epoch header",
+    )
+    _require(lockfile.headers.get("columns") == COLUMNS, f"{lockfile.path}: invalid columns header")
+    _require(
+        len(lockfile.rows) == 1 and lockfile.rows[0].name == "openssl",
+        f"{lockfile.path}: FIPS verification closure must contain exactly one openssl CLI row",
+    )
+
+    row = lockfile.rows[0]
+
+    def validate_policy_before_hashes(candidate: LockRow) -> None:
+        _require(
+            candidate.final_rpmdb == "no",
+            f"{lockfile.path}: FIPS verification RPM must use final_rpmdb=no for {candidate.package}",
+        )
+        _require(
+            candidate.arch == rpm_arch,
+            f"{lockfile.path}: invalid arch={candidate.arch} for {candidate.package}",
+        )
+        _require(
+            ASCII_DECIMAL.fullmatch(candidate.epoch) is not None,
+            f"{lockfile.path}: non-numeric epoch for {candidate.package}",
+        )
+
+    def validate_policy_after_direct_match(candidate: LockRow) -> None:
+        _require(
+            candidate.package == lock_nevra(candidate),
+            f"{lockfile.path}: package field does not match FIPS verification row NEVRA: {candidate.package}",
+        )
+
+    validate_common(
+        lockfile,
+        mode=CommonValidationMode.STRICT,
+        before_hash_check=validate_policy_before_hashes,
+        after_direct_match_check=validate_policy_after_direct_match,
+    )
+    validate_assertion_compatibility(lockfile)
+    _require(row.name == "openssl", f"{lockfile.path}: FIPS verification lock must pin openssl")
+
+
 def validate_builder(lockfile: BuilderLockfile, *, arch: str) -> None:
     rpm_arch = _rpm_arch_for_platform(arch)
     _require(lockfile.headers.get("arch") == arch, f"{lockfile.path}: invalid arch header")
@@ -724,6 +780,11 @@ def builder_nevra(row: BuilderLockRow) -> str:
     return f"{row.name}-{epoch}{row.version}-{row.release}.{row.arch}"
 
 
+def lock_nevra(row: LockRow) -> str:
+    epoch = "" if row.epoch == "0" else f"{row.epoch}:"
+    return f"{row.name}-{epoch}{row.version}-{row.release}.{row.arch}"
+
+
 def rpm_filename(row: LockRow | BuilderLockRow) -> str:
     return f"{row.name}-{row.version}-{row.release}.{row.arch}.rpm"
 
@@ -779,6 +840,19 @@ def _validated_builder_lockfile(args: argparse.Namespace) -> BuilderLockfile:
     return lockfile
 
 
+def _validated_fips_lockfile(args: argparse.Namespace) -> Lockfile:
+    lockfile = parse(args.lockfile)
+    arch = args.arch or lockfile.headers.get("arch")
+    if arch not in RPM_ARCH_BY_PLATFORM:
+        raise LockError(f"{lockfile.path}: missing or unsupported arch header")
+    validate_fips(
+        lockfile,
+        arch=arch,
+        source_date_epoch=args.source_date_epoch,
+    )
+    return lockfile
+
+
 def _cmd_validate(args: argparse.Namespace) -> int:
     _validated_lockfile(args)
     return 0
@@ -786,6 +860,11 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
 def _cmd_builder_validate(args: argparse.Namespace) -> int:
     _validated_builder_lockfile(args)
+    return 0
+
+
+def _cmd_fips_validate(args: argparse.Namespace) -> int:
+    _validated_fips_lockfile(args)
     return 0
 
 
@@ -838,6 +917,18 @@ def _cmd_builder_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_fips_summary(args: argparse.Namespace) -> int:
+    lockfile = _validated_fips_lockfile(args)
+    summary = {
+        "headers": lockfile.headers,
+        "direct_rpms": [entry.as_dict() for entry in lockfile.direct_entries],
+        "rows": [row.as_dict() for row in lockfile.rows],
+        "rpm_filenames": [rpm_filename(row) for row in lockfile.rows],
+    }
+    print(json.dumps(summary, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
 def _cmd_arg_default(args: argparse.Namespace) -> int:
     print(dockerfile_arg_default(args.repo_root, args.name))
     return 0
@@ -861,6 +952,12 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
 def _add_builder_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--lockfile", required=True, type=Path)
     parser.add_argument("--arch", required=True, choices=sorted(RPM_ARCH_BY_PLATFORM))
+
+
+def _add_fips_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--lockfile", required=True, type=Path)
+    parser.add_argument("--arch", choices=sorted(RPM_ARCH_BY_PLATFORM))
+    parser.add_argument("--source-date-epoch")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -897,6 +994,20 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_builder_args(builder_summary_parser)
     builder_summary_parser.set_defaults(handler=_cmd_builder_summary)
+
+    fips_validate_parser = subparsers.add_parser(
+        "fips-validate",
+        help="validate a FIPS-verification OpenSSL CLI lockfile",
+    )
+    _add_fips_args(fips_validate_parser)
+    fips_validate_parser.set_defaults(handler=_cmd_fips_validate)
+
+    fips_summary_parser = subparsers.add_parser(
+        "fips-summary",
+        help="print validated FIPS-verification lockfile data as JSON",
+    )
+    _add_fips_args(fips_summary_parser)
+    fips_summary_parser.set_defaults(handler=_cmd_fips_summary)
 
     arg_default_parser = subparsers.add_parser(
         "arg-default",

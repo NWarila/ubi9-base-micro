@@ -70,7 +70,7 @@ repos:
         additional_dependencies: [pytest==8.4.1]
         pass_filenames: false
         always_run: true
-        files: ^(tools/rpmlock\.py|tools/tests/test_rpmlock\.py|rpm-lock/(builder|runtime)\.(amd64|arm64)\.txt)$
+        files: ^(tools/rpmlock\.py|tools/tests/test_rpmlock\.py|rpm-lock/(builder|fips-verify|runtime)\.(amd64|arm64)\.txt)$
       - id: build-runtime-rootfs-pytest
         name: build runtime rootfs pytest
         entry: python -m pytest tools/tests/test_build_runtime_rootfs.py -q

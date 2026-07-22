@@ -1,0 +1,5 @@
+# arch: arm64
+# source_date_epoch: 1704067200
+# columns: package|final_rpmdb|name|epoch|version|release|arch|sha256_header|sigmd5
+# direct_rpm: openssl-1:3.5.5-5.el9_8.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/o/openssl-3.5.5-5.el9_8.aarch64.rpm|816a01d9e4436ba5ba62c6a391156b8fc02dd78b15587425eb2798d488989dce
+openssl-1:3.5.5-5.el9_8.aarch64|no|openssl|1|3.5.5|5.el9_8|aarch64|86d57f458da306d313d34556effae1a9f05a23a91413252a3ffbf04cdd34bf35|bb83e0c45b9dcc1d8940936a10f1b3b8

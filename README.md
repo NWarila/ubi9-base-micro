@@ -20,6 +20,12 @@ in approved mode, and removes runtime shell/package-manager entry points. The
 leaf image or application still owns app-specific minimization such as Java
 `jdeps`/`jlink`, Python stdlib pruning, and application dependency trimming.
 
+Rebuilds use pinned direct-CDN RPMs for both the runtime transaction and the
+FIPS-verification OpenSSL closure, without consulting live repository metadata.
+They fail closed if a pinned blob is unavailable. Red Hat CDN retention is not
+guaranteed, so this is a bounded rebuild window rather than a claim that a commit
+reproduces forever; see [TD-4](docs/TECH-DEBT.md#td-4-red-hat-ubi-direct-cdn-blob-availability).
+
 ## Verify From a Clean Machine (No Auth)
 
 Anyone can cryptographically verify the published

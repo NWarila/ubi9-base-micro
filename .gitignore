@@ -62,6 +62,8 @@
 !/rpm-lock/
 !/rpm-lock/builder.amd64.txt
 !/rpm-lock/builder.arm64.txt
+!/rpm-lock/fips-verify.amd64.txt
+!/rpm-lock/fips-verify.arm64.txt
 !/rpm-lock/runtime.amd64.txt
 !/rpm-lock/runtime.arm64.txt
 

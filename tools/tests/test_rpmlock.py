@@ -1,4 +1,4 @@
-# Purpose: Validate the canonical runtime RPM lockfile parser and CLI.
+# Purpose: Validate the canonical runtime, FIPS-verification, and builder RPM lockfile parser and CLI.
 # Role: test
 # Micro-container candidate: gate-adjacent - pytest coverage for host/CI lockfile contract validation.
 # Build-process: no - test-only coverage; not executed inside image builds.
@@ -19,6 +19,8 @@ AMD64_LOCK = ROOT / "rpm-lock" / "runtime.amd64.txt"
 ARM64_LOCK = ROOT / "rpm-lock" / "runtime.arm64.txt"
 BUILDER_AMD64_LOCK = ROOT / "rpm-lock" / "builder.amd64.txt"
 BUILDER_ARM64_LOCK = ROOT / "rpm-lock" / "builder.arm64.txt"
+FIPS_AMD64_LOCK = ROOT / "rpm-lock" / "fips-verify.amd64.txt"
+FIPS_ARM64_LOCK = ROOT / "rpm-lock" / "fips-verify.arm64.txt"
 EXPECTED_FINAL_NAMES = [
     "basesystem",
     "ca-certificates",
@@ -99,6 +101,10 @@ def _builder_lock_text() -> str:
     return BUILDER_AMD64_LOCK.read_text(encoding="utf-8")
 
 
+def _fips_lock_text() -> str:
+    return FIPS_AMD64_LOCK.read_text(encoding="utf-8")
+
+
 def _replace_first_data_row(text: str, replacement: list[str]) -> str:
     lines = text.splitlines()
     for index, line in enumerate(lines):
@@ -165,6 +171,28 @@ def test_committed_builder_lockfiles_parse_and_validate(arch: str, path: Path) -
     assert lockfile.headers == {"arch": arch, "columns": rpmlock.BUILDER_COLUMNS}
     assert [row.name for row in lockfile.rows] == list(rpmlock.BUILDER_PYTHON_NAMES)
     assert len(lockfile.direct_entries) == len(lockfile.rows) == 7
+
+
+@pytest.mark.parametrize(
+    ("arch", "path", "rpm_arch"),
+    [
+        ("amd64", FIPS_AMD64_LOCK, "x86_64"),
+        ("arm64", FIPS_ARM64_LOCK, "aarch64"),
+    ],
+)
+def test_committed_fips_lockfiles_parse_and_validate(arch: str, path: Path, rpm_arch: str) -> None:
+    lockfile = rpmlock.parse(path)
+    rpmlock.validate_fips(lockfile, arch=arch)
+
+    assert lockfile.headers == {
+        "arch": arch,
+        "source_date_epoch": "1704067200",
+        "columns": rpmlock.COLUMNS,
+    }
+    assert len(lockfile.direct_entries) == len(lockfile.rows) == 1
+    assert lockfile.rows[0].name == "openssl"
+    assert lockfile.rows[0].final_rpmdb == "no"
+    assert lockfile.rows[0].arch == rpm_arch
 
 
 def test_floor_extracts_final_packages_in_input_order() -> None:
@@ -535,6 +563,39 @@ def test_builder_lock_rejects_package_field_that_is_not_row_nevra(tmp_path: Path
         rpmlock.validate_builder(rpmlock.parse_builder(path), arch="amd64")
 
 
+def test_fips_lock_rejects_runtime_closure() -> None:
+    with pytest.raises(rpmlock.LockError, match="exactly one openssl CLI row"):
+        rpmlock.validate_fips(rpmlock.parse(AMD64_LOCK), arch="amd64")
+
+
+def test_fips_lock_requires_build_only_row(tmp_path: Path) -> None:
+    path = _write_lock(tmp_path, _fips_lock_text().replace("|no|openssl|", "|yes|openssl|", 1))
+
+    with pytest.raises(rpmlock.LockError, match="must use final_rpmdb=no"):
+        rpmlock.validate_fips(rpmlock.parse(path), arch="amd64")
+
+
+def test_fips_lock_requires_terminal_lf(tmp_path: Path) -> None:
+    path = tmp_path / "fips.txt"
+    path.write_bytes(FIPS_AMD64_LOCK.read_bytes().removesuffix(b"\n"))
+
+    with pytest.raises(rpmlock.LockError, match="must end with a line feed"):
+        rpmlock.validate_fips(rpmlock.parse(path), arch="amd64")
+
+
+def test_fips_lock_requires_package_field_to_match_nevra(tmp_path: Path) -> None:
+    path = _write_lock(
+        tmp_path,
+        _fips_lock_text().replace(
+            "openssl-1:3.5.5-5.el9_8.x86_64",
+            "openssl-1:3.5.5-4.el9_8.x86_64",
+        ),
+    )
+
+    with pytest.raises(rpmlock.LockError, match="does not match FIPS verification row NEVRA"):
+        rpmlock.validate_fips(rpmlock.parse(path), arch="amd64")
+
+
 def test_cli_validate_and_summary() -> None:
     command = [
         sys.executable,
@@ -573,6 +634,29 @@ def test_cli_builder_validate_and_summary() -> None:
     summary = cast(dict[str, Any], json.loads(summary_result.stdout))
     assert len(cast(list[object], summary["rows"])) == 7
     assert len(cast(list[object], summary["direct_rpms"])) == 7
+
+
+@pytest.mark.parametrize("path", [FIPS_AMD64_LOCK, FIPS_ARM64_LOCK])
+def test_cli_fips_validate_and_summary_infers_arch(path: Path) -> None:
+    validate_command = [
+        sys.executable,
+        str(ROOT / "tools" / "rpmlock.py"),
+        "fips-validate",
+        "--lockfile",
+        str(path),
+    ]
+    validate_result = subprocess.run(validate_command, cwd=ROOT, text=True, capture_output=True, check=False)
+    assert validate_result.returncode == 0, validate_result.stderr
+
+    summary_command = [*validate_command[:2], "fips-summary", *validate_command[3:]]
+    summary_result = subprocess.run(summary_command, cwd=ROOT, text=True, capture_output=True, check=False)
+    assert summary_result.returncode == 0, summary_result.stderr
+    summary = cast(dict[str, Any], json.loads(summary_result.stdout))
+    rows = cast(list[dict[str, str]], summary["rows"])
+    assert len(rows) == 1
+    assert rows[0]["name"] == "openssl"
+    assert rows[0]["final_rpmdb"] == "no"
+    assert len(cast(list[object], summary["direct_rpms"])) == 1
 
 
 def test_public_dockerfile_arg_default_and_cli() -> None:
