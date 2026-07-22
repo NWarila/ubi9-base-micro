@@ -8,9 +8,9 @@
 ARG BUILDKIT_SBOM_SCAN_CONTEXT=true
 
 # renovate: datasource=docker depName=registry.access.redhat.com/ubi9/ubi-minimal
-ARG UBI_MINIMAL_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal@sha256:463cae32c6f6f5594b11a5c22de275016bd8545ce58a6373388e8b24f13fc15c
+ARG UBI_MINIMAL_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal@sha256:2e8edce823a48e51858f1fad3ff4cbf6875ce8a3f86b9eecf298bc2050c8652a
 # renovate: datasource=docker depName=registry.access.redhat.com/ubi9/ubi-micro
-ARG UBI_MICRO_IMAGE=registry.access.redhat.com/ubi9/ubi-micro@sha256:35de56a9413112f1474e392ebc35e0cf6f0fb484c8e8877bbae59b513694b41f
+ARG UBI_MICRO_IMAGE=registry.access.redhat.com/ubi9/ubi-micro@sha256:b1e86b97028b8fcfb6d85f997c39e6b6b67496163ef8d80d243220a4918e8bef
 ARG OPENSSL_FIPS_MODULE_VERSION=3.0.7-395c1a240fbfffd8
 ARG OPENSSL_FIPS_PROVIDER_NEVRA=openssl-fips-provider-so-3.0.7-8.el9
 ARG OPENSSL_FIPS_PROVIDER_RPM_BASE_URL=https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9
