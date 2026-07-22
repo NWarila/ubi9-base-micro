@@ -10,6 +10,8 @@ and this project adheres to
 
 ### Changed
 
+- Absorbed the Red Hat `openssl-libs` z-stream update (`3.5.5-4.el9_8` → `3.5.5-5.el9_8`) on
+  both architectures; reproducibility baselines re-established from the CI gate.
 - Refreshed the digest-pinned Red Hat UBI 9 base images and updated the
   byte-for-byte reproducibility baselines.
 

@@ -28,7 +28,7 @@
 # direct_rpm: ncurses-libs-6.2-12.20210508.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/n/ncurses-libs-6.2-12.20210508.el9.x86_64.rpm|f3e1f8e59c7116278aa19b6705a1443f6307d4d6fbdde75a23d2f5d60636cb16
 # direct_rpm: openssl-fips-provider-3.0.7-8.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/o/openssl-fips-provider-3.0.7-8.el9.x86_64.rpm|bbf25303def8e1270675531c47bdad432f6ad8ef4c327556ae65bd6abaf8edb5
 # direct_rpm: openssl-fips-provider-so-3.0.7-8.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/o/openssl-fips-provider-so-3.0.7-8.el9.x86_64.rpm|ab48d98504fae6f8636de027a1ee06d21d5e9c27b7beb247017a6fe55567c5e9
-# direct_rpm: openssl-libs-1:3.5.5-4.el9_8.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/o/openssl-libs-3.5.5-4.el9_8.x86_64.rpm|126c17e907e1f6cbbd3989a478e933a74d5508e70b8983b0f6a94e7fd2a903e6
+# direct_rpm: openssl-libs-1:3.5.5-5.el9_8.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/o/openssl-libs-3.5.5-5.el9_8.x86_64.rpm|3fcfe168496349d7e3daba33a2a51b09bf00443d7fdf3c143b9d9c50c6d4d7af
 # direct_rpm: p11-kit-0.26.2-1.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/p/p11-kit-0.26.2-1.el9.x86_64.rpm|3bc31959dd99d0c3103866296664c02c219c0a7c8b906c96ecc5ec3dda57c864
 # direct_rpm: p11-kit-trust-0.26.2-1.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/p/p11-kit-trust-0.26.2-1.el9.x86_64.rpm|715fd8181525f3d6869d5086f36a15ea47a0e96297ccf5920c37d3a0cb36c409
 # direct_rpm: pcre-8.44-4.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/p/pcre-8.44-4.el9.x86_64.rpm|e9ddc7d57d4f6e7400b66bcc78b9bafc1f05630e3e0d2a14000bc907f429ddc4
@@ -66,7 +66,7 @@ ncurses-base-6.2-12.20210508.el9.noarch|no|ncurses-base|0|6.2|12.20210508.el9|no
 ncurses-libs-6.2-12.20210508.el9.x86_64|no|ncurses-libs|0|6.2|12.20210508.el9|x86_64|8175ae165aafb0ba56e414b2de913ce4781512bb6db807b80c8852aa0fcd1c49|5a53e6f67150c42722441ba7a40b3b05
 openssl-fips-provider-3.0.7-8.el9.x86_64|yes|openssl-fips-provider|0|3.0.7|8.el9|x86_64|f86bf87c2350f2568b1aed19ebef984421318ca4f09e270ff29fa79df88f7330|c3ff4495cecf842922ab0560f3691049
 openssl-fips-provider-so-3.0.7-8.el9.x86_64|yes|openssl-fips-provider-so|0|3.0.7|8.el9|x86_64|98e6ea3febec52a090b05f00171516b0113478a8de1797424c7f9bd735607ce6|782a5664fe49c9860c7ff0c18f3ae54e
-openssl-libs-1:3.5.5-4.el9_8.x86_64|yes|openssl-libs|1|3.5.5|4.el9_8|x86_64|a51d3a23b866fc7b8128703f0442a52d4d870e0d29fe03d3a9bb89d51d0268b3|86fc663a32d3f7829e565940b5d9de3b
+openssl-libs-1:3.5.5-5.el9_8.x86_64|yes|openssl-libs|1|3.5.5|5.el9_8|x86_64|1bb0a914ac9fc24112fa082c579ffa4c4c7a182bd4a811090443f54bf97097c5|014d42f5717809b72e773533579e8b56
 p11-kit-0.26.2-1.el9.x86_64|no|p11-kit|0|0.26.2|1.el9|x86_64|460d36adcf595c3f9ad61d213ade80ca3e94fb644e23abc63c6b1fa328c52ba1|23a08ca0d8d754c7f78153142c34e593
 p11-kit-trust-0.26.2-1.el9.x86_64|no|p11-kit-trust|0|0.26.2|1.el9|x86_64|e77d28e0f4650238b4b353b9cea4609ef45ee81fead93fa7001c850183fad386|4ae2979fa6248ec03b31037f44db4588
 pcre-8.44-4.el9.x86_64|no|pcre|0|8.44|4.el9|x86_64|8668fbdd2c67b998f6a4ffef3dd2e28c2f89e53bddf4d8aa688ec312a3443bdb|48ed4c003ccd17ed52bc12bec2416c1d
