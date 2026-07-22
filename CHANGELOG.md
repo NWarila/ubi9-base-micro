@@ -10,6 +10,8 @@ and this project adheres to
 
 ### Changed
 
+- Updated the published-image verification reference and how-to to verify
+  repository-generated attestations on both platform children and fail closed if either child fails.
 - Corrected enforcement, reproducibility, and published-image verification claims
   to match the active ruleset, builder scope, and index-versus-child digest routing.
 - Suppressed repeat owner pings for unchanged unresolved nightly drift while preserving alerts for

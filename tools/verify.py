@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -5153,6 +5154,302 @@ def check_acceptance_enforcement_claim_self_test() -> None:
         raise AssertionError("enforcement self-test: capitalized re-add not caught")
 
 
+_VERIFY_DOC_CHILD_ATTESTATIONS = {
+    predicate_type("spdx"): 2,
+    predicate_type("cyclonedx"): 1,
+    predicate_type("openvex"): 1,
+    predicate_type("nist_800_190"): 1,
+    predicate_type("stig_arf"): 1,
+}
+_VERIFY_HOWTO_CHILD_ATTESTATIONS = {
+    predicate_type("spdx"): 1,
+    predicate_type("cyclonedx"): 1,
+    predicate_type("openvex"): 1,
+    predicate_type("nist_800_190"): 1,
+    predicate_type("stig_arf"): 1,
+}
+
+
+def _logical_shell_statements(loop_body: str) -> tuple[list[str], bool]:
+    statements: list[str] = []
+    continued_parts: list[str] = []
+
+    for line in loop_body.splitlines():
+        stripped_right = line.rstrip()
+        trailing_backslashes = len(stripped_right) - len(stripped_right.rstrip("\\"))
+        is_continued = trailing_backslashes % 2 == 1
+        part = stripped_right[:-1] if is_continued else stripped_right
+
+        if not continued_parts and (not part.strip() or part.lstrip().startswith("#")):
+            continue
+        continued_parts.append(part.strip())
+        if is_continued:
+            continue
+
+        statement = " ".join(continued_parts).strip()
+        if statement and not statement.startswith("#"):
+            statements.append(statement)
+        continued_parts = []
+
+    return statements, bool(continued_parts)
+
+
+def _contains_unescaped_lone_ampersand(statement: str) -> bool:
+    quote: str | None = None
+    escaped = False
+
+    for index, character in enumerate(statement):
+        if escaped:
+            escaped = False
+            continue
+        if quote == "'":
+            if character == quote:
+                quote = None
+            continue
+        if character == "\\":
+            escaped = True
+            continue
+        if quote == '"':
+            if character == quote:
+                quote = None
+            continue
+        if character in {"'", '"'}:
+            quote = character
+            continue
+        if character == "&" and not (
+            (index > 0 and statement[index - 1] == "&") or (index + 1 < len(statement) and statement[index + 1] == "&")
+        ):
+            return True
+
+    return False
+
+
+def _child_attestations_are_looped(
+    doc_text: str,
+    expected_child_attestations: Mapping[str, int],
+) -> str | None:
+    fence_pattern = re.compile(r"^```sh[ \t]*\n(?P<body>.*?)^```[ \t]*$", re.MULTILINE | re.DOTALL)
+    fenced_blocks: list[tuple[str, int, list[tuple[int, int]], list[tuple[int, int]]]] = []
+    attestation_loop_opener = 'for CHILD_REF in "${AMD64_REF}" "${ARM64_REF}"; do'
+    loop_openers = {attestation_loop_opener, "for ARCH in amd64 arm64; do"}
+
+    for fence in fence_pattern.finditer(doc_text):
+        body = fence.group("body")
+        loop_spans: list[tuple[int, int]] = []
+        attestation_loop_bodies: list[tuple[int, int]] = []
+        active_loop_start: int | None = None
+        active_loop_body_start: int | None = None
+        active_loop_is_attestation = False
+        fail_closed_offsets: list[int] = []
+        offset = 0
+
+        for line in body.splitlines(keepends=True):
+            token = line.strip()
+            if token == "set -euo pipefail":
+                fail_closed_offsets.append(offset)
+            if active_loop_start is not None and re.fullmatch(r"for\b.*;\s*do", token):
+                return "nested-loop"
+            if token in loop_openers:
+                if not any(fail_closed_offset < offset for fail_closed_offset in fail_closed_offsets):
+                    return "loop-missing-positional-fail-closed"
+                active_loop_start = offset
+                active_loop_body_start = offset + len(line)
+                active_loop_is_attestation = token == attestation_loop_opener
+            elif token == "done":
+                if active_loop_start is None:
+                    return "unmatched-done"
+                loop_spans.append((active_loop_start, offset + len(line)))
+                if active_loop_is_attestation:
+                    if active_loop_body_start is None:
+                        return "attestation-loop-missing-body-start"
+                    attestation_loop_bodies.append((active_loop_body_start, offset))
+                active_loop_start = None
+                active_loop_body_start = None
+                active_loop_is_attestation = False
+            offset += len(line)
+
+        if active_loop_start is not None:
+            return "unmatched-loop-opener"
+        fenced_blocks.append((body, fence.start("body"), loop_spans, attestation_loop_bodies))
+
+    if not fenced_blocks:
+        return "missing-sh-fences"
+
+    fenced_text = "\n".join(body for body, _, _, _ in fenced_blocks)
+    resolution_markers = {
+        "index-ref": 'INDEX_REF="${IMAGE}@${INDEX_DIGEST}"',
+        "amd64-digest-from-index": 'AMD64_DIGEST="$(crane digest --platform linux/amd64 "${INDEX_REF}")"',
+        "amd64-ref": 'AMD64_REF="${IMAGE}@${AMD64_DIGEST}"',
+        "arm64-digest-from-index": 'ARM64_DIGEST="$(crane digest --platform linux/arm64 "${INDEX_REF}")"',
+        "arm64-ref": 'ARM64_REF="${IMAGE}@${ARM64_DIGEST}"',
+    }
+    for label, marker in resolution_markers.items():
+        if marker not in fenced_text:
+            return f"missing-resolution:{label}"
+
+    known_child_types = tuple(
+        predicate_type(name) for name in ["spdx", "cyclonedx", "openvex", "nist_800_190", "stig_arf"]
+    )
+    expected = Counter(expected_child_attestations)
+    if set(expected) != set(known_child_types) or any(count < 1 for count in expected.values()):
+        return "invalid-expected-child-attestation-multiset"
+
+    type_alternation = "|".join(re.escape(attestation_type) for attestation_type in known_child_types)
+    attestation_command = re.compile(
+        rf'^cosign verify-attestation --type (?P<type>{type_alternation}) "\$\{{CHILD_REF\}}"(?=\s|$)'
+    )
+    anchored_child_command = re.compile(
+        r'^[ \t]*cosign verify-attestation --type (?P<type>\S+) "\$\{CHILD_REF\}"(?=\s|$)',
+        re.MULTILINE,
+    )
+    observed: Counter[str] = Counter()
+    attestation_body_doc_spans: list[tuple[int, int]] = []
+
+    for body, body_doc_start, _, attestation_loop_bodies in fenced_blocks:
+        for start, end in attestation_loop_bodies:
+            attestation_body_doc_spans.append((body_doc_start + start, body_doc_start + end))
+            statements, unterminated_continuation = _logical_shell_statements(body[start:end])
+            if unterminated_continuation:
+                return "attestation-loop-unterminated-continuation"
+            for statement in statements:
+                match = attestation_command.match(statement.lstrip())
+                if match is None:
+                    return "attestation-loop-non-cosign-statement"
+                if any(operator in statement for operator in [";", "||", "&&"]):
+                    return "attestation-loop-failure-suppression"
+                if _contains_unescaped_lone_ampersand(statement):
+                    return "attestation-loop-backgrounded-command"
+                observed[match.group("type")] += 1
+
+    for match in anchored_child_command.finditer(doc_text):
+        if not any(start <= match.start() < end for start, end in attestation_body_doc_spans):
+            return f"child-attestation-outside-loop:{match.group('type')}"
+
+    if observed != expected:
+        return f"child-attestation-multiset:expected={dict(expected)}:observed={dict(observed)}"
+
+    index_bound_markers = {
+        "cosign-signature": 'cosign verify "${INDEX_REF}"',
+        "cosign-slsa": 'cosign verify-attestation --type slsaprovenance "${INDEX_REF}"',
+        "slsa-verifier": 'slsa-verifier verify-image "${INDEX_REF}"',
+    }
+    for label, marker in index_bound_markers.items():
+        fenced_total = sum(body.count(marker) for body, _, _, _ in fenced_blocks)
+        if fenced_total == 0:
+            return f"missing-index-bound-command:{label}"
+        inside = sum(
+            body[start:end].count(marker) for body, _, loop_spans, _ in fenced_blocks for start, end in loop_spans
+        )
+        if inside != 0:
+            return f"index-bound-command-inside-child-loop:{label}"
+
+    return None
+
+
+def check_verify_docs_child_loop_self_test() -> None:
+    shipped_docs = {
+        "docs/reference/verify.md": _VERIFY_DOC_CHILD_ATTESTATIONS,
+        "docs/how-to/verify-a-published-image.md": _VERIFY_HOWTO_CHILD_ATTESTATIONS,
+    }
+    for relative_path, expected_child_attestations in shipped_docs.items():
+        failure = _child_attestations_are_looped(read(relative_path), expected_child_attestations)
+        if failure is not None:
+            raise AssertionError(f"verify-doc child-loop self-test: shipped {relative_path} rejected: {failure}")
+
+    child_commands = [
+        'cosign verify-attestation --type spdxjson "${CHILD_REF}"',
+        'cosign verify-attestation --type cyclonedx "${CHILD_REF}"',
+        'cosign verify-attestation --type openvex "${CHILD_REF}"',
+        f'cosign verify-attestation --type {predicate_type("nist_800_190")} "${{CHILD_REF}}"',
+        f'cosign verify-attestation --type {predicate_type("stig_arf")} "${{CHILD_REF}}"',
+    ]
+    loop_body = "\n".join(f"  {command}" for command in child_commands)
+    child_loop_fence = (
+        f'```sh\nset -euo pipefail\nfor CHILD_REF in "${{AMD64_REF}}" "${{ARM64_REF}}"; do\n{loop_body}\ndone\n```'
+    )
+    minimal_valid = (
+        "```sh\n"
+        'INDEX_REF="${IMAGE}@${INDEX_DIGEST}"\n'
+        'AMD64_DIGEST="$(crane digest --platform linux/amd64 "${INDEX_REF}")"\n'
+        'AMD64_REF="${IMAGE}@${AMD64_DIGEST}"\n'
+        'ARM64_DIGEST="$(crane digest --platform linux/arm64 "${INDEX_REF}")"\n'
+        'ARM64_REF="${IMAGE}@${ARM64_DIGEST}"\n'
+        'cosign verify "${INDEX_REF}"\n'
+        'cosign verify-attestation --type slsaprovenance "${INDEX_REF}"\n'
+        'slsa-verifier verify-image "${INDEX_REF}"\n'
+        "```\n\n"
+        f"{child_loop_fence}\n"
+    )
+    if _child_attestations_are_looped(minimal_valid, _VERIFY_HOWTO_CHILD_ATTESTATIONS) is not None:
+        raise AssertionError("verify-doc child-loop self-test: minimal valid fixture rejected")
+
+    spdx_command = child_commands[0]
+    moved_outside = minimal_valid.replace(f"  {spdx_command}\n", "", 1).replace(
+        "done\n```", f"done\n{spdx_command}\n```", 1
+    )
+    empty_loop = minimal_valid.replace(f"{loop_body}\n", "", 1).replace(
+        "done\n```", f"done\n{'\n'.join(child_commands)}\n```", 1
+    )
+    cross_fence = minimal_valid.replace(
+        child_loop_fence,
+        (
+            "```sh\n"
+            "set -euo pipefail\n"
+            'for CHILD_REF in "${AMD64_REF}" "${ARM64_REF}"; do\n'
+            "```\n\n"
+            "```sh\n"
+            f"{loop_body}\n"
+            "```\n\n"
+            "```sh\n"
+            "done\n"
+            "```"
+        ),
+        1,
+    )
+    no_fail_closed = minimal_valid.replace("set -euo pipefail\n", "", 1)
+    late_fail_closed = no_fail_closed.replace("done\n```", "done\nset -euo pipefail\n```", 1)
+    no_op_substitution = minimal_valid.replace(
+        child_commands[1],
+        "printf '%s\\n' --type cyclonedx \"${CHILD_REF}\"",
+        1,
+    )
+    echo_prefixed = minimal_valid.replace(child_commands[1], f"echo {child_commands[1]}", 1)
+    commented_only_statement = minimal_valid.replace(loop_body, f"  # {spdx_command}", 1)
+    backgrounded = minimal_valid.replace(child_commands[1], f"{child_commands[1]} &", 1)
+    backgrounded_then_true = minimal_valid.replace(child_commands[1], f"{child_commands[1]} & true", 1)
+    backgrounded_then_colon = minimal_valid.replace(child_commands[1], f"{child_commands[1]} & :", 1)
+    one_of_two_spdx_nooped = read("docs/reference/verify.md").replace(
+        spdx_command,
+        "printf '%s\\n' --type spdxjson \"${CHILD_REF}\"",
+        1,
+    )
+    extra_non_cosign = minimal_valid.replace(f"  {spdx_command}\n", f"  {spdx_command}\n  echo done\n", 1)
+    or_true = minimal_valid.replace(child_commands[1], f"{child_commands[1]} || true", 1)
+    semicolon_true = minimal_valid.replace(child_commands[1], f"{child_commands[1]}; true", 1)
+    colon_prefixed = minimal_valid.replace(child_commands[1], f": {child_commands[1]}", 1)
+    mutants = {
+        "command-outside-loop": (moved_outside, _VERIFY_HOWTO_CHILD_ATTESTATIONS),
+        "empty-loop": (empty_loop, _VERIFY_HOWTO_CHILD_ATTESTATIONS),
+        "cross-fence": (cross_fence, _VERIFY_HOWTO_CHILD_ATTESTATIONS),
+        "missing-fail-closed": (no_fail_closed, _VERIFY_HOWTO_CHILD_ATTESTATIONS),
+        "late-fail-closed": (late_fail_closed, _VERIFY_HOWTO_CHILD_ATTESTATIONS),
+        "no-op-command-substitution": (no_op_substitution, _VERIFY_HOWTO_CHILD_ATTESTATIONS),
+        "echo-prefixed": (echo_prefixed, _VERIFY_HOWTO_CHILD_ATTESTATIONS),
+        "commented-only-statement": (commented_only_statement, _VERIFY_HOWTO_CHILD_ATTESTATIONS),
+        "backgrounded": (backgrounded, _VERIFY_HOWTO_CHILD_ATTESTATIONS),
+        "backgrounded-then-true": (backgrounded_then_true, _VERIFY_HOWTO_CHILD_ATTESTATIONS),
+        "backgrounded-then-colon": (backgrounded_then_colon, _VERIFY_HOWTO_CHILD_ATTESTATIONS),
+        "one-of-two-spdx-nooped": (one_of_two_spdx_nooped, _VERIFY_DOC_CHILD_ATTESTATIONS),
+        "extra-non-cosign-statement": (extra_non_cosign, _VERIFY_HOWTO_CHILD_ATTESTATIONS),
+        "or-true": (or_true, _VERIFY_HOWTO_CHILD_ATTESTATIONS),
+        "semicolon-true": (semicolon_true, _VERIFY_HOWTO_CHILD_ATTESTATIONS),
+        "colon-prefixed": (colon_prefixed, _VERIFY_HOWTO_CHILD_ATTESTATIONS),
+    }
+    for label, (mutant, expected_child_attestations) in mutants.items():
+        if _child_attestations_are_looped(mutant, expected_child_attestations) is None:
+            raise AssertionError(f"verify-doc child-loop self-test: mutant unexpectedly passed: {label}")
+
+
 def check_docs() -> None:
     for relative_path in [
         "docs/tutorials",
@@ -5669,37 +5966,17 @@ def check_docs() -> None:
     ]:
         require(marker in verify, f"docs/reference/verify.md missing marker: {marker}")
 
-    for marker in [
-        'INDEX_REF="${IMAGE}@${INDEX_DIGEST}"',
-        'CHILD_REF="${IMAGE}@${CHILD_DIGEST}"',
-        'cosign verify "${INDEX_REF}"',
-        'cosign verify-attestation --type spdxjson "${CHILD_REF}"',
-        'cosign verify-attestation --type cyclonedx "${CHILD_REF}"',
-        'cosign verify-attestation --type openvex "${CHILD_REF}"',
-        f'cosign verify-attestation --type {predicate_type("nist_800_190")} "${{CHILD_REF}}"',
-        f'cosign verify-attestation --type {predicate_type("stig_arf")} "${{CHILD_REF}}"',
-        'cosign verify-attestation --type slsaprovenance "${INDEX_REF}"',
-        'slsa-verifier verify-image "${INDEX_REF}"',
-    ]:
-        require(marker in verify, f"docs/reference/verify.md missing digest-routing marker: {marker}")
-    for marker in [
-        'INDEX_REF="${IMAGE}@${INDEX_DIGEST}"',
-        'AMD64_REF="${IMAGE}@${AMD64_DIGEST}"',
-        'ARM64_REF="${IMAGE}@${ARM64_DIGEST}"',
-        'for CHILD_REF in "${AMD64_REF}" "${ARM64_REF}"; do',
-        'cosign verify "${INDEX_REF}"',
-        'cosign verify-attestation --type spdxjson "${CHILD_REF}"',
-        'cosign verify-attestation --type cyclonedx "${CHILD_REF}"',
-        'cosign verify-attestation --type openvex "${CHILD_REF}"',
-        f'cosign verify-attestation --type {predicate_type("nist_800_190")} "${{CHILD_REF}}"',
-        f'cosign verify-attestation --type {predicate_type("stig_arf")} "${{CHILD_REF}}"',
-        'cosign verify-attestation --type slsaprovenance "${INDEX_REF}"',
-        'slsa-verifier verify-image "${INDEX_REF}"',
-    ]:
-        require(
-            marker in verify_howto,
-            f"docs/how-to/verify-a-published-image.md missing digest-routing marker: {marker}",
-        )
+    verify_child_loop_failure = _child_attestations_are_looped(verify, _VERIFY_DOC_CHILD_ATTESTATIONS)
+    require(
+        verify_child_loop_failure is None,
+        f"docs/reference/verify.md child attestation routing is not fail-closed: {verify_child_loop_failure}",
+    )
+    howto_child_loop_failure = _child_attestations_are_looped(verify_howto, _VERIFY_HOWTO_CHILD_ATTESTATIONS)
+    require(
+        howto_child_loop_failure is None,
+        "docs/how-to/verify-a-published-image.md child attestation routing is not fail-closed: "
+        f"{howto_child_loop_failure}",
+    )
     for residue in ["P1.8", "one-time owner visibility change"]:
         require(residue not in verify, f"docs/reference/verify.md retains false anonymous-pull residue: {residue}")
 
@@ -6143,6 +6420,7 @@ def main() -> int:
         check_pin_invariant_self_test,
         check_nightly_drift_signature_self_test,
         check_acceptance_enforcement_claim_self_test,
+        check_verify_docs_child_loop_self_test,
         check_dockerfile,
         check_rpm_lock_generator,
         check_dockerfile_forbidden_scan_self_test,

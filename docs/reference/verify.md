@@ -25,15 +25,17 @@ The SLSA generator tag `v2.1.0` is allowed only with the workflow tag-integrity 
 
 ## Contract
 
-Start from the immutable per-commit tag for the completed publish. Resolve its image index and then resolve the platform child from that pinned index:
+Start from the immutable per-commit tag for the completed publish. Resolve its image index and then resolve both platform children from that pinned index:
 
 ```sh
 IMAGE="ghcr.io/nwarila/ubi9-base-micro"
 TAG="base-micro-<short_sha>"                 # immutable per-commit tag (normative input)
 INDEX_DIGEST="$(crane digest "${IMAGE}:${TAG}")"
 INDEX_REF="${IMAGE}@${INDEX_DIGEST}"
-CHILD_DIGEST="$(crane digest --platform linux/amd64 "${INDEX_REF}")"   # per-arch child
-CHILD_REF="${IMAGE}@${CHILD_DIGEST}"
+AMD64_DIGEST="$(crane digest --platform linux/amd64 "${INDEX_REF}")"
+AMD64_REF="${IMAGE}@${AMD64_DIGEST}"
+ARM64_DIGEST="$(crane digest --platform linux/arm64 "${INDEX_REF}")"
+ARM64_REF="${IMAGE}@${ARM64_DIGEST}"
 PUBLISH_REF="refs/heads/main"
 ```
 
@@ -42,12 +44,13 @@ The moving `base-micro` tag may be used for discovery, but resolve it once to `I
 This is example output — your digests will differ:
 
 ```console
-$ printf 'INDEX_REF=%s\nCHILD_REF=%s\n' "${INDEX_REF}" "${CHILD_REF}"
+$ printf 'INDEX_REF=%s\nAMD64_REF=%s\nARM64_REF=%s\n' "${INDEX_REF}" "${AMD64_REF}" "${ARM64_REF}"
 INDEX_REF=ghcr.io/nwarila/ubi9-base-micro@sha256:be8f76f648fa8d8245892059bda8a119a31c5d45c40b5ec6b64f1b270f050ab2
-CHILD_REF=ghcr.io/nwarila/ubi9-base-micro@sha256:8280680a2218fe91cff051974b046b3a9ac61c81457ce61c86f098943b5ccc87
+AMD64_REF=ghcr.io/nwarila/ubi9-base-micro@sha256:8280680a2218fe91cff051974b046b3a9ac61c81457ce61c86f098943b5ccc87
+ARM64_REF=ghcr.io/nwarila/ubi9-base-micro@sha256:a98111c433a72b937ef9d34b0f78e56f252e65e7f7b61dd60f596292c8d0aa47
 ```
 
-Use `INDEX_REF` for the canonical image signature and index-bound SLSA evidence. Use `CHILD_REF` for repository-generated attestations bound to the selected platform child.
+Use `INDEX_REF` for the canonical image signature and index-bound SLSA evidence. Use `AMD64_REF` and `ARM64_REF` for repository-generated attestations bound to both platform children.
 
 ```sh
 cosign verify "${INDEX_REF}" \
@@ -56,46 +59,64 @@ cosign verify "${INDEX_REF}" \
 ```
 
 ```sh
-cosign verify-attestation --type spdxjson "${CHILD_REF}" \
-  --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+set -euo pipefail
+for CHILD_REF in "${AMD64_REF}" "${ARM64_REF}"; do
+  cosign verify-attestation --type spdxjson "${CHILD_REF}" \
+    --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
+    --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+done
 ```
 
 ```sh
-cosign verify-attestation --type cyclonedx "${CHILD_REF}" \
-  --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+set -euo pipefail
+for CHILD_REF in "${AMD64_REF}" "${ARM64_REF}"; do
+  cosign verify-attestation --type cyclonedx "${CHILD_REF}" \
+    --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
+    --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+done
 ```
 
 ```sh
-cosign verify-attestation --type spdxjson "${CHILD_REF}" \
-  --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  | jq -r '.payload | @base64d | fromjson | .predicate.packages[].name' | grep -q glibc
+set -euo pipefail
+for CHILD_REF in "${AMD64_REF}" "${ARM64_REF}"; do
+  cosign verify-attestation --type spdxjson "${CHILD_REF}" \
+    --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
+    --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    | jq -r '.payload | @base64d | fromjson | .predicate.packages[].name' | grep -q glibc
+done
 ```
 
 When `vex/*.json` exists in the publishing commit, verify the OpenVEX attestation on each per-platform child digest:
 
 ```sh
-cosign verify-attestation --type openvex "${CHILD_REF}" \
-  --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+set -euo pipefail
+for CHILD_REF in "${AMD64_REF}" "${ARM64_REF}"; do
+  cosign verify-attestation --type openvex "${CHILD_REF}" \
+    --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
+    --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+done
 ```
 
 Verify the NIST SP 800-190 section 4.1 image-control predicate on each per-platform child digest:
 
 ```sh
-cosign verify-attestation --type https://nwarila.dev/attestations/nist-sp-800-190-image/v1 "${CHILD_REF}" \
-  --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+set -euo pipefail
+for CHILD_REF in "${AMD64_REF}" "${ARM64_REF}"; do
+  cosign verify-attestation --type https://nwarila.dev/attestations/nist-sp-800-190-image/v1 "${CHILD_REF}" \
+    --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
+    --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+done
 ```
 
 Verify the tailored RHEL9 STIG ARF predicate on each per-platform child digest:
 
 ```sh
-cosign verify-attestation --type https://nwarila.dev/attestations/stig-arf/v1 "${CHILD_REF}" \
-  --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+set -euo pipefail
+for CHILD_REF in "${AMD64_REF}" "${ARM64_REF}"; do
+  cosign verify-attestation --type https://nwarila.dev/attestations/stig-arf/v1 "${CHILD_REF}" \
+    --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
+    --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+done
 ```
 
 ```sh

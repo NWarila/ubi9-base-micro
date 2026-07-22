@@ -39,6 +39,7 @@ Export and assert both immutable platform children against the publishing commit
 rootfs contract:
 
 ```sh
+set -euo pipefail
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
@@ -72,6 +73,7 @@ loop binds `CHILD_REF` to each architecture-specific reference in turn, so each
 attestation is verified against the child it describes:
 
 ```sh
+set -euo pipefail
 for CHILD_REF in "${AMD64_REF}" "${ARM64_REF}"; do
   cosign verify-attestation --type spdxjson "${CHILD_REF}" \
     --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
@@ -95,6 +97,7 @@ If `vex/*.json` existed in the publishing commit, verify the OpenVEX attestation
 on both child digests too:
 
 ```sh
+set -euo pipefail
 for CHILD_REF in "${AMD64_REF}" "${ARM64_REF}"; do
   cosign verify-attestation --type openvex "${CHILD_REF}" \
     --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
