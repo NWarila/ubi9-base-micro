@@ -1121,6 +1121,8 @@ def check_required_files() -> None:
         "rpm-lock/runtime.arm64.txt",
         "rpm-lock/builder.amd64.txt",
         "rpm-lock/builder.arm64.txt",
+        "rpm-lock/fips-verify.amd64.txt",
+        "rpm-lock/fips-verify.arm64.txt",
         "security/cve-ignore.trivyignore.yaml",
         "security/cve-ignore.grype.yaml",
         "docs/README.md",
@@ -1964,67 +1966,136 @@ def check_dockerfile() -> None:
     fips_builder_install = 'rpm -Uvh --oldpackage --replacepkgs --excludedocs "${builder_rpm_paths[@]}"'
     fips_python_sanity = "python3.12 -c 'import sys; print(sys.version)'"
     fips_builder_cleanup = "rm -rf /tmp/builder-rpms"
-    fips_runtime_fetch = "bash /tmp/fetch-runtime-rpms.sh"
-    fips_microdnf_install = "microdnf install -y --releasever=9"
-    fips_provider_install = '"/tmp/runtime-rpms/openssl-fips-provider-${fips_provider_nvr}.${rpm_arch}.rpm"'
+    fips_runtime_fetch = (
+        'bash /tmp/fetch-runtime-rpms.sh --targetarch "${TARGETARCH}" '
+        '--lockfile "${runtime_lockfile}" --dest /tmp/runtime-rpms'
+    )
+    fips_lock_fetch = (
+        'bash /tmp/fetch-runtime-rpms.sh --targetarch "${TARGETARCH}" '
+        '--lockfile "${fips_lockfile}" --dest /tmp/fips-rpms'
+    )
+    fips_locked_install = (
+        "rpm -Uvh --oldpackage --replacepkgs \\\n"
+        '      "/tmp/fips-rpms/openssl-3.5.5-5.el9_8.${rpm_arch}.rpm" \\\n'
+        '      "/tmp/runtime-rpms/openssl-libs-3.5.5-5.el9_8.${rpm_arch}.rpm" \\\n'
+        '      "/tmp/runtime-rpms/crypto-policies-20260224-1.gitea0f072.el9_8.noarch.rpm" \\\n'
+        '      "/tmp/runtime-rpms/openssl-fips-provider-${fips_provider_nvr}.${rpm_arch}.rpm" \\\n'
+        '      "/tmp/runtime-rpms/${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}.rpm";'
+    )
     fips_microdnf_clean = "microdnf clean all"
     fips_verifier_invocation = "python3.12 /tmp/verify-fips-provider.py"
-    for marker in [
-        "COPY rpm-lock/builder.amd64.txt rpm-lock/builder.arm64.txt /tmp/rpm-lock/",
-        "COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh",
-        "COPY tools/verify-fips-provider.py /tmp/verify-fips-provider.py",
-        "# The builder loop below bootstraps python, so it cannot use rpmlock.py (ADR-0014).",
-        fips_bootstrap_array,
-        fips_bootstrap_count,
-        fips_builder_fetch,
-        fips_builder_install,
-        fips_python_sanity,
-        fips_builder_cleanup,
-        fips_runtime_fetch,
-        fips_microdnf_install,
-        fips_provider_install,
-        fips_microdnf_clean,
-        fips_verifier_invocation,
-        '--target-arch "${TARGETARCH}"',
-        '--provider-nevra "${OPENSSL_FIPS_PROVIDER_NEVRA}"',
-        '--module-version "${OPENSSL_FIPS_MODULE_VERSION}"',
-        '--expected-fips-so-sha256 "${expected_fips_so_sha256}"',
-        "--openssl-cnf /tmp/openssl-fips.cnf",
-        "--modules-dir /usr/lib64/ossl-modules",
-        "--proof-dir /fips-proof",
-    ]:
-        require(marker in fips_verify, f"fips-verify stage missing locked orchestration marker: {marker}")
-    require(
-        fips_verify.index(fips_bootstrap_array)
-        < fips_verify.index(fips_bootstrap_count)
-        < fips_verify.index(fips_builder_fetch)
-        < fips_verify.index(fips_builder_install)
-        < fips_verify.index(fips_python_sanity)
-        < fips_verify.index(fips_builder_cleanup)
-        < fips_verify.index(fips_runtime_fetch)
-        < fips_verify.index(fips_microdnf_install)
-        < fips_verify.index(fips_provider_install)
-        < fips_verify.index(fips_microdnf_clean)
-        < fips_verify.index(fips_verifier_invocation),
-        "fips-verify must install builder Python first, retain provider orchestration, then invoke the verifier",
-    )
-    require(
-        fips_verify.count(fips_verifier_invocation) == 1,
-        "fips-verify must invoke verify-fips-provider.py exactly once",
-    )
-    for marker in [
-        "providers_verbose=",
-        "grep -A8",
-        "openssl dgst -md5",
-        "openssl dgst -sha256",
-        "openssl enc -aes-256-cbc",
-        "mkdir -p /fips-proof",
-    ]:
-        require(marker not in fips_verify, f"fips-verify retains extracted inline verification marker: {marker}")
-    require(
-        re.search(r">{1,2}\s*/fips-proof/[^\s;\\]+", fips_verify) is None,
-        "fips-verify must not redirect to individual proof files",
-    )
+
+    def check_fips_verify_stage(stage: str) -> None:
+        for marker in [
+            "COPY rpm-lock/builder.amd64.txt rpm-lock/builder.arm64.txt /tmp/rpm-lock/",
+            "COPY rpm-lock/fips-verify.amd64.txt rpm-lock/fips-verify.arm64.txt /tmp/rpm-lock/",
+            "COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh",
+            "COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh",
+            "COPY tools/verify-fips-provider.py /tmp/verify-fips-provider.py",
+            "# The builder loop below bootstraps python, so it cannot use rpmlock.py (ADR-0014).",
+            'fips_lockfile="/tmp/rpm-lock/fips-verify.amd64.txt"',
+            'fips_lockfile="/tmp/rpm-lock/fips-verify.arm64.txt"',
+            'test -s "${fips_lockfile}"',
+            fips_bootstrap_array,
+            fips_bootstrap_count,
+            fips_builder_fetch,
+            fips_builder_install,
+            fips_python_sanity,
+            fips_builder_cleanup,
+            fips_runtime_fetch,
+            fips_lock_fetch,
+            fips_locked_install,
+            fips_microdnf_clean,
+            fips_verifier_invocation,
+            '--target-arch "${TARGETARCH}"',
+            '--provider-nevra "${OPENSSL_FIPS_PROVIDER_NEVRA}"',
+            '--module-version "${OPENSSL_FIPS_MODULE_VERSION}"',
+            '--expected-fips-so-sha256 "${expected_fips_so_sha256}"',
+            "--openssl-cnf /tmp/openssl-fips.cnf",
+            "--modules-dir /usr/lib64/ossl-modules",
+            "--proof-dir /fips-proof",
+        ]:
+            require(marker in stage, f"fips-verify stage missing pinned orchestration marker: {marker}")
+        normalized_stage = stage.replace("\\\n", " ")
+        require(
+            re.search(r"\bmicrodnf\s+install\b", normalized_stage) is None,
+            "fips-verify must not resolve packages through live microdnf metadata",
+        )
+        require(
+            "dnf_repo_args" not in stage and "--releasever=9" not in stage,
+            "fips-verify retains live repository-resolution orchestration",
+        )
+        require(
+            stage.count(fips_lock_fetch) == 1,
+            "fips-verify must fetch the FIPS verification lock exactly once",
+        )
+        require(
+            stage.count("rpm -Uvh --oldpackage --replacepkgs \\\n") == 1 and stage.count(fips_locked_install) == 1,
+            "fips-verify must install exactly one five-RPM pinned OpenSSL closure transaction",
+        )
+        require(
+            stage.index(fips_bootstrap_array)
+            < stage.index(fips_bootstrap_count)
+            < stage.index(fips_builder_fetch)
+            < stage.index(fips_builder_install)
+            < stage.index(fips_python_sanity)
+            < stage.index(fips_builder_cleanup)
+            < stage.index(fips_runtime_fetch)
+            < stage.index(fips_lock_fetch)
+            < stage.index(fips_locked_install)
+            < stage.index(fips_microdnf_clean)
+            < stage.index(fips_verifier_invocation),
+            "fips-verify must bootstrap Python before fetching and installing the pinned closure, then verify it",
+        )
+        require(
+            stage.count(fips_verifier_invocation) == 1,
+            "fips-verify must invoke verify-fips-provider.py exactly once",
+        )
+        for marker in [
+            "providers_verbose=",
+            "grep -A8",
+            "openssl dgst -md5",
+            "openssl dgst -sha256",
+            "openssl enc -aes-256-cbc",
+            "mkdir -p /fips-proof",
+        ]:
+            require(marker not in stage, f"fips-verify retains extracted inline verification marker: {marker}")
+        require(
+            re.search(r">{1,2}\s*/fips-proof/[^\s;\\]+", stage) is None,
+            "fips-verify must not redirect to individual proof files",
+        )
+
+    check_fips_verify_stage(fips_verify)
+    fips_mutations = [
+        (
+            "FIPS lock COPY deletion",
+            fips_verify.replace(
+                "COPY rpm-lock/fips-verify.amd64.txt rpm-lock/fips-verify.arm64.txt /tmp/rpm-lock/",
+                "",
+                1,
+            ),
+        ),
+        ("FIPS lock fetch deletion", fips_verify.replace(fips_lock_fetch, "true", 1)),
+        (
+            "pinned OpenSSL CLI path deletion",
+            fips_verify.replace('      "/tmp/fips-rpms/openssl-3.5.5-5.el9_8.${rpm_arch}.rpm" \\\n', "", 1),
+        ),
+        (
+            "live microdnf reintroduction",
+            fips_verify.replace(
+                fips_verifier_invocation,
+                f"microdnf install openssl crypto-policies; {fips_verifier_invocation}",
+                1,
+            ),
+        ),
+    ]
+    for label, mutation in fips_mutations:
+        try:
+            check_fips_verify_stage(mutation)
+        except VerifyError:
+            continue
+        raise VerifyError(f"fips-verify mutation was not rejected: {label}")
+    print(f"FIPS-verify mutation probes: {len(fips_mutations)}/{len(fips_mutations)} rejected")
 
     rpm_rootfs = text.split("FROM ${UBI_MINIMAL_IMAGE} AS rpm-rootfs", 1)[1].split(
         "FROM ${UBI_MINIMAL_IMAGE} AS dev-rootfs", 1
@@ -3480,12 +3551,18 @@ def check_sbom_assertion_script() -> None:
         require(marker in phantom, f"phantom package guard missing marker: {marker}")
 
 
-def rpmlock_summary(relative_path: str, platform_arch: str, *, builder: bool = False) -> dict[str, Any]:
+def rpmlock_summary(relative_path: str, platform_arch: str, *, mode: str = "runtime") -> dict[str, Any]:
+    commands = {
+        "runtime": "summary",
+        "builder": "builder-summary",
+        "fips": "fips-summary",
+    }
+    require(mode in commands, f"unsupported rpmlock summary mode: {mode}")
     result = subprocess.run(
         [
             sys.executable,
             str(ROOT / "tools/rpmlock.py"),
-            "builder-summary" if builder else "summary",
+            commands[mode],
             "--lockfile",
             str(ROOT / relative_path),
             "--arch",
@@ -3532,6 +3609,7 @@ def check_rpm_locks() -> None:
         "arm64": (OPENSSL_FIPS_PROVIDER_RPM_SHA256_ARM64, OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_ARM64),
     }
     fips_provider_nvr = fips_provider_nevra()[len("openssl-fips-provider-so-") :]
+    runtime_openssl_versions: dict[str, tuple[str, str, str]] = {}
     for platform_arch, rpm_arch in expected_arch.items():
         relative_path = f"rpm-lock/runtime.{platform_arch}.txt"
         summary = rpmlock_summary(relative_path, platform_arch)
@@ -3590,6 +3668,46 @@ def check_rpm_locks() -> None:
 
         final_names = {row["name"] for row in rows if row["final_rpmdb"] == "yes"}
         require(final_names == required_final, f"{relative_path}: final rpmdb set mismatch: {sorted(final_names)}")
+        openssl_libraries = [row for row in rows if row["name"] == "openssl-libs"]
+        require(len(openssl_libraries) == 1, f"{relative_path}: expected exactly one openssl-libs row")
+        runtime_openssl_versions[platform_arch] = (
+            openssl_libraries[0]["epoch"],
+            openssl_libraries[0]["version"],
+            openssl_libraries[0]["release"],
+        )
+
+    gitignore = read(".gitignore")
+    for platform_arch, rpm_arch in expected_arch.items():
+        relative_path = f"rpm-lock/fips-verify.{platform_arch}.txt"
+        require(f"!/{relative_path}" in gitignore, f".gitignore must allowlist FIPS verification lock: {relative_path}")
+        summary = rpmlock_summary(relative_path, platform_arch, mode="fips")
+        rows = summary_records(summary, "rows", relative_path)
+        direct_rows = summary_records(summary, "direct_rpms", relative_path)
+        require(len(rows) == 1, f"{relative_path}: FIPS verification lock must contain exactly one RPM")
+        require(len(direct_rows) == 1, f"{relative_path}: FIPS verification RPM must have one direct pin")
+        row = rows[0]
+        require(row["name"] == "openssl", f"{relative_path}: FIPS verification lock must pin openssl")
+        require(row["final_rpmdb"] == "no", f"{relative_path}: FIPS verification openssl must not enter final rpmdb")
+        require(row["arch"] == rpm_arch, f"{relative_path}: openssl RPM architecture mismatch: {row['arch']}")
+        epoch_prefix = "" if row["epoch"] == "0" else f"{row['epoch']}:"
+        expected_package = f"openssl-{epoch_prefix}{row['version']}-{row['release']}.{rpm_arch}"
+        require(row["package"] == expected_package, f"{relative_path}: openssl package field does not match its row")
+        expected_filename = f"openssl-{row['version']}-{row['release']}.{rpm_arch}.rpm"
+        expected_url = f"{OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}/{rpm_arch}/baseos/os/Packages/o/{expected_filename}"
+        direct = direct_rows[0]
+        require(direct["package"] == expected_package, f"{relative_path}: direct pin must match the openssl row")
+        require(
+            direct["url"] == expected_url, f"{relative_path}: openssl direct pin must use the exact UBI BaseOS CDN path"
+        )
+        require(
+            len(direct["sha256"]) == 64 and all(character in "0123456789abcdef" for character in direct["sha256"]),
+            f"{relative_path}: invalid openssl whole-RPM sha256",
+        )
+        fips_openssl_version = (row["epoch"], row["version"], row["release"])
+        require(
+            fips_openssl_version == runtime_openssl_versions[platform_arch],
+            f"{relative_path}: openssl CLI version must equal runtime openssl-libs version",
+        )
 
     expected_builder_names = {
         "expat",
@@ -3600,11 +3718,10 @@ def check_rpm_locks() -> None:
         "python3.12-libs",
         "python3.12-pip-wheel",
     }
-    gitignore = read(".gitignore")
     for platform_arch in expected_arch:
         relative_path = f"rpm-lock/builder.{platform_arch}.txt"
         require(f"!/{relative_path}" in gitignore, f".gitignore must allowlist builder lock: {relative_path}")
-        summary = rpmlock_summary(relative_path, platform_arch, builder=True)
+        summary = rpmlock_summary(relative_path, platform_arch, mode="builder")
         rows = summary_records(summary, "rows", relative_path)
         direct_rows = summary_records(summary, "direct_rpms", relative_path)
         packages = [row["package"] for row in rows]

@@ -43,6 +43,7 @@ ARG SOURCE_DATE_EPOCH
 
 COPY containers/fips/openssl.cnf /tmp/openssl-fips.cnf
 COPY rpm-lock/builder.amd64.txt rpm-lock/builder.arm64.txt /tmp/rpm-lock/
+COPY rpm-lock/fips-verify.amd64.txt rpm-lock/fips-verify.arm64.txt /tmp/rpm-lock/
 COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/
 COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh
 COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh
@@ -54,11 +55,12 @@ COPY tools/verify-fips-provider.py /tmp/verify-fips-provider.py
 RUN set -eux; \
     export SOURCE_DATE_EPOCH; \
     case "${TARGETARCH}" in \
-      amd64) rpm_arch="x86_64"; builder_lockfile="/tmp/rpm-lock/builder.amd64.txt"; runtime_lockfile="/tmp/rpm-lock/runtime.amd64.txt"; expected_fips_so_sha256="${OPENSSL_FIPS_SO_SHA256_AMD64}" ;; \
-      arm64) rpm_arch="aarch64"; builder_lockfile="/tmp/rpm-lock/builder.arm64.txt"; runtime_lockfile="/tmp/rpm-lock/runtime.arm64.txt"; expected_fips_so_sha256="${OPENSSL_FIPS_SO_SHA256_ARM64}" ;; \
+      amd64) rpm_arch="x86_64"; builder_lockfile="/tmp/rpm-lock/builder.amd64.txt"; fips_lockfile="/tmp/rpm-lock/fips-verify.amd64.txt"; runtime_lockfile="/tmp/rpm-lock/runtime.amd64.txt"; expected_fips_so_sha256="${OPENSSL_FIPS_SO_SHA256_AMD64}" ;; \
+      arm64) rpm_arch="aarch64"; builder_lockfile="/tmp/rpm-lock/builder.arm64.txt"; fips_lockfile="/tmp/rpm-lock/fips-verify.arm64.txt"; runtime_lockfile="/tmp/rpm-lock/runtime.arm64.txt"; expected_fips_so_sha256="${OPENSSL_FIPS_SO_SHA256_ARM64}" ;; \
       *) echo "unsupported TARGETARCH for FIPS provider pin: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     test -s "${builder_lockfile}" || { echo "builder RPM lockfile missing: ${builder_lockfile}" >&2; exit 1; }; \
+    test -s "${fips_lockfile}" || { echo "FIPS verification RPM lockfile missing: ${fips_lockfile}" >&2; exit 1; }; \
     test -s "${runtime_lockfile}" || { echo "runtime RPM lockfile missing: ${runtime_lockfile}" >&2; exit 1; }; \
     builder_rpm_paths=(); \
     while IFS='|' read -r package name epoch version release arch sha256_header sigmd5; do \
@@ -76,18 +78,13 @@ RUN set -eux; \
     rm -rf /tmp/builder-rpms; \
     fips_provider_nvr="${OPENSSL_FIPS_PROVIDER_NEVRA#openssl-fips-provider-so-}"; \
     test "${fips_provider_nvr}" != "${OPENSSL_FIPS_PROVIDER_NEVRA}" || { echo "invalid FIPS provider NEVRA pin: ${OPENSSL_FIPS_PROVIDER_NEVRA}" >&2; exit 1; }; \
-    mkdir -p /tmp/runtime-rpms; \
+    mkdir -p /tmp/fips-rpms /tmp/runtime-rpms; \
     bash /tmp/fetch-runtime-rpms.sh --targetarch "${TARGETARCH}" --lockfile "${runtime_lockfile}" --dest /tmp/runtime-rpms; \
-    dnf_repo_args=(); \
-    if [ -n "${DNF_REPOS}" ]; then dnf_repo_args=("--disablerepo=*" "--enablerepo=${DNF_REPOS}"); fi; \
-    microdnf install -y --releasever=9 \
-      --config=/etc/dnf/dnf.conf --noplugins \
-      --setopt=reposdir=/etc/yum.repos.d \
-      --setopt=varsdir=/etc/dnf/vars \
-      --nodocs --setopt=install_weak_deps=0 \
-      "${dnf_repo_args[@]}" \
-      openssl crypto-policies; \
+    bash /tmp/fetch-runtime-rpms.sh --targetarch "${TARGETARCH}" --lockfile "${fips_lockfile}" --dest /tmp/fips-rpms; \
     rpm -Uvh --oldpackage --replacepkgs \
+      "/tmp/fips-rpms/openssl-3.5.5-5.el9_8.${rpm_arch}.rpm" \
+      "/tmp/runtime-rpms/openssl-libs-3.5.5-5.el9_8.${rpm_arch}.rpm" \
+      "/tmp/runtime-rpms/crypto-policies-20260224-1.gitea0f072.el9_8.noarch.rpm" \
       "/tmp/runtime-rpms/openssl-fips-provider-${fips_provider_nvr}.${rpm_arch}.rpm" \
       "/tmp/runtime-rpms/${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}.rpm"; \
     microdnf clean all; \

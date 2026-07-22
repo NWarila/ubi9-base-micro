@@ -54,7 +54,9 @@ scope. The runtime lock therefore records a direct `https://cdn-ubi.redhat.com/`
 URL plus whole-RPM SHA-256 for every runtime RPM, including the held
 `openssl-fips-provider` / `openssl-fips-provider-so` `3.0.7-8.el9` packages and
 ordinary transaction RPMs such as `coreutils`, `coreutils-common`, and
-`libtasn1`.
+`libtasn1`. The discarded `fips-verify` stage uses the same direct-CDN path for
+its build-only `openssl` CLI pin and reuses the runtime pins for `openssl-libs`,
+`crypto-policies`, and the provider pair, with no live metadata resolution.
 
 This removes the known metadata-purge failure mode, but it does not make CDN blob
 retention a permanent guarantee. The nightly rebuild is the purge sentinel: a
@@ -62,6 +64,11 @@ retention a permanent guarantee. The nightly rebuild is the purge sentinel: a
 an explicit vendor decision or a controlled lock refresh that bumps the NEVRA,
 URL, and SHA-256 together. Do not substitute a rebuild, EPEL package, rpmrebuild
 output, metadata fallback, or newer z-stream just to keep the build green.
+Because repository verification requires the FIPS CLI epoch, version, and
+release to equal the runtime `openssl-libs` values, an `openssl-libs` refresh is
+blocked until both FIPS locks are deliberately co-refreshed. This coupling keeps
+the verification CLI and shipped libraries aligned; it is not optional fallback
+behavior.
 
 ## TD-5: Builder-scoped canonical rootfs digest
 
