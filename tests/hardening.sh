@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Purpose: Export the runtime image rootfs and assert the hardening baseline (no shell, no dnf/microdnf/rpm/yum, user
-# 65532:65532, populated rpmdb enumerable by Syft, populated RHEL CA bundle).
+# Purpose: Assert the runtime image config and exported-rootfs hardening baseline, including the nonroot identity.
 # Role: test
 # Python-convertible: yes — already embeds a Python Syft-JSON parser; the awk filesystem scans + assertion loops fold
 # into one Python gate.
@@ -17,9 +16,19 @@ Validates the base-micro runtime hardening baseline:
   B1 no shell resolves
   B2 no dnf/microdnf/rpm/yum executable resolves
   B3 image config User is 65532:65532
-  B4 /var/lib/rpm is present and Syft enumerates RPM packages
-  B5 the RHEL CA bundle is present and populated
+  B4 image config HOME is /home/nonroot
+  B5 /etc/passwd, /etc/group, and /home/nonroot provide the exact nonroot identity
+  B6 /var/lib/rpm is present and Syft enumerates RPM packages
+  B7 the RHEL CA bundle is present and populated
 USAGE
+}
+
+assert_runtime_home() {
+  local runtime_home="$1"
+  if [[ "${runtime_home}" != "/home/nonroot" ]]; then
+    echo "image config HOME must resolve to /home/nonroot; got '${runtime_home}'" >&2
+    exit 1
+  fi
 }
 
 assert_no_shell_binaries() {
@@ -68,6 +77,7 @@ run_self_test() (
 
   assert_no_shell_binaries "${clean_file_list}"
   assert_no_package_manager_executables "${clean_file_list}"
+  assert_runtime_home "/home/nonroot"
   echo "self-test clean fixture passed shell and package-manager checks"
 
   status=0
@@ -109,6 +119,26 @@ run_self_test() (
     exit 1
   fi
   printf 'self-test package-manager fixture failed as expected (status=%s):\n%s\n' "${status}" "${output}"
+
+  status=0
+  output="$(
+    (
+      # This check intentionally fails so the self-test can capture its status and diagnostic.
+      # shellcheck disable=SC2310
+      assert_runtime_home "/root"
+    ) 2>&1
+  )" || status=$?
+  if [[ "${status}" -eq 0 ]]; then
+    echo "HOME negative self-test unexpectedly passed" >&2
+    exit 1
+  fi
+  expected_diagnostic="image config HOME must resolve to /home/nonroot; got '/root'"
+  if [[ "${output}" != *"${expected_diagnostic}"* ]]; then
+    echo "HOME negative self-test failed without the expected diagnostic" >&2
+    printf '%s\n' "${output}" >&2
+    exit 1
+  fi
+  printf 'self-test HOME fixture failed as expected (status=%s):\n%s\n' "${status}" "${output}"
 )
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
@@ -154,6 +184,15 @@ find_syft() {
 }
 
 syft_bin="$(find_syft)"
+
+image_env="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${image_ref}")"
+runtime_home="$(
+  awk '
+    index($0, "HOME=") == 1 { home = substr($0, 6) }
+    END { print home }
+  ' <<< "${image_env}"
+)"
+assert_runtime_home "${runtime_home}"
 
 tmp_dir="$(mktemp -d)"
 tar_path="${tmp_dir}/rootfs.tar"
@@ -221,6 +260,52 @@ assert_no_package_manager_executables "${tmp_dir}/files.txt"
 runtime_user="$(docker image inspect --format '{{.Config.User}}' "${image_ref}")"
 if [[ "${runtime_user}" != "65532:65532" ]]; then
   echo "image must run as 65532:65532; got '${runtime_user}'" >&2
+  exit 1
+fi
+
+passwd_file="${tmp_dir}/passwd"
+# extract_file intentionally probes both OCI tar path forms.
+# shellcheck disable=SC2310
+if ! extract_file "etc/passwd" > "${passwd_file}"; then
+  echo "runtime rootfs is missing /etc/passwd" >&2
+  exit 1
+fi
+expected_passwd="nonroot:x:65532:65532:nonroot:/home/nonroot:/sbin/nologin"
+passwd_matches="$(grep -Fxc "${expected_passwd}" "${passwd_file}" || true)"
+if [[ "${passwd_matches}" != "1" ]]; then
+  echo "runtime /etc/passwd must contain the exact nonroot UID 65532 account once; found ${passwd_matches}" >&2
+  exit 1
+fi
+
+group_file="${tmp_dir}/group"
+# extract_file intentionally probes both OCI tar path forms.
+# shellcheck disable=SC2310
+if ! extract_file "etc/group" > "${group_file}"; then
+  echo "runtime rootfs is missing /etc/group" >&2
+  exit 1
+fi
+expected_group="nonroot:x:65532:"
+group_matches="$(grep -Fxc "${expected_group}" "${group_file}" || true)"
+if [[ "${group_matches}" != "1" ]]; then
+  echo "runtime /etc/group must contain the exact nonroot GID 65532 group once; found ${group_matches}" >&2
+  exit 1
+fi
+
+home_metadata="$(
+  tar --numeric-owner -tvf "${tar_path}" \
+    | awk '
+      {
+        path = $NF
+        sub(/^\.\//, "", path)
+        sub(/\/$/, "", path)
+        if (path == "home/nonroot") {
+          print $1 " " $2
+        }
+      }
+    '
+)"
+if [[ "${home_metadata}" != "drwx------ 65532/65532" ]]; then
+  echo "runtime /home/nonroot must be a 0700 directory owned by 65532:65532; got '${home_metadata:-missing}'" >&2
   exit 1
 fi
 
@@ -299,6 +384,8 @@ echo "hardening checks passed for ${image_ref}"
 echo "proof: no shell resolves by entrypoint or filesystem scan"
 echo "proof: no dnf/microdnf/rpm/yum resolves by entrypoint or filesystem scan"
 echo "proof: default user is ${runtime_user}"
+echo "proof: HOME=${runtime_home}"
+echo "proof: nonroot passwd, group, and 0700 home identity is present"
 echo "proof: rpmdb present at /${rpmdb_found}"
 echo "proof: Syft enumerated RPM packages from the image rpmdb"
 echo "proof: CA bundle populated via /${ca_ok}"

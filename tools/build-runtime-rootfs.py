@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -78,6 +79,10 @@ TRIMMED_EXECUTABLES: Final = (
 )
 EXECUTABLE_DIRS: Final = ("usr/bin", "usr/sbin", "bin", "sbin")
 RPM_ARCH_BY_TARGET: Final = {"amd64": "x86_64", "arm64": "aarch64"}
+NONROOT_UID: Final = 65532
+NONROOT_GID: Final = 65532
+NONROOT_PASSWD_LINE: Final = "nonroot:x:65532:65532:nonroot:/home/nonroot:/sbin/nologin"
+NONROOT_GROUP_LINE: Final = "nonroot:x:65532:"
 
 
 class BuildError(RuntimeError):
@@ -133,6 +138,15 @@ def _rooted(rootfs: Path, absolute_path: str) -> Path:
 
 def _is_nonempty_file(path: Path) -> bool:
     return path.is_file() and path.stat().st_size > 0
+
+
+def _set_owner(path: Path, uid: int, gid: int) -> None:
+    os.chown(path, uid, gid)
+
+
+def _owner_ids(path: Path) -> tuple[int, int]:
+    entry_stat = path.stat()
+    return entry_stat.st_uid, entry_stat.st_gid
 
 
 def _remove_path(path: Path) -> None:
@@ -485,6 +499,82 @@ def _trim_filesystem(rootfs: Path, *, fips_openssl: Path, fips_lib64: Path) -> N
     _require(not fipsmodule_config.exists(), "fipsmodule.cnf survived in runtime rootfs")
 
 
+def _identity_lines(contents: str, field_index: int, identifier: int) -> list[str]:
+    expected_field = str(identifier)
+    matches: list[str] = []
+    for line in contents.splitlines():
+        fields = line.split(":")
+        if len(fields) > field_index and fields[field_index] == expected_field:
+            matches.append(line)
+    return matches
+
+
+def _append_line(path: Path, contents: str, line: str) -> None:
+    with path.open("a", encoding="utf-8") as stream:
+        if contents and not contents.endswith("\n"):
+            stream.write("\n")
+        stream.write(f"{line}\n")
+
+
+def _ensure_nonroot_identity(rootfs: Path) -> None:
+    passwd = _rooted(rootfs, "/etc/passwd")
+    group = _rooted(rootfs, "/etc/group")
+    home = _rooted(rootfs, "/home/nonroot")
+
+    _require(passwd.is_file(), "runtime rootfs /etc/passwd is missing")
+    _require(group.is_file(), "runtime rootfs /etc/group is missing")
+    passwd_contents = passwd.read_text(encoding="utf-8")
+    group_contents = group.read_text(encoding="utf-8")
+    passwd_id_lines = _identity_lines(passwd_contents, 2, NONROOT_UID)
+    group_id_lines = _identity_lines(group_contents, 2, NONROOT_GID)
+    _require(
+        all(line == NONROOT_PASSWD_LINE for line in passwd_id_lines),
+        f"conflicting runtime account already uses UID {NONROOT_UID}",
+    )
+    _require(
+        all(line == NONROOT_GROUP_LINE for line in group_id_lines),
+        f"conflicting runtime group already uses GID {NONROOT_GID}",
+    )
+
+    if not passwd_id_lines:
+        _append_line(passwd, passwd_contents, NONROOT_PASSWD_LINE)
+    if not group_id_lines:
+        _append_line(group, group_contents, NONROOT_GROUP_LINE)
+
+    passwd.chmod(0o644)
+    group.chmod(0o644)
+    _set_owner(passwd, 0, 0)
+    _set_owner(group, 0, 0)
+    if os.path.lexists(home):
+        _require(
+            stat.S_ISDIR(home.lstat().st_mode),
+            "runtime nonroot home exists but is not a directory",
+        )
+    else:
+        home.mkdir(parents=True, mode=0o700)
+    home.chmod(0o700)
+    _set_owner(home, NONROOT_UID, NONROOT_GID)
+
+    _require(
+        NONROOT_PASSWD_LINE in passwd.read_text(encoding="utf-8").splitlines(),
+        "runtime nonroot passwd account is missing",
+    )
+    _require(
+        NONROOT_GROUP_LINE in group.read_text(encoding="utf-8").splitlines(),
+        "runtime nonroot group is missing",
+    )
+    _require(stat.S_IMODE(passwd.stat().st_mode) == 0o644, "runtime /etc/passwd mode must be 0644")
+    _require(_owner_ids(passwd) == (0, 0), "runtime /etc/passwd owner must be 0:0")
+    _require(stat.S_IMODE(group.stat().st_mode) == 0o644, "runtime /etc/group mode must be 0644")
+    _require(_owner_ids(group) == (0, 0), "runtime /etc/group owner must be 0:0")
+    _require(stat.S_ISDIR(home.lstat().st_mode), "runtime nonroot home is not a directory")
+    _require(stat.S_IMODE(home.stat().st_mode) == 0o700, "runtime nonroot home mode must be 0700")
+    _require(
+        _owner_ids(home) == (NONROOT_UID, NONROOT_GID),
+        f"runtime nonroot home owner must be {NONROOT_UID}:{NONROOT_GID}",
+    )
+
+
 def build(
     rootfs: Path,
     *,
@@ -507,6 +597,7 @@ def build(
         module_version=module_version,
     )
     _trim_filesystem(rootfs, fips_openssl=fips_openssl, fips_lib64=fips_lib64)
+    _ensure_nonroot_identity(rootfs)
 
 
 def _parser() -> argparse.ArgumentParser:

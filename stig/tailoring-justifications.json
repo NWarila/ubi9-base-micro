@@ -273,7 +273,7 @@
         "^RHEL-09-232045$",
         "^RHEL-09-232050$"
       ],
-      "justification": "These controls target local interactive user initialization files and home directories. The runtime image has no shell-login users with authoritative home directory content; any such paths are supplied by the consuming workload or host."
+      "justification": "These controls target local interactive user initialization files and home directories. The base-provided nonroot account uses /sbin/nologin and has /home/nonroot mode 0700; because the account cannot log in, interactive-home controls do not apply."
     },
     {
       "id": "absent_cron_paths",
