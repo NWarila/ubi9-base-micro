@@ -33,7 +33,9 @@ Host-only controls are not claimed as image passes. The scope ledger documents
 why omitted control groups belong to the consuming host or runtime: bootloader,
 kernel/sysctl, auditd, PAM, SSH, firewall, GUI, systemd services, mount options,
 interactive account policy, mutable host package-management state, host log
-paths, cron paths, user home directories, and SELinux device labeling.
+paths, cron paths, interactive user home directories, and SELinux device
+labeling. The base-provided `nonroot` account cannot log in because it uses
+`/sbin/nologin`; its `/home/nonroot` directory is mode `0700`.
 
 `tools/assert-stig-tailoring.py` derives the full RHEL9 STIG control set from
 the pinned source tree and fails unless every omitted control is covered by a

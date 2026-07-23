@@ -10,6 +10,9 @@ and this project adheres to
 
 ### Changed
 
+- Added the base `nonroot:65532` identity and home and set `HOME=/home/nonroot`.
+  The base's default command remains a non-functional inherited placeholder on
+  this shell-less base, so consumers must set their own exec-form `ENTRYPOINT`.
 - Updated the published-image verification reference and how-to to verify
   repository-generated attestations on both platform children and fail closed if either child fails.
 - Corrected enforcement, reproducibility, and published-image verification claims
