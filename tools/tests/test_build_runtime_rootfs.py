@@ -6,14 +6,19 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
+import io
 import json
 import os
 import stat
 import subprocess
 import sys
+from collections.abc import Callable
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from types import ModuleType
+from typing import Any, cast
 
 import pytest
 
@@ -23,6 +28,18 @@ PROVIDER_NEVRA = "openssl-fips-provider-so-3.0.7-8.el9"
 PROVIDER_FULL_NEVRA = f"{PROVIDER_NEVRA}.x86_64"
 LIBS_NEVRA = "openssl-libs-1:3.2.2-6.el9_5.1.x86_64"
 MODULE_VERSION = "3.0.7-cda111b5812c30d4"
+
+
+def _load_helper() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("build_runtime_rootfs", HELPER)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+ROOTFS_BUILDER = _load_helper()
 
 
 @dataclass(frozen=True)
@@ -158,6 +175,8 @@ def _runtime_fixture(tmp_path: Path) -> RuntimeFixture:
     _write_executable(fake_bin / "ldd", _fake_ldd_source())
     _write_executable(fake_bin / "ldconfig", _fake_ldconfig_source())
 
+    _write_file(rootfs, "etc/passwd", b"root:x:0:0:root:/root:/sbin/nologin\n", 0o644)
+    _write_file(rootfs, "etc/group", b"root:x:0:\n", 0o644)
     _write_file(rootfs, "var/lib/rpm/rpmdb.sqlite", b"rpmdb\n", 0o644)
     _write_file(rootfs, "usr/lib64/libcrypto.so.3", b"libcrypto\n", 0o755)
     _write_file(rootfs, "usr/lib64/libssl.so.3", b"libssl\n", 0o755)
@@ -299,13 +318,47 @@ def _command(fixture: RuntimeFixture, command: str = "build") -> list[str]:
 def _run_fixture(fixture: RuntimeFixture, command: str = "build") -> subprocess.CompletedProcess[str]:
     previous_umask = os.umask(0o022)
     try:
-        return subprocess.run(
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        owners: dict[Path, tuple[int, int]] = {}
+        actual_owner_ids = cast(
+            Callable[[Path], tuple[int, int]],
+            ROOTFS_BUILDER._owner_ids,
+        )
+        actual_run = subprocess.run
+
+        def set_owner(path: Path, uid: int, gid: int) -> None:
+            owners[path] = (uid, gid)
+
+        def owner_ids(path: Path) -> tuple[int, int]:
+            return owners.get(path, actual_owner_ids(path))
+
+        def run_executable(
+            command: list[str],
+            *args: Any,
+            **kwargs: Any,
+        ) -> subprocess.CompletedProcess[str]:
+            executable = command[0]
+            if executable in {"rpm", "ldd", "ldconfig"}:
+                script = Path(fixture.env["PATH"].split(":", 1)[0]) / executable
+                command = [sys.executable, str(script), *command[1:]]
+            elif executable == str(fixture.fips_openssl):
+                command = [sys.executable, executable, *command[1:]]
+            return actual_run(command, *args, **kwargs)
+
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            for name, value in fixture.env.items():
+                monkeypatch.setenv(name, value)
+            monkeypatch.setattr(ROOTFS_BUILDER, "_set_owner", set_owner)
+            monkeypatch.setattr(ROOTFS_BUILDER, "_owner_ids", owner_ids)
+            monkeypatch.setattr(ROOTFS_BUILDER.subprocess, "run", run_executable)
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                returncode = ROOTFS_BUILDER.main(_command(fixture, command)[2:])
+        return subprocess.CompletedProcess(
             _command(fixture, command),
-            cwd=ROOT,
-            env=fixture.env,
-            text=True,
-            capture_output=True,
-            check=False,
+            returncode,
+            stdout.getvalue(),
+            stderr.getvalue(),
         )
     finally:
         os.umask(previous_umask)
@@ -325,6 +378,129 @@ def _metadata(path: Path) -> tuple[str, int, str]:
 
 def _mutations(fixture: RuntimeFixture) -> list[list[str]]:
     return [json.loads(line) for line in fixture.mutation_log.read_text(encoding="utf-8").splitlines()]
+
+
+def _identity_fixture(tmp_path: Path) -> Path:
+    rootfs = tmp_path / "rootfs"
+    rootfs.mkdir()
+    _write_file(
+        rootfs,
+        "etc/passwd",
+        b"root:x:0:0:root:/root:/sbin/nologin\nnobody:x:65534:65534:nobody:/:/sbin/nologin\n",
+        0o600,
+    )
+    _write_file(rootfs, "etc/group", b"root:x:0:\nnobody:x:65534:\n", 0o600)
+    return rootfs
+
+
+def _mock_ownership(monkeypatch: pytest.MonkeyPatch) -> dict[Path, tuple[int, int]]:
+    owners: dict[Path, tuple[int, int]] = {}
+    actual_owner_ids = cast(
+        Callable[[Path], tuple[int, int]],
+        ROOTFS_BUILDER._owner_ids,
+    )
+
+    def set_owner(path: Path, uid: int, gid: int) -> None:
+        owners[path] = (uid, gid)
+
+    def owner_ids(path: Path) -> tuple[int, int]:
+        return owners.get(path, actual_owner_ids(path))
+
+    monkeypatch.setattr(ROOTFS_BUILDER, "_set_owner", set_owner)
+    monkeypatch.setattr(ROOTFS_BUILDER, "_owner_ids", owner_ids)
+    return owners
+
+
+def test_nonroot_identity_creation_is_exact_and_idempotent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rootfs = _identity_fixture(tmp_path)
+    owners = _mock_ownership(monkeypatch)
+
+    ROOTFS_BUILDER._ensure_nonroot_identity(rootfs)
+
+    passwd = rootfs / "etc/passwd"
+    group = rootfs / "etc/group"
+    home = rootfs / "home/nonroot"
+    expected_passwd = "nonroot:x:65532:65532:nonroot:/home/nonroot:/sbin/nologin"
+    expected_group = "nonroot:x:65532:"
+    assert passwd.read_text(encoding="utf-8").splitlines() == [
+        "root:x:0:0:root:/root:/sbin/nologin",
+        "nobody:x:65534:65534:nobody:/:/sbin/nologin",
+        expected_passwd,
+    ]
+    assert group.read_text(encoding="utf-8").splitlines() == [
+        "root:x:0:",
+        "nobody:x:65534:",
+        expected_group,
+    ]
+    assert stat.S_IMODE(passwd.stat().st_mode) == 0o644
+    assert stat.S_IMODE(group.stat().st_mode) == 0o644
+    assert home.is_dir()
+    assert stat.S_IMODE(home.stat().st_mode) == 0o700
+    assert owners == {
+        passwd: (0, 0),
+        group: (0, 0),
+        home: (65532, 65532),
+    }
+    first_state = (
+        passwd.read_bytes(),
+        group.read_bytes(),
+        _metadata(home),
+        owners.copy(),
+    )
+
+    ROOTFS_BUILDER._ensure_nonroot_identity(rootfs)
+
+    assert (
+        passwd.read_bytes(),
+        group.read_bytes(),
+        _metadata(home),
+        owners,
+    ) == first_state
+
+
+@pytest.mark.parametrize(
+    ("relative", "conflicting_line", "message"),
+    [
+        (
+            "etc/passwd",
+            "other:x:65532:65532:other:/home/other:/sbin/nologin",
+            "conflicting runtime account already uses UID 65532",
+        ),
+        (
+            "etc/group",
+            "other:x:65532:",
+            "conflicting runtime group already uses GID 65532",
+        ),
+    ],
+)
+def test_nonroot_identity_rejects_conflicting_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    relative: str,
+    conflicting_line: str,
+    message: str,
+) -> None:
+    rootfs = _identity_fixture(tmp_path)
+    conflict_path = rootfs / relative
+    conflict_path.write_text(
+        conflict_path.read_text(encoding="utf-8") + f"{conflicting_line}\n",
+        encoding="utf-8",
+    )
+    before = {
+        "passwd": (rootfs / "etc/passwd").read_bytes(),
+        "group": (rootfs / "etc/group").read_bytes(),
+    }
+    _mock_ownership(monkeypatch)
+
+    with pytest.raises(ROOTFS_BUILDER.BuildError, match=message):
+        ROOTFS_BUILDER._ensure_nonroot_identity(rootfs)
+
+    assert (rootfs / "etc/passwd").read_bytes() == before["passwd"]
+    assert (rootfs / "etc/group").read_bytes() == before["group"]
+    assert not (rootfs / "home/nonroot").exists()
 
 
 def test_build_preserves_ordered_rpm_mutations_and_trimmed_tree_metadata(tmp_path: Path) -> None:
