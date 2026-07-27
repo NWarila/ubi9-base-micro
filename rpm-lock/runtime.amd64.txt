@@ -10,12 +10,12 @@
 # direct_rpm: crypto-policies-20260224-1.gitea0f072.el9_8.noarch|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/c/crypto-policies-20260224-1.gitea0f072.el9_8.noarch.rpm|a9ad86b8df75a7c9c29c6f6dd4b8f78cfa1f42b492eff0d11b82c457d37a7f9f
 # direct_rpm: filesystem-3.16-5.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/f/filesystem-3.16-5.el9.x86_64.rpm|9567592e6e32a9ebd45584cc4feb5d00812f143fcb2d8cd8b1d95108f4f66a2d
 # direct_rpm: findutils-1:4.8.0-7.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/f/findutils-4.8.0-7.el9.x86_64.rpm|a6328afea0a11647b7fb5c48436f0af6c795407bac0650676d3196dd47070de6
-# direct_rpm: glibc-2.34-272.el9_8.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/g/glibc-2.34-272.el9_8.x86_64.rpm|d59c7006e4a76b6543be7fb04cd701cc341fd667198f86006a8e766923a9985b
-# direct_rpm: glibc-common-2.34-272.el9_8.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/g/glibc-common-2.34-272.el9_8.x86_64.rpm|aff0f291115fdf9e8ae8e683ba2a2a75c17e9e00dab7bc0441482b3c18a964fa
-# direct_rpm: glibc-minimal-langpack-2.34-272.el9_8.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/g/glibc-minimal-langpack-2.34-272.el9_8.x86_64.rpm|a6bd959400dd177dfddc995baf85df09746fa0a5d0d59a9ebfafb6a4c1b53344
+# direct_rpm: glibc-2.34-274.el9_8.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/g/glibc-2.34-274.el9_8.x86_64.rpm|3a68581527ea2aa67a57610951bd9722019cc32db691cace00dc7478cab312ec
+# direct_rpm: glibc-common-2.34-274.el9_8.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/g/glibc-common-2.34-274.el9_8.x86_64.rpm|d741ab036ed8b97022052adb291a749a0ca1d5e492bd906aa7da95af9866bd2b
+# direct_rpm: glibc-minimal-langpack-2.34-274.el9_8.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/g/glibc-minimal-langpack-2.34-274.el9_8.x86_64.rpm|da6b677193283cedf470f17894638ef1a633c114e4b51464c49548a19166a68e
 # direct_rpm: gmp-1:6.2.0-13.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/g/gmp-6.2.0-13.el9.x86_64.rpm|d4529445e30b7eb9a8225b0539f70d26d585d7fe306296f948ea73114d1c171f
 # direct_rpm: grep-3.6-5.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/g/grep-3.6-5.el9.x86_64.rpm|5556895ff1817066ca71b50785615e944b0fcc7e1c94c983087c7c691819623d
-# direct_rpm: libacl-2.3.1-4.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libacl-2.3.1-4.el9.x86_64.rpm|dc50fd67447efd6367395b3e1517bfc1fa958652a75ce7619358812a8f6c80aa
+# direct_rpm: libacl-2.4.0-1.el9_8.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libacl-2.4.0-1.el9_8.x86_64.rpm|a81fb7a4d7c946e9bd886ee3c471a4b5040dedbb8ffb2a388120b2094be93cc8
 # direct_rpm: libattr-2.5.1-3.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libattr-2.5.1-3.el9.x86_64.rpm|6519f028915fbd7ee0474f0bf4e98e35f04b5d0cf7be9f66c0cb9eafac0b8c5a
 # direct_rpm: libcap-2.48-10.el9_8.1.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libcap-2.48-10.el9_8.1.x86_64.rpm|d4805439b10fa551b7535cf30ca28d4d5862132c9c429b2b31221bea7f43263a
 # direct_rpm: libffi-3.4.2-8.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libffi-3.4.2-8.el9.x86_64.rpm|dde0012a94c6f3825e605b095b15767d89c2b87a5da097348310d7e87721c645
@@ -48,12 +48,12 @@ coreutils-common-8.32-41.el9_8.x86_64|no|coreutils-common|0|8.32|41.el9_8|x86_64
 crypto-policies-20260224-1.gitea0f072.el9_8.noarch|yes|crypto-policies|0|20260224|1.gitea0f072.el9_8|noarch|da81d7746eb8c31dbd5aec626c7bf34440bd4d4f2bce24135b36195d616cd2a7|cda426910254e4ba6902d3fdf44c53fa
 filesystem-3.16-5.el9.x86_64|yes|filesystem|0|3.16|5.el9|x86_64|f980a0c4132ddf30805e2897ae3728703122b7748dc335a1175cf0a8f7557084|af1812d471b0fc3456fa0a17b3500775
 findutils-1:4.8.0-7.el9.x86_64|no|findutils|1|4.8.0|7.el9|x86_64|b025f9471bc070838c958937ccf5b212eaa5a54f466e8a44b7fbd96b49f1d325|66b2f260287cd50e61fb44474fa06698
-glibc-2.34-272.el9_8.x86_64|yes|glibc|0|2.34|272.el9_8|x86_64|1db6b7b849e09ea192b8334245b7f100e7f37f309337aca6a1acd09c21920842|e407ab86a8983933dcaddba8e369286c
-glibc-common-2.34-272.el9_8.x86_64|yes|glibc-common|0|2.34|272.el9_8|x86_64|1cb3a73b962a305c69f9368c56dea8678696153ac0ef9d9508da111d2869fb95|2edacf786c108d317e3477bd332c5c0a
-glibc-minimal-langpack-2.34-272.el9_8.x86_64|yes|glibc-minimal-langpack|0|2.34|272.el9_8|x86_64|4dc6c13c85d22a3deabf9a699d7f1a0aa20f64f8dd6dd12a1f2df3c4bc092b7d|113146f024fc0df87186ea60d0e26b21
+glibc-2.34-274.el9_8.x86_64|yes|glibc|0|2.34|274.el9_8|x86_64|c970071cb076a8b5d94174908c9f85f73ec1601b467f098be8713c207bac22a4|20083ff197aaea13cc1b994a435c6e86
+glibc-common-2.34-274.el9_8.x86_64|yes|glibc-common|0|2.34|274.el9_8|x86_64|18643632765d294d1897d9b3fb56dd04d17a7374658dec5e694112d6a3a554d4|d9ac90a1864bea143660de8177bc8838
+glibc-minimal-langpack-2.34-274.el9_8.x86_64|yes|glibc-minimal-langpack|0|2.34|274.el9_8|x86_64|0ca640bc73d81f177edabb202d28a003efb33b4b95cd8e805c9485d68b7ee40f|116f0492f1660bf189ab2d4bfb71e8c3
 gmp-1:6.2.0-13.el9.x86_64|no|gmp|1|6.2.0|13.el9|x86_64|043621b89a0be4195ee739c1d6fcb4dfa00d678d45cb7c678e35f6af6b5a6bab|2a3ce18b89d0de9c7d9079f70600b37b
 grep-3.6-5.el9.x86_64|no|grep|0|3.6|5.el9|x86_64|b9cdbebee23363176fbf362e3e006869e24cb2d1c41c73c73fb38caff7804b7b|1c782494a288911225f3f3c780f87180
-libacl-2.3.1-4.el9.x86_64|no|libacl|0|2.3.1|4.el9|x86_64|3896bd6e721cd055ea078fb1432110830f5066a399b9d7e4f0d34238af084dce|60e0fde3f7771c02903da07a53be36fd
+libacl-2.4.0-1.el9_8.x86_64|no|libacl|0|2.4.0|1.el9_8|x86_64|354ea4cbdd6dad393ae69bbc39b7f47a314dd9e35ef233488c02238763808cae|6661a94ed261e0b37a99cdc218b9d57f
 libattr-2.5.1-3.el9.x86_64|no|libattr|0|2.5.1|3.el9|x86_64|d9b217c8d2daa72744e1989ff6c4576b58b0b930cdc4807c95f854dc07240a14|52ccab71d2ac43945dc5d604e96548c4
 libcap-2.48-10.el9_8.1.x86_64|no|libcap|0|2.48|10.el9_8.1|x86_64|21de2f3b59f83c4020e2e2f23f4cdd32c409d482c7e85b740cbc35a4f0d2f23d|4573ce501e01f8d6122985fc42ddd2a1
 libffi-3.4.2-8.el9.x86_64|no|libffi|0|3.4.2|8.el9|x86_64|8669a3080103e571e9ec5695f1d466e9a7bb1ae8162b9f720d878b5221536212|1f03e75008a5fd3adfa0ed87b078fb4a
