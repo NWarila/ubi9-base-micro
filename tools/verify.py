@@ -62,6 +62,9 @@ UBI_DIGEST_SITES = {
         ".github/workflows/publish-image.yaml": re.compile(
             rf"^[ \t]+UBI_MINIMAL_IMAGE: {UBI_REFERENCE_PATTERNS['minimal']}[ \t]*$", re.MULTILINE
         ),
+        "images/python/Dockerfile": re.compile(
+            rf"^ARG UBI_MINIMAL_IMAGE={UBI_REFERENCE_PATTERNS['minimal']}[ \t]*$", re.MULTILINE
+        ),
         "tools/build.sh": re.compile(
             rf'^ubi_minimal_image="\$\{{UBI_MINIMAL_IMAGE:-{UBI_REFERENCE_PATTERNS["minimal"]}\}}"[ \t]*$',
             re.MULTILINE,
@@ -105,6 +108,7 @@ BINFMT_DIGEST_SITES = {
     ".github/workflows/build.yaml": 2,
     ".github/workflows/nightly.yaml": 2,
     ".github/workflows/publish-image.yaml": 1,
+    ".github/workflows/python-ci.yaml": 2,
     ".github/workflows/rpm-lock-refresh.yaml": 2,
 }
 OPENSSL_FIPS_PROVIDER_RPM_BASE_URL = "https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9"
@@ -389,7 +393,7 @@ def require_binfmt_digest_equality(sources: Mapping[str, str]) -> None:
 
     digests = {digest for _, digest in site_digests}
     require(
-        len(site_digests) == 7 and len(digests) == 1,
+        len(site_digests) == 9 and len(digests) == 1,
         "binfmt digest mismatch: " + ", ".join(f"{site}=sha256:{digest}" for site, digest in site_digests),
     )
 
@@ -456,7 +460,7 @@ def check_binfmt_digest_equality_self_test() -> None:
     }
     require_binfmt_digest_equality(consistent)
     print(
-        "binfmt digest mutation probes: unchanged and all-7-pinned-equal replacements accepted; "
+        "binfmt digest mutation probes: unchanged and all-9-pinned-equal replacements accepted; "
         f"{rejected}/3 rejected (unpinned site, divergent digit, missing site)"
     )
 
@@ -1150,6 +1154,31 @@ def check_required_files() -> None:
         "docs/decision-records/README.md",
         "docs/explanation/footprint.md",
         "images/README.md",
+        "images/python/Dockerfile",
+        "images/python/.dockerignore",
+        "images/python/README.md",
+        "images/python/VERSION",
+        "images/python/contracts/image-manifest.json",
+        "images/python/contracts/image-manifest.schema.json",
+        "images/python/rpm-lock/builder.amd64.txt",
+        "images/python/rpm-lock/builder.arm64.txt",
+        "images/python/rpm-lock/python.amd64.txt",
+        "images/python/rpm-lock/python.arm64.txt",
+        "images/python/rpm-lock/micro-floor.json",
+        "images/python/rpm-lock/requires-exceptions.json",
+        "images/python/rpm-lock/scriptlet-classification.md",
+        "images/python/rpm-lock/scriptlets.amd64.txt",
+        "images/python/rpm-lock/scriptlets.arm64.txt",
+        "images/python/tools/assert-builder-toolchain-floor.sh",
+        "images/python/tools/assert-parent-subset.py",
+        "images/python/tools/assert-reproducible.py",
+        "images/python/tools/build-python-rootfs.py",
+        "images/python/tools/fetch-builder-rpms.sh",
+        "images/python/tools/fetch-python-rpms.sh",
+        "images/python/tools/generate-python-lock.sh",
+        "images/python/tools/rpmlock.py",
+        "images/python/tools/run-python-gates.sh",
+        ".github/workflows/python-ci.yaml",
         "docs/explanation/fips-mechanism.md",
         "docs/explanation/reproducibility.md",
         "docs/how-to/consume-base-micro-as-from-base.md",
@@ -3103,6 +3132,7 @@ def check_workflow() -> None:
             "lint.yaml",
             "nightly.yaml",
             "publish-image.yaml",
+            "python-ci.yaml",
             "rpm-lock-refresh.yaml",
             "scorecard.yml",
             "zizmor.yml",
@@ -3396,6 +3426,7 @@ def check_supply_chain_workflows() -> None:
         ".github/workflows/build.yaml",
         ".github/workflows/nightly.yaml",
         ".github/workflows/publish-image.yaml",
+        ".github/workflows/python-ci.yaml",
         ".github/workflows/rpm-lock-refresh.yaml",
         *SUPPLY_CHAIN_WORKFLOWS,
     ]
@@ -5263,6 +5294,10 @@ def check_nist_800_190_scripts() -> None:
 def check_helper_self_tests() -> None:
     for relative_path in [
         "tools/decide-publish-scope.py",
+        "images/python/tools/rpmlock.py",
+        "images/python/tools/build-python-rootfs.py",
+        "images/python/tools/assert-reproducible.py",
+        "images/python/tools/assert-parent-subset.py",
         "tools/assert-rpm-lock-hashes.py",
         "tools/assert-no-rootfs-secrets.py",
         "tools/generate-nist-800-190-predicate.py",
@@ -6469,8 +6504,8 @@ def check_lint_setup() -> None:
         require(marker in precommit, f".pre-commit-config.yaml missing marker: {marker}")
     require(precommit.count("repo: local") == 1, ".pre-commit-config.yaml must carry exactly one local hook block")
     require(
-        precommit.count("pass_filenames: false") == 8,
-        ".pre-commit-config.yaml must keep exactly mypy and seven pytest hooks filename-independent",
+        precommit.count("pass_filenames: false") == 9,
+        ".pre-commit-config.yaml must keep exactly two mypy and seven pytest hooks filename-independent",
     )
     status_hook = precommit.split("- id: write-fips-status-pytest", 1)[1]
     for marker in [

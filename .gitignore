@@ -46,6 +46,7 @@
 !/.github/workflows/codeql.yml
 !/.github/workflows/nightly.yaml
 !/.github/workflows/publish-image.yaml
+!/.github/workflows/python-ci.yaml
 !/.github/workflows/rpm-lock-refresh.yaml
 
 !/containers/
@@ -89,6 +90,20 @@
 !/docs/**/*.md
 !/images/
 !/images/README.md
+!/images/python/
+!/images/python/Dockerfile
+!/images/python/.dockerignore
+!/images/python/README.md
+!/images/python/VERSION
+!/images/python/contracts/
+!/images/python/contracts/*.json
+!/images/python/rpm-lock/
+!/images/python/rpm-lock/*.txt
+!/images/python/rpm-lock/*.json
+!/images/python/rpm-lock/*.md
+!/images/python/tools/
+!/images/python/tools/*.py
+!/images/python/tools/*.sh
 
 !/vex/
 !/vex/.gitkeep

@@ -19,6 +19,20 @@ and this project adheres to
   nor its rpmdb record ships (the phantom-package gate asserts its absence), so its version has no
   effect on the shipped image.
 
+### Added
+
+- `images/python/`: the base-python image build — a pinned, signature-verified RPM
+  transaction applied to a byte-asserted clone of the published `base-micro`
+  parent, producing one truthful combined rpmdb; build-support packages are
+  stripped behind ldd-ownership and floor-disjoint guards with intentional
+  unsatisfied-Requires committed as a reviewed exception contract; the image
+  ships from scratch as a single reproducible layer (non-root, python3.12
+  entrypoint) and is gated in CI by tool self-tests, a functional stdlib battery
+  with a real loopback TLS handshake, parent-subset invariance on the exported
+  image, an OCI config contract, dual CVE scanners reading the combined rpmdb,
+  and a both-arch byte-identical double-build. The image is built and gated
+  only: it is not published, tagged, or attested yet.
+
 ### Changed
 
 - Recorded the reversed base-image family topology in ADR-0010: planned language

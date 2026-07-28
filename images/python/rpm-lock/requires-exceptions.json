@@ -1,0 +1,23 @@
+{
+  "_comment": [
+    "Declared RPM Requires that the shipped image intentionally leaves unsatisfied, per package.",
+    "krb5-libs reaches the image only as a library dependency of the python3.12 'nis' extension",
+    "module; its manual Requires on shell tools exist for krb5's configuration scriptlets and CLI",
+    "helpers, none of which ship or run here (scriptlets are suppressed and the tools are stripped",
+    "build-support packages). The CI functional battery proves ssl/hashlib/TLS operate without them.",
+    "Any addition to this file requires re-review; the build fails on unsatisfied Requires not",
+    "listed here and on listed entries that are unexpectedly satisfied.",
+    "python3.12-libs declares /usr/bin/sh solely via the shebang auto-dependency of the packaged",
+    "developer helper /usr/lib64/python3.12/ctypes/macholib/fetch_macholib, which the runtime never",
+    "executes; the image intentionally ships no shell (same posture as the parent's glibc-common)."
+  ],
+  "krb5-libs": [
+    "coreutils",
+    "gawk",
+    "grep",
+    "sed"
+  ],
+  "python3.12-libs": [
+    "/usr/bin/sh"
+  ]
+}
