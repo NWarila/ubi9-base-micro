@@ -13,9 +13,11 @@ and this project adheres to
 - Absorbed the Red Hat `glibc` z-stream update (`2.34-272.el9_8` → `2.34-274.el9_8`) on both
   architectures, remediating the fixable CVE-2026-5435, CVE-2026-5928, and CVE-2026-6238 findings the
   nightly sentinel flagged; reproducibility baselines re-established from the CI gate.
-- The same lock refresh advanced the non-shipping build-closure package `libacl`
-  (`2.3.1-4.el9` → `2.4.0-1.el9_8`) on both architectures. Its payload is trimmed
-  from the runtime image; only its rpmdb record remains, so the shipped attack surface is unchanged.
+- The same lock refresh advanced the build-closure package `libacl`
+  (`2.3.1-4.el9` → `2.4.0-1.el9_8`) on both architectures. `libacl` is a protected build-time
+  dependency (`final_rpmdb=no`) that the rootfs build fully removes with `rpm -e`; neither its payload
+  nor its rpmdb record ships (the phantom-package gate asserts its absence), so its version has no
+  effect on the shipped image.
 
 ### Changed
 
