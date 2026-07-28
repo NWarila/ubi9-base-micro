@@ -1,0 +1,17 @@
+# Purpose: Deny-all Docker build-context filter for the python tree; allowlist only build inputs.
+# Role: config
+# Micro-container candidate: no (build-context filter, not gate logic)
+
+**
+!Dockerfile
+!rpm-lock/builder.amd64.txt
+!rpm-lock/builder.arm64.txt
+!rpm-lock/python.amd64.txt
+!rpm-lock/python.arm64.txt
+!rpm-lock/micro-floor.json
+!rpm-lock/requires-exceptions.json
+!tools/assert-builder-toolchain-floor.sh
+!tools/fetch-builder-rpms.sh
+!tools/fetch-python-rpms.sh
+!tools/build-python-rootfs.py
+!tools/rpmlock.py

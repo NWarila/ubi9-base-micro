@@ -1,0 +1,79 @@
+# arch: arm64
+# source_date_epoch: 1704067200
+# columns: package|final_rpmdb|name|epoch|version|release|arch|sha256_header|sigmd5
+# direct_rpm: bash-5.1.8-9.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/b/bash-5.1.8-9.el9.aarch64.rpm|7dc1febec9c2fb184ed4407f8a188ab267b7e46b3534866f702c6266008ababa
+# direct_rpm: bzip2-libs-1.0.8-11.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/b/bzip2-libs-1.0.8-11.el9.aarch64.rpm|8267a866b9289ac4e4a92cb4642adcdeff97c2ed816ddda87ed5d5e9d9431a2f
+# direct_rpm: coreutils-8.32-41.el9_8.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/c/coreutils-8.32-41.el9_8.aarch64.rpm|ee2de9f5fbc5e83bad920a353c45d3446997aa0e4023436528b2d6f817bd6f50
+# direct_rpm: coreutils-common-8.32-41.el9_8.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/c/coreutils-common-8.32-41.el9_8.aarch64.rpm|cd79ca65bba152b9ccadcb9780ec78e3d06ce538b693078fd14459d038ab5c0c
+# direct_rpm: expat-2.5.0-6.el9_8.1.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/e/expat-2.5.0-6.el9_8.1.aarch64.rpm|7cc4e533f63bdec0ead003d176cb262b8d4d2583dfd57b2e9cfeeed4ead13475
+# direct_rpm: gawk-5.1.0-6.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/g/gawk-5.1.0-6.el9.aarch64.rpm|a4b7202ac90653a7d3e072c2444bde6a9270d6a818eb6f2ffcfcaa50774f1fad
+# direct_rpm: gdbm-libs-1:1.23-1.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/g/gdbm-libs-1.23-1.el9.aarch64.rpm|74fffe15dd7f5a41c7d1990c2804defa1b45fb845da29465b73a81d5866e8a72
+# direct_rpm: gmp-1:6.2.0-13.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/g/gmp-6.2.0-13.el9.aarch64.rpm|df01d909e4613514b1844d6ca26d0bcdff8a659762e507188d04ed046fb0cec4
+# direct_rpm: grep-3.6-5.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/g/grep-3.6-5.el9.aarch64.rpm|583a247a199901d44dc8a96d46010e15f6211f98f7c61ba089825155b0562520
+# direct_rpm: keyutils-libs-1.6.3-1.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/k/keyutils-libs-1.6.3-1.el9.aarch64.rpm|d747ed6e1916d8ea400c89ad6078a8c298e30d652ec21985c93539e34c587a73
+# direct_rpm: krb5-libs-1.21.1-10.el9_8.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/k/krb5-libs-1.21.1-10.el9_8.aarch64.rpm|f8bbc9abe0da1ebe5bc028154bd54d465fe0682ddbb64c45882b84ff09f40e1d
+# direct_rpm: libacl-2.4.0-1.el9_8.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libacl-2.4.0-1.el9_8.aarch64.rpm|70ba010505e9805254f772c3dd9cd9e6176fc9e007e8c9be7204c44f85d8bbd2
+# direct_rpm: libattr-2.5.1-3.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libattr-2.5.1-3.el9.aarch64.rpm|b6a73c9da522df55690b886c0a9af39338571d34ee6f0d4d9b994c8289df3412
+# direct_rpm: libcap-2.48-10.el9_8.1.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libcap-2.48-10.el9_8.1.aarch64.rpm|1ac3014c33b84d7a492b99d46d47940b096e034a3d5886e16ace7159724be012
+# direct_rpm: libcom_err-1.46.5-8.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libcom_err-1.46.5-8.el9.aarch64.rpm|b7e5c8fe9d9f15864966f46c124659de6cb9137d01e213b3e8cac00d10aab55a
+# direct_rpm: libffi-3.4.2-8.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libffi-3.4.2-8.el9.aarch64.rpm|d33e180b97a603542cb6f1a78b1c3b0ce4af1bc59ee0bb32620c98a629726bc4
+# direct_rpm: libnsl2-2.0.0-1.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/l/libnsl2-2.0.0-1.el9.aarch64.rpm|5b38c8b55dbfc549271617e132d2d98ceaa9ca30711f73edd8b39a6af689de27
+# direct_rpm: libselinux-3.6-3.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libselinux-3.6-3.el9.aarch64.rpm|3d7249adbf19206e319cd24acc2e01b0da39975aa3e5af73bdb6c6d438108fac
+# direct_rpm: libsepol-3.6-3.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libsepol-3.6-3.el9.aarch64.rpm|496ed9e2d7fac9704afe764eab4c2c43b4a47e8c229c14498dd19786f98f80c0
+# direct_rpm: libsigsegv-2.13-4.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libsigsegv-2.13-4.el9.aarch64.rpm|0998ac158161c9d5f3b97c5dc6e35becd84da0ddc5d347a8af581ada529b3b5c
+# direct_rpm: libtirpc-1.3.3-9.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libtirpc-1.3.3-9.el9.aarch64.rpm|591a92387f21db11cb3607f566f95e1f4afe581428eec00f99539925560e1913
+# direct_rpm: libuuid-2.37.4-25.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libuuid-2.37.4-25.el9.aarch64.rpm|4d7bb4144053a30067a82423fb6e88fd08c7a69bd256eb21b08c0e3f4dbbaee6
+# direct_rpm: libverto-0.3.2-3.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libverto-0.3.2-3.el9.aarch64.rpm|80d6e32c111ab9c0b2c607475b6a6691cdf6abaec19fde27043e8710a94a8f0c
+# direct_rpm: libxcrypt-4.4.18-3.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libxcrypt-4.4.18-3.el9.aarch64.rpm|f05030123425a5033bcca3f260313cafc199bc7bca57e9fb13c335bd087c35a7
+# direct_rpm: mpdecimal-2.5.1-3.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/m/mpdecimal-2.5.1-3.el9.aarch64.rpm|6bdb76d4bb510b0e435698a46a09d0849fb07b2f53c00239e8989d8f141d1d14
+# direct_rpm: mpfr-4.1.0-10.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/m/mpfr-4.1.0-10.el9.aarch64.rpm|c238f7451d1fcc5431bef2904ba56a0bea51d28337ccb692f6d6a09286043a65
+# direct_rpm: ncurses-base-6.2-12.20210508.el9.noarch|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/n/ncurses-base-6.2-12.20210508.el9.noarch.rpm|d62dfd41f9688efa2cf1ceedb96084c63e297fbdcfd1e72bc6757c730092b60c
+# direct_rpm: ncurses-libs-6.2-12.20210508.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/n/ncurses-libs-6.2-12.20210508.el9.aarch64.rpm|b5dd452392d2f97bb050c9f5e5376998652c567dcbd8f035d26659b1b551b5c9
+# direct_rpm: pcre-8.44-4.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/p/pcre-8.44-4.el9.aarch64.rpm|099feef7e71b82cf0234e37d824fc81353d51dee55694e05181fa686ab50efae
+# direct_rpm: pcre2-10.40-6.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/p/pcre2-10.40-6.el9.aarch64.rpm|29285f81cef68f73b4f8ff81ee8fdf4ceaa007933302119ed1615e4aa1091613
+# direct_rpm: pcre2-syntax-10.40-6.el9.noarch|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/p/pcre2-syntax-10.40-6.el9.noarch.rpm|d386b5e9b3a4b077b2ba143882e605750855dd3354f13c55fa12ed26908cb442
+# direct_rpm: python3.12-3.12.13-3.el9_8.1.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/p/python3.12-3.12.13-3.el9_8.1.aarch64.rpm|f1878fee909c46fadc203680309dfe2f2cb5926796569dc71ef327f13e57f732
+# direct_rpm: python3.12-libs-3.12.13-3.el9_8.1.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/p/python3.12-libs-3.12.13-3.el9_8.1.aarch64.rpm|95a5f3c22a8604ce4e5b4c770ec455cf7fcda812a1a0bb7de988f388adf28155
+# direct_rpm: python3.12-pip-wheel-23.2.1-5.el9.noarch|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/p/python3.12-pip-wheel-23.2.1-5.el9.noarch.rpm|b3271e01edab5152b4f62515faca4c171fb842b4e871f7d30651a076de621b0e
+# direct_rpm: readline-8.1-4.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/r/readline-8.1-4.el9.aarch64.rpm|2ae424b368c6747124b51b205b9e11d74aeaff56b3de90e8cbd36012e0d17707
+# direct_rpm: sed-4.8-10.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/s/sed-4.8-10.el9.aarch64.rpm|b73d314a8ef322a690bb69c49cb0dbd9a5ff18d2ba6b2973e18d2c076a52b62a
+# direct_rpm: sqlite-libs-3.34.1-10.el9_8.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/s/sqlite-libs-3.34.1-10.el9_8.aarch64.rpm|dda4c59309d47d73d64291c53078cce330b8d5a9d95c903e133d9f37ec0e0a68
+# direct_rpm: xz-libs-5.2.5-8.el9_0.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/x/xz-libs-5.2.5-8.el9_0.aarch64.rpm|06931afb372ed4a6893e51558beaa6b0eab7adda0af93456fd99a081a8b80779
+bash-5.1.8-9.el9.aarch64|no|bash|0|5.1.8|9.el9|aarch64|996ce808b6eb731274148030b26301f50975c0daaa48762c7c45f4530f8b7f5f|261c46470d2574cd4e5b8ca47be757a0
+bzip2-libs-1.0.8-11.el9.aarch64|yes|bzip2-libs|0|1.0.8|11.el9|aarch64|6b61121df2707fb92d11b2a5eb94b0f7edf90f532a8b626b498a28805bb0ddba|8d27605473318a9793b4f18d2a8a63a1
+coreutils-8.32-41.el9_8.aarch64|no|coreutils|0|8.32|41.el9_8|aarch64|94584360f5bf9cb022012dde75042d5e02fc6769cd6c4e2bb7e48d9806e47e45|b3220f7c6db8be448542a92c1bd12626
+coreutils-common-8.32-41.el9_8.aarch64|no|coreutils-common|0|8.32|41.el9_8|aarch64|3216fbcb35713c8c4f96af03fa49003465794e4f052a3766b4f73ec0bdedead5|158a080e53c942b1dd88e159c6d2f57c
+expat-2.5.0-6.el9_8.1.aarch64|yes|expat|0|2.5.0|6.el9_8.1|aarch64|55ef3f83d33fec8c54ec04b91597c11737c20a679d9652364a84306d2da048f7|1970bf9f8ee9dab2624a82637f130186
+gawk-5.1.0-6.el9.aarch64|no|gawk|0|5.1.0|6.el9|aarch64|6ae8954312f53e61dbb5bf8cc9a2885ff98c7ab472ca7671864ff7927a42821f|d963e93e1a96745ec92442568a4c3ddb
+gdbm-libs-1:1.23-1.el9.aarch64|yes|gdbm-libs|1|1.23|1.el9|aarch64|d6e5f4f774b610764cccfb7ede751c867e7285e7d5f328e9a43a1949620ed242|1fedb550b38aa17f9a1cb80c421e73f7
+gmp-1:6.2.0-13.el9.aarch64|no|gmp|1|6.2.0|13.el9|aarch64|508dd5dd5eac727f7b7d92df4f6baa0501da19d06fe760be72867e950c73f403|33e22316bc3ff9fc2dd584d7f10e7e19
+grep-3.6-5.el9.aarch64|no|grep|0|3.6|5.el9|aarch64|86dfa157cf5890a6a7fd50274adcbd6e422e5bb20cee76a61e9a6035ea5d8795|6c1c79f906e89cdc7c76640c049eb1d1
+keyutils-libs-1.6.3-1.el9.aarch64|yes|keyutils-libs|0|1.6.3|1.el9|aarch64|afa93b063154a61d8c539db5413f8b2458abb659a65ecee95485563a2a800b34|fcdab826127d6f7dcdd11b618b820f79
+krb5-libs-1.21.1-10.el9_8.aarch64|yes|krb5-libs|0|1.21.1|10.el9_8|aarch64|f2bbdd99508632a2d7d3db517f6d1eef7c9ac3cebedd1624ef9a007c9cd58e15|76e24d262e9be2f09f6c969cda5f968e
+libacl-2.4.0-1.el9_8.aarch64|no|libacl|0|2.4.0|1.el9_8|aarch64|6f4acbffe8fd902d0aad293b590178a303c2bba77b6830855aa3ad054b3b897e|a700446ae2de1f74a0ec20213f47ec46
+libattr-2.5.1-3.el9.aarch64|no|libattr|0|2.5.1|3.el9|aarch64|bde84d0816f2fbdc14b31f63c72101ea4e090f5b24ff54cb71ddeca5d8fdd582|3eed880a5d719b64b01649005693e1a5
+libcap-2.48-10.el9_8.1.aarch64|no|libcap|0|2.48|10.el9_8.1|aarch64|f18042356f0429e350a2e6325f8c12132628250da4a62eccdd5d20217a303313|b1273064a13a1f460d86a69a27a71285
+libcom_err-1.46.5-8.el9.aarch64|yes|libcom_err|0|1.46.5|8.el9|aarch64|af6435ce56faec9a952099506019f40b31405b846425fbc026ba05799a63fa33|dbc2b35864e90340cf59bdeca6a3894c
+libffi-3.4.2-8.el9.aarch64|yes|libffi|0|3.4.2|8.el9|aarch64|3a9b8a0b7b5c98b47f69e7a1fa4999996147ce3ed574883c4937b3f6ab5280f1|c45cf29fa567c1e631ae64203079f5dd
+libnsl2-2.0.0-1.el9.aarch64|yes|libnsl2|0|2.0.0|1.el9|aarch64|2031821421f6d91baff1570e2522b61d90a1c1c82f9b01ebe79abe2b63605083|26aa805528f96de4de4a42084b5de630
+libselinux-3.6-3.el9.aarch64|yes|libselinux|0|3.6|3.el9|aarch64|1f942c0ee683539df85d0166917cbbf737ab45eca58326014750482018f8e0b6|d7e509a7d04d589a814e1e8a6a2d49a0
+libsepol-3.6-3.el9.aarch64|yes|libsepol|0|3.6|3.el9|aarch64|0f1b5be4ad6f2732f7b6a984da09ca824ccc38525c36be9cc3910bf967fbc869|4cf90c76b4924ebe589d052ba85ac719
+libsigsegv-2.13-4.el9.aarch64|no|libsigsegv|0|2.13|4.el9|aarch64|3bfb5bd2aa23f460e72d9e0c82f3c851703e339b100aedf2353912f3f7389876|75bc613c152e346aaea375ee93007fbf
+libtirpc-1.3.3-9.el9.aarch64|yes|libtirpc|0|1.3.3|9.el9|aarch64|b35975cb66783ea004ec41e9b551be21568bb3bf17b2cec4f75d573ae0efce3f|e7f7e1acf1b3062550076b3b73df61c8
+libuuid-2.37.4-25.el9.aarch64|yes|libuuid|0|2.37.4|25.el9|aarch64|09ae4074aa63ac6f3f27f0a6797f40ffe06045aa4de5987b8355df4bc7a0349e|2981ae02deee384c01815f6edee945f1
+libverto-0.3.2-3.el9.aarch64|yes|libverto|0|0.3.2|3.el9|aarch64|49affcf0dd0958fd52dac023296372b45c0a602b2aeae97bfbdd27670fd85817|ee40dfc43e501b30a04956e5d702fc3d
+libxcrypt-4.4.18-3.el9.aarch64|yes|libxcrypt|0|4.4.18|3.el9|aarch64|490eb0b248c7e5b86323f793a5c98d4d952cb995920b2c34225d92e0e5b17d67|02d51e3bf16f73d3a36e86b663d84b8a
+mpdecimal-2.5.1-3.el9.aarch64|yes|mpdecimal|0|2.5.1|3.el9|aarch64|fa39b4fca9b720b0afb17602c6b55ddbe7a2785b783d01edfae8dd724109e5cb|0c3ab9f786dc8a324b85d45f4202879a
+mpfr-4.1.0-10.el9.aarch64|no|mpfr|0|4.1.0|10.el9|aarch64|5f31f6d51d1cbc704c2ba65ad6e8f04c81353c1de8f8031f9e131eb321c739f6|c4cc7e7418be66b3f152254f2b55943d
+ncurses-base-6.2-12.20210508.el9.noarch|yes|ncurses-base|0|6.2|12.20210508.el9|noarch|f117dc1c35f5bb8145babd36700bf0fc0ec0d20e14cbb0175bcfa919d0347d2b|6a2b37ae1ba184e60cff0acbd72a1eae
+ncurses-libs-6.2-12.20210508.el9.aarch64|yes|ncurses-libs|0|6.2|12.20210508.el9|aarch64|25f48673dbde40c26484abd6908d772906d0abe7f33788d6162e40555ebafea0|52ad50b5c1cdafe307f12aab17811583
+pcre-8.44-4.el9.aarch64|no|pcre|0|8.44|4.el9|aarch64|5c5dea6e27a1a8c57302680532bb191a6f0c5271a92894a359f99daddc71ab21|ef703cee6b8f70649c3a083941d2c77c
+pcre2-10.40-6.el9.aarch64|yes|pcre2|0|10.40|6.el9|aarch64|d6f71f8772db1a2b1713ad800a4fb894cb942732e4a07588756fdaf72a512e2c|2e4091305dec0655c0bad286f757d3d2
+pcre2-syntax-10.40-6.el9.noarch|yes|pcre2-syntax|0|10.40|6.el9|noarch|95100a5fab111a468d8dc8bc1e1bd98c84a377bb182514fe410aa66025fc81d5|e16f2b328f130d319f08c995f4d3315b
+python3.12-3.12.13-3.el9_8.1.aarch64|yes|python3.12|0|3.12.13|3.el9_8.1|aarch64|8ae13f0ff6ee07f82e746a18eb61ab4d8494d50c235408e7b0deec3be9b53046|39f0594b82dc90187cc8a73e3c30264b
+python3.12-libs-3.12.13-3.el9_8.1.aarch64|yes|python3.12-libs|0|3.12.13|3.el9_8.1|aarch64|f128761254020ddff455fc8f5fd614b67be0c2653532e140696dda9a46103eaf|0638d9be1f410a58dec636f7b477d1bd
+python3.12-pip-wheel-23.2.1-5.el9.noarch|yes|python3.12-pip-wheel|0|23.2.1|5.el9|noarch|3fa760910ea0dc5a9057805a6af565d0c24c9a32028fe1f59955f2fe067f3e4b|a54442064cd31c734bdcd395a759784d
+readline-8.1-4.el9.aarch64|yes|readline|0|8.1|4.el9|aarch64|41d1fedb516cf832ab93bd58016abba5acc5463aed5eaf1538f6c29cbce94fb1|33715b69a055bdbe5a24e545595450d9
+sed-4.8-10.el9.aarch64|no|sed|0|4.8|10.el9|aarch64|5a32d4229725bc0ebc6515b18b9f95c7caf543c054b17c2f6ea8d8aed7d86d3c|960881487d1a3fe448fbdb6fc1195287
+sqlite-libs-3.34.1-10.el9_8.aarch64|yes|sqlite-libs|0|3.34.1|10.el9_8|aarch64|21f7d39e39012718b2b5a38b1ce24e51a9030bf632f749e1139eb4ff51de96e3|615bbca9c3beb9956228e598b6a19396
+xz-libs-5.2.5-8.el9_0.aarch64|yes|xz-libs|0|5.2.5|8.el9_0|aarch64|8a285ebd674d24282d8aa121b43fbcac8e01f99e4f6fe5f2b8ab72e13d571f5f|cab0f33ad722e476944e64e58db06336

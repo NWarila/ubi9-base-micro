@@ -1,0 +1,425 @@
+# Purpose: PR/push CI for images/python — change detection, tool self-tests, both-arch build with runtime
+#          gates and scanners, byte-identical double-build reproducibility, and one always-run reducer context.
+# Role: gate
+# Micro-container candidate: partial — keep triggers/matrix as workflow glue; gate logic lives in images/python/tools.
+
+name: Build base python
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  TRIVY_VERSION: "0.71.0"
+  GRYPE_VERSION: "0.115.0"
+  CRANE_VERSION: "v0.21.7"
+  SCANNER_DB_MAX_AGE_DAYS: "7"
+
+jobs:
+  changes:
+    name: python changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      python: ${{ steps.detect.outputs.python }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Detect python-tree changes
+        id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          python="true"
+          range_base=""
+          case "${EVENT_NAME}" in
+            pull_request) range_base="${BASE_SHA}" ;;
+            push) range_base="${BEFORE_SHA}" ;;
+            *) range_base="" ;;
+          esac
+          if [[ "${range_base}" =~ ^[0-9a-f]{40}$ ]] \
+            && [[ "${range_base}" != "0000000000000000000000000000000000000000" ]] \
+            && git cat-file -e "${range_base}^{commit}" 2>/dev/null; then
+            changed="$(git diff --no-renames --name-only "${range_base}" "${GITHUB_SHA}")"
+            if [[ -n "${changed}" ]] \
+              && ! printf '%s\n' "${changed}" \
+                | grep -q -v -E '^(images/python/|\.github/workflows/python-ci\.yaml$)'; then
+              python="true"
+            elif printf '%s\n' "${changed}" \
+              | grep -q -E '^(images/python/|\.github/workflows/python-ci\.yaml$)'; then
+              python="true"
+            else
+              python="false"
+            fi
+          fi
+          echo "python-tree change detection: python=${python}"
+          echo "python=${python}" >> "${GITHUB_OUTPUT}"
+
+  self-tests:
+    name: python tool self-tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    needs: changes
+    if: ${{ needs.changes.outputs.python == 'true' }}
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Run python tool self-tests and lock validation
+        run: |
+          set -euo pipefail
+
+          python3 images/python/tools/rpmlock.py --self-test
+          python3 images/python/tools/build-python-rootfs.py --self-test
+          python3 images/python/tools/assert-reproducible.py --self-test
+          python3 images/python/tools/assert-parent-subset.py --self-test
+          bash -n images/python/tools/fetch-python-rpms.sh
+          bash -n images/python/tools/fetch-builder-rpms.sh
+          bash -n images/python/tools/generate-python-lock.sh
+          bash -n images/python/tools/run-python-gates.sh
+          python3 -m json.tool images/python/contracts/image-manifest.json > /dev/null
+          python3 -m json.tool images/python/contracts/image-manifest.schema.json > /dev/null
+          python3 -m json.tool images/python/rpm-lock/micro-floor.json > /dev/null
+          python3 -m json.tool images/python/rpm-lock/requires-exceptions.json > /dev/null
+          dockerfile_digest="$(sed -n 's/^ARG BASE_MICRO_IMAGE=.*@\(sha256:[0-9a-f]\{64\}\)$/\1/p' images/python/Dockerfile)"
+          contract_digest="$(python3 -c "
+          import json
+          print(json.load(open('images/python/contracts/image-manifest.json'))['parent']['digest'])
+          ")"
+          floor_digest="sha256:$(python3 -c "
+          import json
+          print(json.load(open('images/python/rpm-lock/micro-floor.json'))['parent']['digest'].split(':')[-1])
+          ")"
+          test -n "${dockerfile_digest}"
+          test "${dockerfile_digest}" = "${contract_digest}"
+          test "${dockerfile_digest}" = "${floor_digest}"
+          echo "parent digest binding ok: ${dockerfile_digest}"
+          for arch in amd64 arm64; do
+            mapfile -t shipped < <(python3 -c "
+          import json
+          for nevra in json.load(open('images/python/contracts/image-manifest.json'))['runtime']['shipped']['${arch}']:
+              print(nevra)
+          ")
+            shipped_args=()
+            for nevra in "${shipped[@]}"; do shipped_args+=(--shipped-nevra "${nevra}"); done
+            mapfile -t floor_names < <(python3 -c "
+          import json
+          for nevra in json.load(open('images/python/rpm-lock/micro-floor.json'))['parent']['floor']['${arch}']:
+              print(nevra.rsplit('-', 2)[0])
+          ")
+            floor_args=()
+            for name in "${floor_names[@]}"; do floor_args+=(--floor-name "${name}"); done
+            python3 images/python/tools/rpmlock.py validate \
+              --lockfile "images/python/rpm-lock/python.${arch}.txt" \
+              --arch "${arch}" \
+              --source-date-epoch 1704067200 \
+              "${shipped_args[@]}" "${floor_args[@]}"
+            scriptlets="images/python/rpm-lock/scriptlets.${arch}.txt"
+            classification="images/python/rpm-lock/scriptlet-classification.md"
+            while read -r pkg; do
+              grep -q "^## ${pkg}\$" "${classification}" \
+                || { echo "unclassified scriptlet-bearing package: ${pkg}" >&2; exit 1; }
+            done < <(sed -n 's/^===== \(.*\) =====$/\1/p' "${scriptlets}")
+          done
+
+  build:
+    name: python build and gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    needs: changes
+    if: ${{ needs.changes.outputs.python == 'true' }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          platforms: amd64,arm64
+          image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build the python image
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+
+          oci_version="$(tr -d '[:space:]' < images/python/VERSION)"
+          docker buildx build \
+            --file images/python/Dockerfile \
+            --platform "linux/${ARCH}" \
+            --target runtime \
+            --build-arg SOURCE_DATE_EPOCH=1704067200 \
+            --build-arg OCI_CREATED="2024-01-01T00:00:00Z" \
+            --build-arg OCI_REVISION="${GITHUB_SHA}" \
+            --build-arg OCI_SOURCE="https://github.com/${GITHUB_REPOSITORY}" \
+            --build-arg OCI_VERSION="${oci_version}" \
+            --load \
+            --tag "local/ubi9-base-python:ci-${ARCH}" \
+            images/python
+
+      - name: Install Crane
+        run: |
+          bash tools/install-crane.sh
+          printf '%s\n' "${PWD}/dist/tools" >> "${GITHUB_PATH}"
+
+      - name: Assert parent-subset invariance on the exported final image
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/python
+          parent_repo="$(python3 -c "
+          import json
+          print(json.load(open('images/python/contracts/image-manifest.json'))['parent']['repository'])
+          ")"
+          child="$(python3 -c "
+          import json
+          print(json.load(open('images/python/contracts/image-manifest.json'))['parent']['children']['${ARCH}'])
+          ")"
+          crane export "${parent_repo}@${child}" "dist/python/parent.${ARCH}.tar"
+          docker save "local/ubi9-base-python:ci-${ARCH}" -o "dist/python/final-image.${ARCH}.tar"
+          python3 - "${ARCH}" << 'FLATTEN'
+          import importlib.util
+          import sys
+          from pathlib import Path
+
+          arch = sys.argv[1]
+          spec = importlib.util.spec_from_file_location(
+              "python_assert_reproducible", Path("images/python/tools/assert-reproducible.py")
+          )
+          module = importlib.util.module_from_spec(spec)
+          sys.modules[spec.name] = module
+          spec.loader.exec_module(module)
+          entries = module.load_image_rootfs(Path(f"dist/python/final-image.{arch}.tar"))
+          module.write_rootfs_tar(entries, Path(f"dist/python/final.{arch}.tar"))
+          FLATTEN
+          python3 images/python/tools/assert-parent-subset.py \
+            --parent-tar "dist/python/parent.${ARCH}.tar" \
+            --final-tar "dist/python/final.${ARCH}.tar"
+
+      - name: Run python runtime gates
+        env:
+          ARCH: ${{ matrix.arch }}
+          CONTAINER_ENGINE: docker
+        run: |
+          bash images/python/tools/run-python-gates.sh \
+            --image "local/ubi9-base-python:ci-${ARCH}" \
+            --targetarch "${ARCH}" \
+            --contract images/python/contracts/image-manifest.json
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v2.5.2
+
+      - name: Install Trivy and Grype
+        run: |
+          bash tools/install-trivy.sh
+          bash tools/install-grype.sh
+
+      - name: Run scanner gates on the combined rpmdb
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+
+          dist/tools/trivy image --download-db-only
+          dist/tools/grype db update
+          python3 tools/assert-scanner-db-freshness.py --max-age-days "${SCANNER_DB_MAX_AGE_DAYS}"
+
+          image="local/ubi9-base-python:ci-${ARCH}"
+          grype_json="dist/python/grype.${ARCH}.json"
+          dist/tools/grype "${image}" -o json --file "${grype_json}"
+          python3 - "${ARCH}" "${grype_json}" << 'VISIBILITY'
+          import json
+          import sys
+
+          arch, grype_path = sys.argv[1:3]
+          contract = json.load(open("images/python/contracts/image-manifest.json"))
+          expected = next(
+              nevra for nevra in contract["runtime"]["shipped"][arch] if nevra.startswith("python3.12-3.")
+          )
+          name_version = expected.rsplit(".", 1)[0]
+          report = json.load(open(grype_path))
+          artifacts = {
+              f"{artifact['name']}-{artifact['version']}"
+              for match in [*report.get("matches", []), *report.get("ignoredMatches", [])]
+              for artifact in [match["artifact"]]
+          }
+          rpmdb_names = {
+              f"{artifact['name']}-{artifact['version']}"
+              for artifact in report.get("artifacts", [])
+          } if "artifacts" in report else set()
+          visible = any(entry.startswith("python3.12-3.") for entry in artifacts | rpmdb_names)
+          if not visible:
+              raise SystemExit(
+                  f"scanner did not surface the python3.12 package from the combined rpmdb ({name_version})"
+              )
+          print(f"scanner visibility ok: {name_version} present in the scan surface")
+          VISIBILITY
+
+          dist/tools/trivy image \
+            --platform "linux/${ARCH}" \
+            --vuln-type os,library \
+            --ignore-unfixed \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            "${image}"
+          dist/tools/grype "${image}" --only-fixed --fail-on high -o table
+
+  reproducibility:
+    name: python reproducibility (${{ matrix.arch }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    needs: changes
+    if: ${{ needs.changes.outputs.python == 'true' }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          platforms: amd64,arm64
+          image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Double-build byte-identical reproducibility gate
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+
+          ubi_minimal="$(sed -n 's/^ARG UBI_MINIMAL_IMAGE=\(.*\)$/\1/p' images/python/Dockerfile)"
+          base_micro="$(sed -n 's/^ARG BASE_MICRO_IMAGE=\(.*\)$/\1/p' images/python/Dockerfile)"
+          python3 images/python/tools/assert-reproducible.py \
+            --repo-root . \
+            --platform "linux/${ARCH}" \
+            --ubi-minimal-image "${ubi_minimal}" \
+            --base-micro-image "${base_micro}" \
+            --assert-byte-identical \
+            --expect-from-contract
+
+  python-required:
+    name: python / required
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    needs:
+      - changes
+      - self-tests
+      - build
+      - reproducibility
+    if: ${{ always() }}
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Reduce python job results
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CHANGES_OUTPUT: ${{ needs.changes.outputs.python }}
+          SELF_TESTS_RESULT: ${{ needs.self-tests.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          REPRO_RESULT: ${{ needs.reproducibility.result }}
+        run: |
+          set -euo pipefail
+
+          echo "changes=${CHANGES_RESULT} output=${CHANGES_OUTPUT}"
+          echo "self-tests=${SELF_TESTS_RESULT} build=${BUILD_RESULT} reproducibility=${REPRO_RESULT}"
+          if [[ "${CHANGES_RESULT}" != "success" ]]; then
+            echo "change detection failed or was cancelled" >&2
+            exit 1
+          fi
+          if [[ "${CHANGES_OUTPUT}" == "true" ]]; then
+            for result in "${SELF_TESTS_RESULT}" "${BUILD_RESULT}" "${REPRO_RESULT}"; do
+              if [[ "${result}" != "success" ]]; then
+                echo "a selected python job did not succeed" >&2
+                exit 1
+              fi
+            done
+          else
+            for result in "${SELF_TESTS_RESULT}" "${BUILD_RESULT}" "${REPRO_RESULT}"; do
+              if [[ "${result}" != "skipped" ]]; then
+                echo "python jobs ran despite no python-tree changes" >&2
+                exit 1
+              fi
+            done
+          fi
+          echo "python required reducer: pass"

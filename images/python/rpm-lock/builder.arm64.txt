@@ -1,0 +1,16 @@
+# arch: arm64
+# columns: package|name|epoch|version|release|arch|sha256_header|sigmd5
+# direct_rpm: expat-2.5.0-6.el9_8.1.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/e/expat-2.5.0-6.el9_8.1.aarch64.rpm|7cc4e533f63bdec0ead003d176cb262b8d4d2583dfd57b2e9cfeeed4ead13475
+# direct_rpm: libnsl2-2.0.0-1.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/l/libnsl2-2.0.0-1.el9.aarch64.rpm|5b38c8b55dbfc549271617e132d2d98ceaa9ca30711f73edd8b39a6af689de27
+# direct_rpm: libtirpc-1.3.3-9.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/l/libtirpc-1.3.3-9.el9.aarch64.rpm|591a92387f21db11cb3607f566f95e1f4afe581428eec00f99539925560e1913
+# direct_rpm: mpdecimal-2.5.1-3.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/m/mpdecimal-2.5.1-3.el9.aarch64.rpm|6bdb76d4bb510b0e435698a46a09d0849fb07b2f53c00239e8989d8f141d1d14
+# direct_rpm: python3.12-3.12.13-3.el9_8.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/p/python3.12-3.12.13-3.el9_8.aarch64.rpm|4667f425d230510ab2dae3036c963184faf5c260ec58d8b97b83aa6d879c2253
+# direct_rpm: python3.12-libs-3.12.13-3.el9_8.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/p/python3.12-libs-3.12.13-3.el9_8.aarch64.rpm|015287583cea3c5c744788b2368963ff50e099e30dd12f9216d1399287938315
+# direct_rpm: python3.12-pip-wheel-23.2.1-5.el9.noarch|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/appstream/os/Packages/p/python3.12-pip-wheel-23.2.1-5.el9.noarch.rpm|b3271e01edab5152b4f62515faca4c171fb842b4e871f7d30651a076de621b0e
+expat-2.5.0-6.el9_8.1.aarch64|expat|0|2.5.0|6.el9_8.1|aarch64|55ef3f83d33fec8c54ec04b91597c11737c20a679d9652364a84306d2da048f7|1970bf9f8ee9dab2624a82637f130186
+libnsl2-2.0.0-1.el9.aarch64|libnsl2|0|2.0.0|1.el9|aarch64|2031821421f6d91baff1570e2522b61d90a1c1c82f9b01ebe79abe2b63605083|26aa805528f96de4de4a42084b5de630
+libtirpc-1.3.3-9.el9.aarch64|libtirpc|0|1.3.3|9.el9|aarch64|b35975cb66783ea004ec41e9b551be21568bb3bf17b2cec4f75d573ae0efce3f|e7f7e1acf1b3062550076b3b73df61c8
+mpdecimal-2.5.1-3.el9.aarch64|mpdecimal|0|2.5.1|3.el9|aarch64|fa39b4fca9b720b0afb17602c6b55ddbe7a2785b783d01edfae8dd724109e5cb|0c3ab9f786dc8a324b85d45f4202879a
+python3.12-3.12.13-3.el9_8.aarch64|python3.12|0|3.12.13|3.el9_8|aarch64|fc570d956e7a204c66a4d93bd94240e75fb07ec5d56ca940abec4448b86c0b08|ab95627c3a3e72f85790740f18397916
+python3.12-libs-3.12.13-3.el9_8.aarch64|python3.12-libs|0|3.12.13|3.el9_8|aarch64|0e029c25ddff418b1c5af084c2a0bd58972468e82dd5aaf4feeb7101183352ac|0b050f69bb11d93631bb3fe2df50630e
+python3.12-pip-wheel-23.2.1-5.el9.noarch|python3.12-pip-wheel|0|23.2.1|5.el9|noarch|3fa760910ea0dc5a9057805a6af565d0c24c9a32028fe1f59955f2fe067f3e4b|a54442064cd31c734bdcd395a759784d

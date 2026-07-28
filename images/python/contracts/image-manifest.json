@@ -1,0 +1,116 @@
+{
+  "image": {
+    "name": "ubi9-base-python",
+    "entrypoint_binary": "/usr/bin/python3.12"
+  },
+  "parent": {
+    "repository": "ghcr.io/nwarila/ubi9-base-micro",
+    "digest": "sha256:f1ad33e69ac71564a9a51f905772daacaf827aeef20dcdeedd1a10a27be80b88",
+    "children": {
+      "amd64": "sha256:ef5ca60a9d956eb86e10989b33a46b29d3078d296d5ffa2cee8cb14c12cd3406",
+      "arm64": "sha256:3d1dd235ca2a9ce803846b83abd16fce05a79f35b790ade4b838fc8e8014065d"
+    }
+  },
+  "runtime": {
+    "shipped": {
+      "amd64": [
+        "bzip2-libs-1.0.8-11.el9.x86_64",
+        "expat-2.5.0-6.el9_8.1.x86_64",
+        "gdbm-libs-1:1.23-1.el9.x86_64",
+        "keyutils-libs-1.6.3-1.el9.x86_64",
+        "krb5-libs-1.21.1-10.el9_8.x86_64",
+        "libcom_err-1.46.5-8.el9.x86_64",
+        "libffi-3.4.2-8.el9.x86_64",
+        "libnsl2-2.0.0-1.el9.x86_64",
+        "libselinux-3.6-3.el9.x86_64",
+        "libsepol-3.6-3.el9.x86_64",
+        "libtirpc-1.3.3-9.el9.x86_64",
+        "libuuid-2.37.4-25.el9.x86_64",
+        "libverto-0.3.2-3.el9.x86_64",
+        "libxcrypt-4.4.18-3.el9.x86_64",
+        "mpdecimal-2.5.1-3.el9.x86_64",
+        "ncurses-base-6.2-12.20210508.el9.noarch",
+        "ncurses-libs-6.2-12.20210508.el9.x86_64",
+        "pcre2-10.40-6.el9.x86_64",
+        "pcre2-syntax-10.40-6.el9.noarch",
+        "python3.12-3.12.13-3.el9_8.1.x86_64",
+        "python3.12-libs-3.12.13-3.el9_8.1.x86_64",
+        "python3.12-pip-wheel-23.2.1-5.el9.noarch",
+        "readline-8.1-4.el9.x86_64",
+        "sqlite-libs-3.34.1-10.el9_8.x86_64",
+        "xz-libs-5.2.5-8.el9_0.x86_64"
+      ],
+      "arm64": [
+        "bzip2-libs-1.0.8-11.el9.aarch64",
+        "expat-2.5.0-6.el9_8.1.aarch64",
+        "gdbm-libs-1:1.23-1.el9.aarch64",
+        "keyutils-libs-1.6.3-1.el9.aarch64",
+        "krb5-libs-1.21.1-10.el9_8.aarch64",
+        "libcom_err-1.46.5-8.el9.aarch64",
+        "libffi-3.4.2-8.el9.aarch64",
+        "libnsl2-2.0.0-1.el9.aarch64",
+        "libselinux-3.6-3.el9.aarch64",
+        "libsepol-3.6-3.el9.aarch64",
+        "libtirpc-1.3.3-9.el9.aarch64",
+        "libuuid-2.37.4-25.el9.aarch64",
+        "libverto-0.3.2-3.el9.aarch64",
+        "libxcrypt-4.4.18-3.el9.aarch64",
+        "mpdecimal-2.5.1-3.el9.aarch64",
+        "ncurses-base-6.2-12.20210508.el9.noarch",
+        "ncurses-libs-6.2-12.20210508.el9.aarch64",
+        "pcre2-10.40-6.el9.aarch64",
+        "pcre2-syntax-10.40-6.el9.noarch",
+        "python3.12-3.12.13-3.el9_8.1.aarch64",
+        "python3.12-libs-3.12.13-3.el9_8.1.aarch64",
+        "python3.12-pip-wheel-23.2.1-5.el9.noarch",
+        "readline-8.1-4.el9.aarch64",
+        "sqlite-libs-3.34.1-10.el9_8.aarch64",
+        "xz-libs-5.2.5-8.el9_0.aarch64"
+      ]
+    }
+  },
+  "config": {
+    "user": "65532:65532",
+    "entrypoint": [
+      "/usr/bin/python3.12"
+    ],
+    "cmd": null,
+    "working_dir": "/",
+    "env": [
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "HOME=/home/nonroot",
+      "OPENSSL_CONF=/etc/pki/tls/openssl-fips.cnf",
+      "OPENSSL_MODULES=/usr/lib64/ossl-modules",
+      "PYTHONDONTWRITEBYTECODE=1"
+    ],
+    "labels_common": {
+      "org.opencontainers.image.description": "Hardened UBI 9 python3.12 runtime on the base-micro floor",
+      "org.opencontainers.image.source": "https://github.com/NWarila/ubi9-base-micro",
+      "org.opencontainers.image.title": "ubi9-base-python"
+    },
+    "labels_arch": {
+      "amd64": {
+        "org.nwarila.fips.cmvp": "4857",
+        "org.nwarila.fips.cmvp.oe-validated": "true",
+        "org.nwarila.fips.module-version": "3.0.7-395c1a240fbfffd8",
+        "org.nwarila.fips.provider-nvr": "openssl-fips-provider-so-3.0.7-8.el9"
+      },
+      "arm64": {
+        "org.nwarila.fips.cmvp": "4857",
+        "org.nwarila.fips.cmvp.oe-validated": "false",
+        "org.nwarila.fips.module-version": "3.0.7-395c1a240fbfffd8",
+        "org.nwarila.fips.provider-nvr": "openssl-fips-provider-so-3.0.7-8.el9"
+      }
+    }
+  },
+  "reproducibility": {
+    "canonical_rootfs_digest": {
+      "amd64": "d91423b305f976bcf294b85346862d933024acaeb6841c83733feae7c2802a4c",
+      "arm64": "c528fc2a41648de13a4c68505bf478a551bf9e39e6112391767ccee5321fd17d"
+    },
+    "rpmdb_sha256": {
+      "amd64": "73c4fc28ea45207a900a526b6efd6e90044602984c40b0f2347c20ee759747d2",
+      "arm64": "c304f699dfc33208825f7c8f0499cbc946fd36abda4357d9f8e1122f1278dd52"
+    }
+  }
+}

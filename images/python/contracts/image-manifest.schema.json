@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "base-python image contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["image", "parent", "runtime", "config", "reproducibility"],
+  "properties": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "entrypoint_binary"],
+      "properties": {
+        "name": { "const": "ubi9-base-python" },
+        "entrypoint_binary": { "const": "/usr/bin/python3.12" }
+      }
+    },
+    "parent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "digest", "children"],
+      "properties": {
+        "repository": { "const": "ghcr.io/nwarila/ubi9-base-micro" },
+        "digest": { "$ref": "#/$defs/sha256ref" },
+        "children": { "$ref": "#/$defs/perArchDigest" }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["shipped"],
+      "properties": {
+        "shipped": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["amd64", "arm64"],
+          "properties": {
+            "amd64": { "$ref": "#/$defs/nevraList" },
+            "arm64": { "$ref": "#/$defs/nevraList" }
+          }
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user", "entrypoint", "cmd", "working_dir", "env", "labels_common", "labels_arch"],
+      "properties": {
+        "user": { "const": "65532:65532" },
+        "entrypoint": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "cmd": { "type": "null" },
+        "working_dir": { "const": "/" },
+        "env": { "type": "array", "items": { "type": "string" }, "minItems": 5 },
+        "labels_common": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "org.opencontainers.image.description",
+            "org.opencontainers.image.source",
+            "org.opencontainers.image.title"
+          ],
+          "properties": {
+            "org.opencontainers.image.description": { "type": "string", "minLength": 1 },
+            "org.opencontainers.image.source": { "type": "string", "minLength": 1 },
+            "org.opencontainers.image.title": { "const": "ubi9-base-python" }
+          }
+        },
+        "labels_arch": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["amd64", "arm64"],
+          "properties": {
+            "amd64": { "$ref": "#/$defs/fipsLabels" },
+            "arm64": { "$ref": "#/$defs/fipsLabels" }
+          }
+        }
+      }
+    },
+    "reproducibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canonical_rootfs_digest", "rpmdb_sha256"],
+      "properties": {
+        "canonical_rootfs_digest": { "$ref": "#/$defs/perArchSha" },
+        "rpmdb_sha256": { "$ref": "#/$defs/perArchSha" }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "sha256ref": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "perArchSha": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amd64", "arm64"],
+      "properties": {
+        "amd64": { "$ref": "#/$defs/sha256" },
+        "arm64": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "perArchDigest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amd64", "arm64"],
+      "properties": {
+        "amd64": { "$ref": "#/$defs/sha256ref" },
+        "arm64": { "$ref": "#/$defs/sha256ref" }
+      }
+    },
+    "nevraList": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
+    "fipsLabels": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "org.nwarila.fips.cmvp",
+        "org.nwarila.fips.cmvp.oe-validated",
+        "org.nwarila.fips.module-version",
+        "org.nwarila.fips.provider-nvr"
+      ],
+      "properties": {
+        "org.nwarila.fips.cmvp": { "const": "4857" },
+        "org.nwarila.fips.cmvp.oe-validated": { "enum": ["true", "false"] },
+        "org.nwarila.fips.module-version": { "type": "string", "minLength": 1 },
+        "org.nwarila.fips.provider-nvr": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
