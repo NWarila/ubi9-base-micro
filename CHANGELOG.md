@@ -8,6 +8,12 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Security
+
+- Absorbed the Red Hat `glibc` z-stream update (`2.34-272.el9_8` → `2.34-274.el9_8`) on both
+  architectures, remediating the fixable CVE-2026-5435, CVE-2026-5928, and CVE-2026-6238 findings the
+  nightly sentinel flagged; reproducibility baselines re-established from the CI gate.
+
 ### Changed
 
 - Updated the published-image verification reference and how-to to verify
