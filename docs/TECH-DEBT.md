@@ -108,15 +108,15 @@ is available.
 The two vulnerability-policy axes remain distinct. The fixable gate rejects
 MEDIUM, HIGH, and CRITICAL findings except for the exact exception above. The
 OpenVEX default-deny gate remains limited to unfixed HIGH and CRITICAL findings.
-The following 12 unfixed Medium package findings were reviewed and are tolerated
+The following 3 unfixed Medium package findings were reviewed and are tolerated
 by that policy; they are not additions to the fixable-CVE exception:
 
 | CVE | Packages |
 | --- | --- |
 | `CVE-2026-2673` | `openssl-fips-provider`, `openssl-fips-provider-so`, `openssl-libs` |
-| `CVE-2026-5435` | `glibc`, `glibc-common`, `glibc-minimal-langpack` |
-| `CVE-2026-5928` | `glibc`, `glibc-common`, `glibc-minimal-langpack` |
-| `CVE-2026-6238` | `glibc`, `glibc-common`, `glibc-minimal-langpack` |
+
+The remediated `glibc`, `glibc-common`, and `glibc-minimal-langpack` findings are
+no longer part of this tolerated set.
 
 On the current image, tightening the fixable threshold catches two findings and
 the exact exception excuses those same two findings, so the immediate enforcement
