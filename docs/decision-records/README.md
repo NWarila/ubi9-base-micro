@@ -19,7 +19,7 @@ canonical source.
 | [ADR-0007](repo/0007-dual-scanner-openvex-default-deny.md) | Accepted | Use dual scanners and default-deny OpenVEX for unfixed HIGH and CRITICAL findings. |
 | [ADR-0008](repo/0008-tailored-stig-arf-gate.md) | Accepted | Gate the image with a tailored RHEL 9 STIG ARF and reviewed omissions. |
 | [ADR-0009](repo/0009-nist-800-190-image-evidence.md) | Accepted | Emit NIST SP 800-190 section 4.1 image-control evidence. |
-| [ADR-0010](repo/0010-base-image-polyrepo-topology.md) | Accepted | Keep the base-image family as polyrepos rooted at `ubi9-base-micro`. |
+| [ADR-0010](repo/0010-single-repo-base-image-family.md) | Accepted | Keep the base-image family in one repository with per-image publish workflows. |
 | [ADR-0011](repo/0011-pin-github-hosted-runner-labels.md) | Accepted | Pin GitHub-hosted Ubuntu runner labels for workflow determinism. |
 | [ADR-0012](repo/0012-source-runtime-rpms-from-direct-cdn.md) | Accepted | Source runtime RPMs from pinned Red Hat UBI direct-CDN blobs. |
 | [ADR-0013](repo/0013-externalize-image-contract-manifest.md) | Accepted | Externalize the consumer-verifiable image contract to a schema-validated manifest. |

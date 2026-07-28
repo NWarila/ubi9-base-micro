@@ -21,6 +21,14 @@ and this project adheres to
 
 ### Changed
 
+- Recorded the reversed base-image family topology in ADR-0010: planned language
+  variants will live in this repository as `images/<variant>/` trees with
+  per-image path-scoped publish workflows; the root micro image is unchanged.
+- Gated micro publication on a publish-scope decision: a push to `main` whose
+  entire delta against the currently published `:base-micro` revision lies under
+  `images/` skips micro republication; every ambiguity publishes, and the gate
+  contract is structurally locked by `tools/verify.py`.
+- Seeded the `images/` family tree with its README and allowlist entries.
 - Added the base `nonroot:65532` identity and home and set `HOME=/home/nonroot`.
   The base's default command remains a non-functional inherited placeholder on
   this shell-less base, so consumers must set their own exec-form `ENTRYPOINT`.

@@ -171,7 +171,8 @@ RHEL9 STIG ARF attestation, and a fail-closed byte-for-byte digest gate.
 ## Image Family
 
 Only `ubi9-base-micro` exists in this repository today; the language variants
-below are planned and must not be read as published artifacts from this repo.
+below are planned as `images/<variant>/` trees in this same repository and must
+not be read as published artifacts from this repo.
 
 | Image | Status | Base relationship | Runtime scope |
 | --- | --- | --- | --- |
@@ -186,7 +187,8 @@ Grype fixable-CVE gates, OpenVEX default-deny coverage for unfixed HIGH/CRITICAL
 findings, NIST SP 800-190 section 4.1 image evidence, tailored RHEL9 STIG ARF,
 and byte-for-byte reproducibility. Published signatures and attestations are
 Rekor-logged. `base-micro` implements that contract here; planned variants must
-carry the same evidence set in their own repositories before publication.
+carry the same evidence set under their `images/<variant>/` trees before
+publication, each publishing through its own path-scoped workflow.
 
 Responsibility boundary: the base family owns a standard hardened floor through
 RPM hygiene (`install_weak_deps=0`, `--nodocs`, locale/man stripping, shell

@@ -81,10 +81,92 @@ jobs:
             exit 1
           fi
 
+  publish-scope:
+    name: publish scope
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    if: ${{ github.event_name == 'push' }}
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      publish: ${{ steps.scope.outputs.publish }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          printf '%s' "${GHCR_TOKEN}" \
+            | docker login ghcr.io \
+                --username "${REGISTRY_USER}" \
+                --password-stdin
+
+      - name: Install Crane for published revision lookup
+        run: |
+          bash tools/install-crane.sh
+          printf '%s\n' "${PWD}/dist/tools" >> "${GITHUB_PATH}"
+
+      - name: Decide publish scope against the published revision
+        id: scope
+        env:
+          EVENT_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+
+          changed_paths="dist/publish-scope/changed-paths.zlist"
+          mkdir -p dist/publish-scope
+          : > "${changed_paths}"
+
+          diff_status="unavailable"
+          base=""
+          if [[ "${EVENT_REF}" == refs/heads/main ]]; then
+            base="$(
+              crane config "${IMAGE_REPOSITORY}:base-micro" --platform linux/amd64 \
+                | python3 tools/decide-publish-scope.py --print-base
+            )" || base=""
+            if [[ "${base}" =~ ^[0-9a-f]{40}$ ]] \
+              && git cat-file -e "${base}^{commit}" 2>/dev/null; then
+              git diff --no-renames --name-only -z "${base}" "${GITHUB_SHA}" > "${changed_paths}"
+              diff_status="available"
+            fi
+          fi
+
+          printf 'publish-scope base: %s (diff %s)\n' "${base:-none}" "${diff_status}"
+          publish="$(
+            python3 tools/decide-publish-scope.py \
+              --ref "${EVENT_REF}" \
+              --diff-status "${diff_status}" \
+              < "${changed_paths}"
+          )"
+          case "${publish}" in
+            true | false) ;;
+            *)
+              printf 'unexpected publish-scope decision: %s\n' "${publish}" >&2
+              exit 1
+              ;;
+          esac
+          echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
+
   publish:
     name: publish signed image
-    needs: slsa-generator-tag-integrity
-    if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    needs:
+      - slsa-generator-tag-integrity
+      - publish-scope
+    if: >-
+      ${{ github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&
+      needs.publish-scope.outputs.publish == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
