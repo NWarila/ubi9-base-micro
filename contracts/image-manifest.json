@@ -49,8 +49,8 @@
   },
   "reproducibility": {
     "canonical_rootfs_digest": {
-      "amd64": "6339f7f3e3a65db0406fd3afc51e88d57ea8e6b357caa4e8c8d16f2386911b6e",
-      "arm64": "4f66279232775e60b4141e555fe8a856ce59b509c7223ffeabc817866e65a3b4"
+      "amd64": "a025c7f918b4201798ad95c48737aa47ea3103258642e43338e6b8bef22ab48f",
+      "arm64": "33f73d925b600e29dce60c16e63671e693467bb901124f25d00b10d94e8d7340"
     },
     "rpmdb_sha256": {
       "amd64": "c9c38089affec24723d6b3d6c062b1744d08167933a213d382aafceb948d631e",
