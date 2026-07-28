@@ -79,6 +79,7 @@ TRIMMED_EXECUTABLES: Final = (
 )
 EXECUTABLE_DIRS: Final = ("usr/bin", "usr/sbin", "bin", "sbin")
 RPM_ARCH_BY_TARGET: Final = {"amd64": "x86_64", "arm64": "aarch64"}
+NONROOT_NAME: Final = "nonroot"
 NONROOT_UID: Final = 65532
 NONROOT_GID: Final = 65532
 NONROOT_PASSWD_LINE: Final = "nonroot:x:65532:65532:nonroot:/home/nonroot:/sbin/nologin"
@@ -504,7 +505,7 @@ def _identity_lines(contents: str, field_index: int, identifier: int) -> list[st
     matches: list[str] = []
     for line in contents.splitlines():
         fields = line.split(":")
-        if len(fields) > field_index and fields[field_index] == expected_field:
+        if fields[0] == NONROOT_NAME or (len(fields) > field_index and fields[field_index] == expected_field):
             matches.append(line)
     return matches
 
@@ -528,12 +529,12 @@ def _ensure_nonroot_identity(rootfs: Path) -> None:
     passwd_id_lines = _identity_lines(passwd_contents, 2, NONROOT_UID)
     group_id_lines = _identity_lines(group_contents, 2, NONROOT_GID)
     _require(
-        all(line == NONROOT_PASSWD_LINE for line in passwd_id_lines),
-        f"conflicting runtime account already uses UID {NONROOT_UID}",
+        not passwd_id_lines or passwd_id_lines == [NONROOT_PASSWD_LINE],
+        f"conflicting runtime account already uses name {NONROOT_NAME!r} or UID {NONROOT_UID}",
     )
     _require(
-        all(line == NONROOT_GROUP_LINE for line in group_id_lines),
-        f"conflicting runtime group already uses GID {NONROOT_GID}",
+        not group_id_lines or group_id_lines == [NONROOT_GROUP_LINE],
+        f"conflicting runtime group already uses name {NONROOT_NAME!r} or GID {NONROOT_GID}",
     )
 
     if not passwd_id_lines:
@@ -555,13 +556,17 @@ def _ensure_nonroot_identity(rootfs: Path) -> None:
     home.chmod(0o700)
     _set_owner(home, NONROOT_UID, NONROOT_GID)
 
+    final_passwd_contents = passwd.read_text(encoding="utf-8")
+    final_group_contents = group.read_text(encoding="utf-8")
+    _require(NONROOT_PASSWD_LINE in final_passwd_contents.splitlines(), "runtime nonroot passwd account is missing")
+    _require(NONROOT_GROUP_LINE in final_group_contents.splitlines(), "runtime nonroot group is missing")
     _require(
-        NONROOT_PASSWD_LINE in passwd.read_text(encoding="utf-8").splitlines(),
-        "runtime nonroot passwd account is missing",
+        _identity_lines(final_passwd_contents, 2, NONROOT_UID) == [NONROOT_PASSWD_LINE],
+        "runtime /etc/passwd must contain exactly one nonroot account",
     )
     _require(
-        NONROOT_GROUP_LINE in group.read_text(encoding="utf-8").splitlines(),
-        "runtime nonroot group is missing",
+        _identity_lines(final_group_contents, 2, NONROOT_GID) == [NONROOT_GROUP_LINE],
+        "runtime /etc/group must contain exactly one nonroot group",
     )
     _require(stat.S_IMODE(passwd.stat().st_mode) == 0o644, "runtime /etc/passwd mode must be 0644")
     _require(_owner_ids(passwd) == (0, 0), "runtime /etc/passwd owner must be 0:0")

@@ -27,9 +27,10 @@ The base's default command is a non-functional inherited placeholder on this
 shell-less base. Consumers **MUST** set their own exec-form `ENTRYPOINT`; do not
 rely on the inherited command for runtime behavior.
 
-This digest-pinned multi-stage example builds a static Go application and sets
-the consumer-owned entrypoint. It was validated with the application running as
-UID 65532 and receiving an HTTPS 200 response through the base CA bundle:
+This multi-stage pattern was validated locally: the application runs as UID
+65532 and completes an HTTPS request through the base CA bundle. Pin your own
+current published base digest and verify it with
+[`verify-a-published-image.md`](verify-a-published-image.md):
 
 ```dockerfile
 FROM docker.io/library/golang:1.23 AS build
@@ -38,7 +39,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/app ./cmd/app
-FROM ghcr.io/nwarila/ubi9-base-micro@sha256:d94acde23a7060ca35c2f2fac3782d1fbdd89ffde6455e8b39b4ecd01e1a5be5
+FROM ghcr.io/nwarila/ubi9-base-micro@sha256:<digest>
 COPY --from=build /out/app /usr/local/bin/app
 USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/app"]

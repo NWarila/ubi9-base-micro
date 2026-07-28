@@ -276,6 +276,11 @@ if [[ "${passwd_matches}" != "1" ]]; then
   echo "runtime /etc/passwd must contain the exact nonroot UID 65532 account once; found ${passwd_matches}" >&2
   exit 1
 fi
+passwd_name_matches="$(grep -Ec '^nonroot:' "${passwd_file}" || true)"
+if [[ "${passwd_name_matches}" != "1" ]]; then
+  echo "runtime /etc/passwd must contain exactly one account named nonroot; found ${passwd_name_matches}" >&2
+  exit 1
+fi
 
 group_file="${tmp_dir}/group"
 # extract_file intentionally probes both OCI tar path forms.
@@ -288,6 +293,11 @@ expected_group="nonroot:x:65532:"
 group_matches="$(grep -Fxc "${expected_group}" "${group_file}" || true)"
 if [[ "${group_matches}" != "1" ]]; then
   echo "runtime /etc/group must contain the exact nonroot GID 65532 group once; found ${group_matches}" >&2
+  exit 1
+fi
+group_name_matches="$(grep -Ec '^nonroot:' "${group_file}" || true)"
+if [[ "${group_name_matches}" != "1" ]]; then
+  echo "runtime /etc/group must contain exactly one group named nonroot; found ${group_name_matches}" >&2
   exit 1
 fi
 

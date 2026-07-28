@@ -411,7 +411,7 @@ def _mock_ownership(monkeypatch: pytest.MonkeyPatch) -> dict[Path, tuple[int, in
     return owners
 
 
-def test_nonroot_identity_creation_is_exact_and_idempotent(
+def test_nonroot_identity_appends_exact_lines_when_absent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -444,21 +444,35 @@ def test_nonroot_identity_creation_is_exact_and_idempotent(
         group: (0, 0),
         home: (65532, 65532),
     }
-    first_state = (
-        passwd.read_bytes(),
-        group.read_bytes(),
-        _metadata(home),
-        owners.copy(),
+
+
+def test_nonroot_identity_exact_lines_are_idempotent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rootfs = _identity_fixture(tmp_path)
+    passwd = rootfs / "etc/passwd"
+    group = rootfs / "etc/group"
+    passwd.write_text(
+        passwd.read_text(encoding="utf-8") + f"{ROOTFS_BUILDER.NONROOT_PASSWD_LINE}\n",
+        encoding="utf-8",
     )
+    group.write_text(
+        group.read_text(encoding="utf-8") + f"{ROOTFS_BUILDER.NONROOT_GROUP_LINE}\n",
+        encoding="utf-8",
+    )
+    identity_contents = (passwd.read_bytes(), group.read_bytes())
+    owners = _mock_ownership(monkeypatch)
 
     ROOTFS_BUILDER._ensure_nonroot_identity(rootfs)
 
-    assert (
-        passwd.read_bytes(),
-        group.read_bytes(),
-        _metadata(home),
-        owners,
-    ) == first_state
+    home = rootfs / "home/nonroot"
+    assert (passwd.read_bytes(), group.read_bytes()) == identity_contents
+    first_state = (passwd.read_bytes(), group.read_bytes(), _metadata(home), owners.copy())
+
+    ROOTFS_BUILDER._ensure_nonroot_identity(rootfs)
+
+    assert (passwd.read_bytes(), group.read_bytes(), _metadata(home), owners) == first_state
 
 
 @pytest.mark.parametrize(
@@ -466,17 +480,27 @@ def test_nonroot_identity_creation_is_exact_and_idempotent(
     [
         (
             "etc/passwd",
+            "nonroot:x:12345:12345:nonroot:/home/nonroot:/sbin/nologin",
+            "conflicting runtime account already uses name 'nonroot' or UID 65532",
+        ),
+        (
+            "etc/passwd",
             "other:x:65532:65532:other:/home/other:/sbin/nologin",
-            "conflicting runtime account already uses UID 65532",
+            "conflicting runtime account already uses name 'nonroot' or UID 65532",
+        ),
+        (
+            "etc/group",
+            "nonroot:x:12345:",
+            "conflicting runtime group already uses name 'nonroot' or GID 65532",
         ),
         (
             "etc/group",
             "other:x:65532:",
-            "conflicting runtime group already uses GID 65532",
+            "conflicting runtime group already uses name 'nonroot' or GID 65532",
         ),
     ],
 )
-def test_nonroot_identity_rejects_conflicting_id(
+def test_nonroot_identity_rejects_name_or_id_collision(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     relative: str,
@@ -501,6 +525,40 @@ def test_nonroot_identity_rejects_conflicting_id(
     assert (rootfs / "etc/passwd").read_bytes() == before["passwd"]
     assert (rootfs / "etc/group").read_bytes() == before["group"]
     assert not (rootfs / "home/nonroot").exists()
+
+
+@pytest.mark.parametrize(
+    ("relative", "expected_line", "message"),
+    [
+        (
+            "etc/passwd",
+            ROOTFS_BUILDER.NONROOT_PASSWD_LINE,
+            "conflicting runtime account already uses name 'nonroot' or UID 65532",
+        ),
+        (
+            "etc/group",
+            ROOTFS_BUILDER.NONROOT_GROUP_LINE,
+            "conflicting runtime group already uses name 'nonroot' or GID 65532",
+        ),
+    ],
+)
+def test_nonroot_identity_rejects_duplicate_exact_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    relative: str,
+    expected_line: str,
+    message: str,
+) -> None:
+    rootfs = _identity_fixture(tmp_path)
+    identity_path = rootfs / relative
+    identity_path.write_text(
+        identity_path.read_text(encoding="utf-8") + f"{expected_line}\n{expected_line}\n",
+        encoding="utf-8",
+    )
+    _mock_ownership(monkeypatch)
+
+    with pytest.raises(ROOTFS_BUILDER.BuildError, match=message):
+        ROOTFS_BUILDER._ensure_nonroot_identity(rootfs)
 
 
 def test_build_preserves_ordered_rpm_mutations_and_trimmed_tree_metadata(tmp_path: Path) -> None:
