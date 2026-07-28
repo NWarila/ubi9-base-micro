@@ -25,8 +25,8 @@ support unless the question is security-sensitive.
 ## Not supported here
 
 - Vulnerability reports filed publicly.
-- Support for planned `base-python`, `base-node`, or `base-java` repositories
-  before those repositories exist and publish their own evidence.
+- Support for planned `base-python`, `base-node`, or `base-java` images
+  before those images exist and publish their own evidence.
 - Third-party dependency vulnerabilities that need to be reported upstream.
 - Private consulting or production operations outside this repository.
 

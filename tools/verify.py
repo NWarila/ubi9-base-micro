@@ -174,8 +174,8 @@ REPO_ADRS = [
         "Emit NIST SP 800-190 Image-Control Evidence",
     ),
     (
-        "docs/decision-records/repo/0010-base-image-polyrepo-topology.md",
-        "Keep The Base-Image Family As Polyrepos Rooted At Base Micro",
+        "docs/decision-records/repo/0010-single-repo-base-image-family.md",
+        "Keep The Base-Image Family In One Repository With Per-Image Publish Workflows",
     ),
     (
         "docs/decision-records/repo/0011-pin-github-hosted-runner-labels.md",
@@ -1149,6 +1149,7 @@ def check_required_files() -> None:
         "docs/compliance/vex.md",
         "docs/decision-records/README.md",
         "docs/explanation/footprint.md",
+        "images/README.md",
         "docs/explanation/fips-mechanism.md",
         "docs/explanation/reproducibility.md",
         "docs/how-to/consume-base-micro-as-from-base.md",
@@ -1172,6 +1173,7 @@ def check_required_files() -> None:
         "tools/assert-rpm-lock-hashes.py",
         "tools/fetch-runtime-rpms.sh",
         "tools/fetch-builder-rpms.sh",
+        "tools/decide-publish-scope.py",
         "tools/generate-runtime-lock.py",
         "tools/rpmlock.py",
         "tools/verify-fips-provider.py",
@@ -3724,6 +3726,11 @@ def check_publish_workflow() -> None:
         f"manifest[linux/amd64]:org.nwarila.fips.cmvp.oe-validated={str(fips_oe_validated('amd64')).lower()}",
         f"manifest[linux/arm64]:org.nwarila.fips.cmvp.oe-validated={str(fips_oe_validated('arm64')).lower()}",
         f'EXPECTED_BUILDER_ID: "{slsa_builder_id()}"',
+        "publish-scope:",
+        "name: publish scope",
+        "tools/decide-publish-scope.py",
+        "--no-renames --name-only -z",
+        "--print-base",
     ]
     missing = [marker for marker in required if marker not in text]
     require(not missing, "publish workflow missing required marker(s): " + ", ".join(missing))
@@ -3831,6 +3838,296 @@ def check_publish_workflow() -> None:
 
     check_publish_slsa_pins(text)
     check_uses_pinned(text, "publish workflow")
+
+
+PUBLISH_SCOPE_CONCURRENCY_BLOCK = (
+    "concurrency:\n"
+    "  group: publish-image-${{ github.event.pull_request.number || github.ref }}\n"
+    "  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}\n"
+)
+PUBLISH_SCOPE_JOB_HEADER = (
+    "  publish-scope:\n"
+    "    name: publish scope\n"
+    "    runs-on: ubuntu-24.04\n"
+    "    timeout-minutes: 10\n"
+    "    if: ${{ github.event_name == 'push' }}\n"
+    "    permissions:\n"
+    "      contents: read\n"
+    "      packages: read\n"
+    "    outputs:\n"
+    "      publish: ${{ steps.scope.outputs.publish }}\n"
+)
+PUBLISH_SCOPE_HELPER_INVOCATION = (
+    '          publish="$(\n'
+    "            python3 tools/decide-publish-scope.py \\\n"
+    '              --ref "${EVENT_REF}" \\\n'
+    '              --diff-status "${diff_status}" \\\n'
+    '              < "${changed_paths}"\n'
+    '          )"\n'
+)
+PUBLISH_SCOPE_CASE_VALIDATION = '          case "${publish}" in\n            true | false) ;;\n'
+PUBLISH_SCOPE_NEEDS_BLOCK = (
+    "  publish:\n"
+    "    name: publish signed image\n"
+    "    needs:\n"
+    "      - slsa-generator-tag-integrity\n"
+    "      - publish-scope\n"
+)
+PUBLISH_SCOPE_DIFF_COMMAND = 'git diff --no-renames --name-only -z "${base}" "${GITHUB_SHA}" > "${changed_paths}"'
+PUBLISH_SCOPE_CRANE_SOURCE = 'crane config "${IMAGE_REPOSITORY}:base-micro" --platform linux/amd64 \\'
+PUBLISH_SCOPE_BASE_EXTRACTION = "| python3 tools/decide-publish-scope.py --print-base"
+PUBLISH_SCOPE_BASE_VALIDATION = '[[ "${base}" =~ ^[0-9a-f]{40}$ ]]'
+PUBLISH_SCOPE_BASE_REACHABILITY = 'git cat-file -e "${base}^{commit}"'
+DOCKERFILE_REVISION_LABEL_SITE = 'org.opencontainers.image.revision="${OCI_REVISION}"'
+
+
+def publish_scope_gate_errors(
+    publish_text: str,
+    dockerfile_text: str,
+    dockerignore_text: str,
+    gitignore_text: str,
+) -> list[str]:
+    errors: list[str] = []
+
+    def expect(condition: object, message: str) -> None:
+        if not condition:
+            errors.append(message)
+
+    expect(
+        PUBLISH_SCOPE_CONCURRENCY_BLOCK in publish_text,
+        "publish workflow must keep the exact concurrency group with main-only cancel-in-progress",
+    )
+    on_start = publish_text.find("\non:\n")
+    on_end = publish_text.find("\npermissions:", on_start)
+    expect(on_start >= 0 and on_end > on_start, "publish workflow must keep an identifiable on: block")
+    if on_start >= 0 and on_end > on_start:
+        on_block = publish_text[on_start:on_end]
+        expect(
+            "paths:" not in on_block and "paths-ignore:" not in on_block,
+            "publish workflow must not use workflow-level path filters",
+        )
+    expect(
+        publish_text.count("\n  publish-scope:\n") == 1,
+        "publish workflow must contain exactly one publish-scope job",
+    )
+    expect(
+        PUBLISH_SCOPE_JOB_HEADER in publish_text,
+        "publish-scope job header (name/runner/timeout/if/permissions/outputs) must match exactly",
+    )
+
+    scope_match = re.search(
+        r"^  publish-scope:\n.*?(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+        publish_text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    expect(scope_match is not None, "publish workflow missing an identifiable publish-scope job block")
+    if scope_match is not None:
+        scope_block = scope_match.group(0)
+        for fragment, label in [
+            ("        id: scope\n", "scope step id"),
+            ("          fetch-depth: 0\n", "full-history checkout"),
+            ("persist-credentials: false", "credential-free checkout"),
+            ("GHCR_TOKEN: ${{ github.token }}", "authenticated GHCR login"),
+            ("bash tools/install-crane.sh", "pinned crane installation"),
+            ('changed_paths="dist/publish-scope/changed-paths.zlist"', "named changed-paths file"),
+            ("mkdir -p dist/publish-scope", "changed-paths directory creation"),
+            (': > "${changed_paths}"', "changed-paths truncation before branching"),
+            (PUBLISH_SCOPE_CRANE_SOURCE, "published-revision crane source"),
+            (PUBLISH_SCOPE_BASE_EXTRACTION, "helper base extraction"),
+            (PUBLISH_SCOPE_BASE_VALIDATION, "40-hex base validation"),
+            (PUBLISH_SCOPE_BASE_REACHABILITY, "base reachability guard"),
+            (PUBLISH_SCOPE_DIFF_COMMAND, "exact published-revision diff command"),
+            (PUBLISH_SCOPE_HELPER_INVOCATION, "exact helper invocation"),
+            (PUBLISH_SCOPE_CASE_VALIDATION, "exact true/false output validation"),
+            ('echo "publish=${publish}" >> "${GITHUB_OUTPUT}"', "publish output mapping"),
+        ]:
+            expect(fragment in scope_block, f"publish-scope job missing {label}")
+        expect(
+            "IMAGE_REPOSITORY:" not in scope_block,
+            "publish-scope job must not override IMAGE_REPOSITORY",
+        )
+        available_count = scope_block.count('diff_status="available"')
+        expect(available_count == 1, "publish-scope job must assign diff_status=available exactly once")
+        if available_count == 1:
+            available_index = scope_block.index('diff_status="available"')
+            for guard, label in [
+                (PUBLISH_SCOPE_BASE_VALIDATION, "40-hex base validation"),
+                (PUBLISH_SCOPE_BASE_REACHABILITY, "base reachability guard"),
+                (PUBLISH_SCOPE_DIFF_COMMAND, "published-revision diff"),
+            ]:
+                guard_index = scope_block.find(guard)
+                expect(
+                    0 <= guard_index < available_index,
+                    f"publish-scope job must assign diff_status=available only after the {label}",
+                )
+
+    expect(
+        PUBLISH_SCOPE_NEEDS_BLOCK in publish_text,
+        "publish job must need slsa-generator-tag-integrity and publish-scope exactly",
+    )
+    expect(
+        "needs.publish-scope.outputs.publish == 'true'" in publish_text,
+        "publish job must gate on the validated publish-scope decision",
+    )
+    expect(
+        "\n  IMAGE_REPOSITORY: ghcr.io/nwarila/ubi9-base-micro\n" in publish_text,
+        "publish workflow must pin the exact IMAGE_REPOSITORY",
+    )
+    expect(
+        '--build-arg "OCI_REVISION=${GITHUB_SHA}"' in publish_text,
+        "publish build must stamp OCI_REVISION from GITHUB_SHA",
+    )
+    publish_match = re.search(
+        r"^  publish:\n.*?(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+        publish_text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    expect(publish_match is not None, "publish workflow missing an identifiable publish job block")
+    if publish_match is not None:
+        expect(
+            publish_match.group(0).count("--platform linux/amd64,linux/arm64") == 1,
+            "publish job must contain exactly one two-platform build invocation",
+        )
+
+    expect(
+        dockerfile_text.count(DOCKERFILE_REVISION_LABEL_SITE) == 2,
+        "Dockerfile must write the revision label from OCI_REVISION at both label sites",
+    )
+    expect("images/" not in dockerfile_text, "Dockerfile must not reference the images/ family trees")
+
+    dockerignore_rules = [
+        line for line in dockerignore_text.splitlines() if line.strip() and not line.lstrip().startswith("#")
+    ]
+    expect(
+        bool(dockerignore_rules) and dockerignore_rules[0] == "**",
+        ".dockerignore first effective rule must be the ** deny-all",
+    )
+    expect(
+        not any("images" in rule for rule in dockerignore_rules),
+        ".dockerignore must not negate or reference images/",
+    )
+
+    expect("\n!/images/\n" in gitignore_text, ".gitignore must allowlist /images/")
+    expect("\n!/images/README.md\n" in gitignore_text, ".gitignore must allowlist /images/README.md")
+    return errors
+
+
+def check_publish_scope_gate() -> None:
+    errors = publish_scope_gate_errors(
+        read(".github/workflows/publish-image.yaml"),
+        read("containers/Dockerfile"),
+        read(".dockerignore"),
+        read(".gitignore"),
+    )
+    require(not errors, "publish scope gate contract failed: " + "; ".join(errors))
+    require(
+        not (ROOT / "docs/decision-records/repo/0010-base-image-polyrepo-topology.md").exists(),
+        "superseded ADR-0010 polyrepo filename must not reappear",
+    )
+
+
+def check_publish_scope_gate_self_test() -> None:
+    publish_text = read(".github/workflows/publish-image.yaml")
+    dockerfile_text = read("containers/Dockerfile")
+    dockerignore_text = read(".dockerignore")
+    gitignore_text = read(".gitignore")
+    baseline = publish_scope_gate_errors(publish_text, dockerfile_text, dockerignore_text, gitignore_text)
+    require(not baseline, "publish scope gate self-test baseline failed: " + "; ".join(baseline))
+
+    scope_env_anchor = "        env:\n          EVENT_REF: ${{ github.ref }}"
+    mutations: list[tuple[str, str, str]] = [
+        (
+            "diff-endpoint substitution",
+            PUBLISH_SCOPE_DIFF_COMMAND,
+            'git diff --no-renames --name-only -z HEAD^ "${GITHUB_SHA}" > "${changed_paths}"',
+        ),
+        ("rename detection removal", "--no-renames ", ""),
+        ("base tag substitution", ':base-micro" --platform linux/amd64', ':latest" --platform linux/amd64'),
+        (
+            "base platform substitution",
+            "--platform linux/amd64 \\",
+            "--platform linux/arm64 \\",
+        ),
+        (
+            "scope repository override",
+            scope_env_anchor,
+            "        env:\n          IMAGE_REPOSITORY: ghcr.io/other/repo\n          EVENT_REF: ${{ github.ref }}",
+        ),
+        (
+            "cancel-in-progress flip",
+            "cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}",
+            "cancel-in-progress: false",
+        ),
+        (
+            "workflow-level path filter",
+            "\non:\n  pull_request:",
+            "\non:\n  pull_request:\n    paths:\n      - images/**",
+        ),
+        (
+            "publish-scope needs removal",
+            "      - slsa-generator-tag-integrity\n      - publish-scope\n",
+            "      - slsa-generator-tag-integrity\n",
+        ),
+        (
+            "scope condition inversion",
+            "needs.publish-scope.outputs.publish == 'true'",
+            "needs.publish-scope.outputs.publish != 'true'",
+        ),
+        ("case validation removal", PUBLISH_SCOPE_CASE_VALIDATION, ""),
+        ("scope step id removal", "        id: scope\n", ""),
+        (
+            "job outputs removal",
+            "    outputs:\n      publish: ${{ steps.scope.outputs.publish }}\n",
+            "",
+        ),
+        (
+            "output mapping removal",
+            'echo "publish=${publish}" >> "${GITHUB_OUTPUT}"',
+            "echo publish-scope done",
+        ),
+        (
+            "early diff availability",
+            'diff_status="unavailable"\n          base=""',
+            'diff_status="available"\n          base=""',
+        ),
+    ]
+    rejected = 0
+    for label, old, new in mutations:
+        require(old in publish_text, f"publish scope gate self-test anchor missing for mutation: {label}")
+        mutated = publish_text.replace(old, new, 1)
+        require(mutated != publish_text, f"publish scope gate self-test mutation is a no-op: {label}")
+        mutated_errors = publish_scope_gate_errors(mutated, dockerfile_text, dockerignore_text, gitignore_text)
+        require(bool(mutated_errors), f"publish scope gate mutation unexpectedly passed: {label}")
+        rejected += 1
+
+    token_removal = publish_text.replace("GHCR_TOKEN: ${{ github.token }}", "GHCR_TOKEN: none", 1)
+    require(
+        bool(publish_scope_gate_errors(token_removal, dockerfile_text, dockerignore_text, gitignore_text)),
+        "publish scope gate mutation unexpectedly passed: token env removal",
+    )
+    rejected += 1
+
+    dockerignore_mutations = [
+        ("dockerignore deny-all removal", dockerignore_text.replace("**\n!containers/", "!containers/", 1)),
+        ("dockerignore images negation", dockerignore_text + "!images/\n"),
+    ]
+    for label, mutated_dockerignore in dockerignore_mutations:
+        require(mutated_dockerignore != dockerignore_text, f"publish scope gate self-test mutation is a no-op: {label}")
+        require(
+            bool(publish_scope_gate_errors(publish_text, dockerfile_text, mutated_dockerignore, gitignore_text)),
+            f"publish scope gate mutation unexpectedly passed: {label}",
+        )
+        rejected += 1
+
+    gitignore_removal = gitignore_text.replace("!/images/\n!/images/README.md\n", "", 1)
+    require(gitignore_removal != gitignore_text, "publish scope gate self-test mutation is a no-op: gitignore removal")
+    require(
+        bool(publish_scope_gate_errors(publish_text, dockerfile_text, dockerignore_text, gitignore_removal)),
+        "publish scope gate mutation unexpectedly passed: gitignore images allowlist removal",
+    )
+    rejected += 1
+
+    print(f"publish scope gate mutation probes: {rejected}/{rejected} rejected")
 
 
 def check_build_script() -> None:
@@ -4965,6 +5262,7 @@ def check_nist_800_190_scripts() -> None:
 
 def check_helper_self_tests() -> None:
     for relative_path in [
+        "tools/decide-publish-scope.py",
         "tools/assert-rpm-lock-hashes.py",
         "tools/assert-no-rootfs-secrets.py",
         "tools/generate-nist-800-190-predicate.py",
@@ -6315,9 +6613,12 @@ INTERNAL_PROCESS_RESIDUE_PATTERNS = [
 def collect_internal_process_docs(root: Path = ROOT) -> list[tuple[str, str]]:
     readme = root / "README.md"
     docs_dir = root / "docs"
+    images_dir = root / "images"
     require(readme.is_file(), "missing public README.md for internal-process residue scan")
     require(docs_dir.is_dir(), "missing docs directory for internal-process residue scan")
     paths = [readme, *sorted(docs_dir.rglob("*.md"))]
+    if images_dir.is_dir():
+        paths.extend(sorted(images_dir.rglob("*.md")))
     return [(str(path.relative_to(root)), path.read_text(encoding="utf-8")) for path in paths]
 
 
@@ -6350,12 +6651,18 @@ def check_internal_process_residue_self_test() -> None:
         root = Path(tmp)
         nested_docs = root / "docs/nested"
         nested_docs.mkdir(parents=True)
+        images_docs = root / "images"
+        images_docs.mkdir()
         (root / "README.md").write_text(
             "\n".join(fixture for _, fixture in positive_fixtures[:4]) + "\n",
             encoding="utf-8",
         )
         (nested_docs / "fixture.md").write_text(
-            "\n".join(fixture for _, fixture in positive_fixtures[4:]) + "\n",
+            "\n".join(fixture for _, fixture in positive_fixtures[4:6]) + "\n",
+            encoding="utf-8",
+        )
+        (images_docs / "fixture.md").write_text(
+            "\n".join(fixture for _, fixture in positive_fixtures[6:]) + "\n",
             encoding="utf-8",
         )
         (root / "outside.md").write_text("P9.9 STEP999 MANDATE\n", encoding="utf-8")
@@ -6364,7 +6671,7 @@ def check_internal_process_residue_self_test() -> None:
         require(
             len(positive_findings) == len(INTERNAL_PROCESS_RESIDUE_PATTERNS)
             and positive_labels == {label for label, _ in INTERNAL_PROCESS_RESIDUE_PATTERNS},
-            "internal-process residue self-test must detect every pattern across README.md and nested docs",
+            "internal-process residue self-test must detect every pattern across README.md, nested docs, and images",
         )
 
         rejected = 0
@@ -6384,7 +6691,11 @@ def check_internal_process_residue_self_test() -> None:
             encoding="utf-8",
         )
         (nested_docs / "fixture.md").write_text(
-            "preview. b xnwarila-platform nwarila-platformx 18 images 8 imageset\n",
+            "preview. b xnwarila-platform nwarila-platformx\n",
+            encoding="utf-8",
+        )
+        (images_docs / "fixture.md").write_text(
+            "18 images 8 imageset\n",
             encoding="utf-8",
         )
         negative_findings = find_internal_process_residue(collect_internal_process_docs(root))
@@ -6427,6 +6738,8 @@ def main() -> int:
         check_supply_chain_workflows,
         check_lint_setup,
         check_publish_workflow,
+        check_publish_scope_gate,
+        check_publish_scope_gate_self_test,
         check_build_script,
         check_hardening_script,
         check_sbom_assertion_script,

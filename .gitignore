@@ -87,6 +87,9 @@
 !/docs/tutorials/
 !/docs/tutorials/*.md
 !/docs/**/*.md
+!/images/
+!/images/README.md
+
 !/vex/
 !/vex/.gitkeep
 !/vex/*.json
