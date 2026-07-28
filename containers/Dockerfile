@@ -266,6 +266,7 @@ LABEL org.opencontainers.image.created="${OCI_CREATED}" \
 COPY --from=rpm-rootfs /rootfs/ /
 COPY containers/fips/openssl.cnf /etc/pki/tls/openssl-fips.cnf
 
+ENV HOME=/home/nonroot
 ENV OPENSSL_CONF=/etc/pki/tls/openssl-fips.cnf
 ENV OPENSSL_MODULES=/usr/lib64/ossl-modules
 
