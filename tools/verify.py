@@ -3856,7 +3856,19 @@ def check_publish_workflow() -> None:
     vex_report_index = text.find("Run OpenVEX default-deny gates")
     require(vex_report_index > first_grype_scan_index, "publish workflow must keep an identifiable VEX report pass")
     grype_gate = text[first_grype_scan_index:vex_report_index]
-    report_pass = text[vex_report_index:]
+    vex_report_end = text.find("\n      - name:", vex_report_index + 1)
+    require(vex_report_end > vex_report_index, "publish workflow must keep a bounded VEX report step")
+    report_pass = text[vex_report_index:vex_report_end]
+    trivy_report_index = report_pass.find("dist/tools/trivy image")
+    grype_report_index = report_pass.find('dist/tools/grype "${image_ref}"')
+    vex_assert_index = report_pass.find("python tools/assert-vex.py")
+    require(
+        0 <= trivy_report_index < grype_report_index < vex_assert_index,
+        "publish VEX report step must keep its Trivy -> Grype -> assert-vex command order",
+    )
+    trivy_report = report_pass[trivy_report_index:grype_report_index]
+    grype_report = report_pass[grype_report_index:vex_assert_index]
+    vex_assert = report_pass[vex_assert_index:]
     require(
         "--ignorefile security/cve-ignore.trivyignore.yaml" in trivy_gate,
         "publish Trivy fixable gate must use the explicit non-default ignore file",
@@ -3869,7 +3881,19 @@ def check_publish_workflow() -> None:
         "--ignorefile" not in report_pass and "-c security/cve-ignore.grype.yaml" not in report_pass,
         "publish VEX report pass must remain unfiltered",
     )
-    require("--severity HIGH,CRITICAL" in report_pass, "publish Trivy VEX report scope must remain HIGH,CRITICAL")
+    require("--severity HIGH,CRITICAL" in trivy_report, "publish Trivy VEX report scope must remain HIGH,CRITICAL")
+    require(
+        "--list-all-pkgs" in trivy_report,
+        "publish Trivy VEX report pass must enumerate the full package inventory",
+    )
+    require(
+        'dist/tools/grype "${image_ref}" \\\n              --platform "linux/${arch}" \\\n' in grype_report,
+        "publish Grype VEX report invocation must bind --platform linux/${arch}",
+    )
+    require(
+        "--package-floor contracts/image-manifest.json" in vex_assert,
+        "publish assert-vex invocation must use the root image package-floor contract",
+    )
 
     forbidden = [
         "-regexp",
@@ -5576,6 +5600,7 @@ def _python_sqlite_vex_replay(document: dict[str, Any]) -> list[str]:
                         },
                         "Results": [
                             {
+                                "Target": f"{product} (redhat 9.8)",
                                 "Class": "os-pkgs",
                                 "Type": "redhat",
                                 "Packages": [{"Name": "glibc", "Version": "2.34"}],
@@ -6782,6 +6807,7 @@ def check_vex() -> None:
                     },
                     "Results": [
                         {
+                            "Target": f"{product_ref} (redhat 9.8)",
                             "Class": "os-pkgs",
                             "Type": "redhat",
                             "Packages": [{"Name": "glibc", "Version": "2.34"}],

@@ -606,7 +606,10 @@ jobs:
               --output "${trivy_json}" \
               "${image_ref}"
 
-            dist/tools/grype "${image_ref}" -o json --file "${grype_json}"
+            dist/tools/grype "${image_ref}" \
+              --platform "linux/${arch}" \
+              -o json \
+              --file "${grype_json}"
 
             python tools/assert-vex.py \
               --product "${image_ref}" \

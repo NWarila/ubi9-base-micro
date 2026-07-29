@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import argparse
 import copy
+import io
 import json
+import re
 import sys
 import tempfile
 from collections.abc import Callable
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -28,6 +31,19 @@ OPENVEX_NOT_AFFECTED_JUSTIFICATIONS = {
     "vulnerable_code_cannot_be_controlled_by_adversary",
     "inline_mitigations_already_exist",
 }
+CONTENT_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
+DIGEST_IMAGE_REFERENCE = re.compile(r".+@sha256:[0-9a-f]{64}\Z")
+RHEL_9_RELEASE = re.compile(r"9(?:\.[0-9]+)*\Z")
+TRIVY_FIX_STATUSES = {
+    "affected",
+    "end_of_life",
+    "fixed",
+    "not_affected",
+    "under_investigation",
+    "unknown",
+    "will_not_fix",
+}
+GRYPE_FIX_STATES = {"fixed", "not-fixed", "unknown", "wont-fix"}
 Mutation = Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], Any]
 
 
@@ -63,6 +79,7 @@ class TrivyEvidence:
     artifact_name: str
     image_id: str
     architecture: str
+    os_version: str
     repo_digests: tuple[str, ...]
     package_names: frozenset[str]
 
@@ -73,6 +90,7 @@ class GrypeEvidence:
     user_input: str | None
     image_id: str | None
     architecture: str | None
+    distro_version: str
     repo_digests: tuple[str, ...]
 
 
@@ -96,6 +114,13 @@ def non_empty_string(value: Any, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise VexError(f"{label} must be a non-empty string")
     return value.strip()
+
+
+def content_digest(value: Any, label: str) -> str:
+    digest = non_empty_string(value, label)
+    if CONTENT_DIGEST.fullmatch(digest) is None:
+        raise VexError(f"{label} must be a sha256 content digest")
+    return digest
 
 
 def finding_severity(value: Any, label: str) -> str:
@@ -136,8 +161,8 @@ def validate_trivy_report(document: dict[str, Any]) -> TrivyEvidence:
         raise VexError("Trivy Metadata.OS must be an object")
     if operating_system.get("Family") != "redhat":
         raise VexError("Trivy Metadata.OS.Family must be redhat")
-    non_empty_string(operating_system.get("Name"), "Trivy Metadata.OS.Name")
-    image_id = non_empty_string(metadata.get("ImageID"), "Trivy Metadata.ImageID")
+    os_version = non_empty_string(operating_system.get("Name"), "Trivy Metadata.OS.Name")
+    image_id = content_digest(metadata.get("ImageID"), "Trivy Metadata.ImageID")
     image_config = metadata.get("ImageConfig")
     if not isinstance(image_config, dict):
         raise VexError("Trivy Metadata.ImageConfig must be an object")
@@ -155,6 +180,7 @@ def validate_trivy_report(document: dict[str, Any]) -> TrivyEvidence:
     for result_index, result in enumerate(results):
         if not isinstance(result, dict):
             raise VexError(f"Trivy Results[{result_index}] must be an object")
+        non_empty_string(result.get("Target"), f"Trivy Results[{result_index}].Target")
         if result.get("Class") != "os-pkgs" or result.get("Type") != "redhat":
             continue
         os_result_seen = True
@@ -183,6 +209,7 @@ def validate_trivy_report(document: dict[str, Any]) -> TrivyEvidence:
         artifact_name=artifact_name,
         image_id=image_id,
         architecture=architecture,
+        os_version=os_version,
         repo_digests=repo_digests,
         package_names=frozenset(package_names),
     )
@@ -199,7 +226,7 @@ def validate_grype_report(document: dict[str, Any]) -> GrypeEvidence:
         raise VexError("Grype distro must be an object")
     if distro.get("name") != "redhat":
         raise VexError("Grype distro.name must be redhat")
-    non_empty_string(distro.get("version"), "Grype distro.version")
+    distro_version = non_empty_string(distro.get("version"), "Grype distro.version")
 
     source = document.get("source")
     if not isinstance(source, dict):
@@ -210,7 +237,7 @@ def validate_grype_report(document: dict[str, Any]) -> GrypeEvidence:
         if not isinstance(target, dict):
             raise VexError("Grype image source.target must be an object")
         user_input = non_empty_string(target.get("userInput"), "Grype source.target.userInput")
-        image_id = non_empty_string(target.get("imageID"), "Grype source.target.imageID")
+        image_id = content_digest(target.get("imageID"), "Grype source.target.imageID")
         architecture = non_empty_string(target.get("architecture"), "Grype source.target.architecture")
         repo_digests = optional_references(target, "repoDigests", "Grype source.target.repoDigests")
     elif source_type == "directory":
@@ -231,6 +258,7 @@ def validate_grype_report(document: dict[str, Any]) -> GrypeEvidence:
         user_input=user_input,
         image_id=image_id,
         architecture=architecture,
+        distro_version=distro_version,
         repo_digests=repo_digests,
     )
 
@@ -253,6 +281,15 @@ def validate_report_binding(
         raise VexError("Trivy and Grype imageID values do not match")
     if trivy.architecture != grype.architecture:
         raise VexError("Trivy and Grype architecture values do not match")
+    if trivy.os_version != grype.distro_version:
+        raise VexError("Trivy OS and Grype distro versions do not match")
+    if RHEL_9_RELEASE.fullmatch(trivy.os_version) is None:
+        raise VexError("Trivy OS and Grype distro versions must identify RHEL 9")
+    digest_addressed = DIGEST_IMAGE_REFERENCE.fullmatch(expected_product) is not None
+    if digest_addressed and not trivy.repo_digests:
+        raise VexError("Trivy Metadata.RepoDigests is required for a digest-addressed --product")
+    if digest_addressed and not grype.repo_digests:
+        raise VexError("Grype source.target.repoDigests is required for a digest-addressed --product")
     if trivy.repo_digests and expected_product not in trivy.repo_digests:
         raise VexError("Trivy Metadata.RepoDigests does not contain --product")
     if grype.repo_digests and expected_product not in grype.repo_digests:
@@ -299,22 +336,25 @@ def validate_contract_floor(path: Path, architecture: str, inventory: frozenset[
         raise VexError("Trivy inventory missing contract package floor: " + ", ".join(missing))
 
 
-def trivy_has_fix(vulnerability: dict[str, Any], label: str) -> bool:
+def trivy_has_fix(vulnerability: dict[str, Any]) -> bool:
     raw_fixed_version = vulnerability.get("FixedVersion")
-    if raw_fixed_version is not None and not isinstance(raw_fixed_version, str):
-        raise VexError(f"{label}.FixedVersion must be a string or null")
+    fixed_version_valid = raw_fixed_version is None or isinstance(raw_fixed_version, str)
+    if not fixed_version_valid:
+        return False
     fixed_version = (raw_fixed_version or "").strip()
-    if fixed_version:
-        return True
     raw_status = vulnerability.get("Status")
-    if raw_status is not None and not isinstance(raw_status, str):
-        raise VexError(f"{label}.Status must be a string or null")
-    return (raw_status or "").strip().lower() == "fixed"
+    status_valid = isinstance(raw_status, str) and raw_status.strip().lower() in TRIVY_FIX_STATUSES
+    if not status_valid:
+        return False
+    status = str(raw_status).strip().lower()
+    return bool(fixed_version) or status == "fixed"
 
 
 def parse_trivy(data: dict[str, Any]) -> list[Finding]:
     findings: list[Finding] = []
-    results = data["Results"]
+    results = data.get("Results")
+    if not isinstance(results, list):
+        raise VexError("Trivy Results must be a list")
     for result_index, result in enumerate(results):
         raw_vulnerabilities = result.get("Vulnerabilities")
         if raw_vulnerabilities is None:
@@ -328,7 +368,7 @@ def parse_trivy(data: dict[str, Any]) -> list[Finding]:
             vuln_id = non_empty_string(vulnerability.get("VulnerabilityID"), f"{label}.VulnerabilityID")
             sev = finding_severity(vulnerability.get("Severity"), f"{label}.Severity")
             package = non_empty_string(vulnerability.get("PkgName"), f"{label}.PkgName")
-            if sev not in HIGH_CRITICAL or trivy_has_fix(vulnerability, label):
+            if sev not in HIGH_CRITICAL or trivy_has_fix(vulnerability):
                 continue
             findings.append(
                 Finding(
@@ -341,30 +381,32 @@ def parse_trivy(data: dict[str, Any]) -> list[Finding]:
     return findings
 
 
-def grype_has_fix(vulnerability: dict[str, Any], label: str) -> bool:
+def grype_has_fix(vulnerability: dict[str, Any]) -> bool:
     raw_fix = vulnerability.get("fix")
     if raw_fix is None:
         return False
     if not isinstance(raw_fix, dict):
-        raise VexError(f"{label}.fix must be an object or null")
+        return False
     raw_versions = raw_fix.get("versions")
-    if raw_versions is None:
-        versions: list[Any] = []
-    elif isinstance(raw_versions, list):
-        versions = raw_versions
-    else:
-        raise VexError(f"{label}.fix.versions must be a list or null")
-    if versions:
-        return True
+    versions_valid = isinstance(raw_versions, list) and all(
+        isinstance(version, str) and bool(version.strip()) for version in raw_versions
+    )
+    if not versions_valid:
+        return False
+    versions = raw_versions
     raw_state = raw_fix.get("state")
-    if raw_state is not None and not isinstance(raw_state, str):
-        raise VexError(f"{label}.fix.state must be a string or null")
-    return (raw_state or "").strip().lower() == "fixed"
+    state_valid = isinstance(raw_state, str) and raw_state.strip().lower() in GRYPE_FIX_STATES
+    if not state_valid:
+        return False
+    state = str(raw_state).strip().lower()
+    return bool(versions) or state == "fixed"
 
 
 def parse_grype(data: dict[str, Any]) -> list[Finding]:
     findings: list[Finding] = []
-    matches = data["matches"]
+    matches = data.get("matches")
+    if not isinstance(matches, list):
+        raise VexError("Grype matches must be a list")
     for match_index, match in enumerate(matches):
         label = f"Grype matches[{match_index}]"
         if not isinstance(match, dict):
@@ -378,7 +420,7 @@ def parse_grype(data: dict[str, Any]) -> list[Finding]:
         vuln_id = non_empty_string(vulnerability.get("id"), f"{label}.vulnerability.id")
         sev = finding_severity(vulnerability.get("severity"), f"{label}.vulnerability.severity")
         package = non_empty_string(artifact.get("name"), f"{label}.artifact.name")
-        if sev not in HIGH_CRITICAL or grype_has_fix(vulnerability, f"{label}.vulnerability"):
+        if sev not in HIGH_CRITICAL or grype_has_fix(vulnerability):
             continue
         findings.append(
             Finding(
@@ -635,18 +677,30 @@ def self_test() -> int:
             floor: Any,
             *,
             emit: bool = False,
+            expected_product: str = product,
         ) -> int:
             write_json(trivy_json, trivy)
             write_json(grype_json, grype)
             write_json(package_floor, floor)
             return assert_vex(
-                product,
+                expected_product,
                 trivy_json,
                 grype_json,
                 package_floor,
                 vex_dir,
                 emit=emit,
             )
+
+        def run_fixture_with_output(
+            trivy: Any,
+            grype: Any,
+            floor: Any,
+        ) -> tuple[int, str]:
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                result = run_fixture(trivy, grype, floor, emit=True)
+            return result, stdout.getvalue() + stderr.getvalue()
 
         if run_fixture(clean_trivy, clean_grype, clean_floor) != 0:
             print("self-test failed: correctly bound zero-finding reports did not pass", file=sys.stderr)
@@ -655,9 +709,12 @@ def self_test() -> int:
 
         local_trivy = copy.deepcopy(clean_trivy)
         local_grype = copy.deepcopy(clean_grype)
+        local_product = "example.invalid/base-micro:self-test"
+        local_trivy["ArtifactName"] = local_product
+        local_grype["source"]["target"]["userInput"] = local_product
         local_trivy["Metadata"].pop("RepoDigests")
         local_grype["source"]["target"]["repoDigests"] = []
-        if run_fixture(local_trivy, local_grype, clean_floor) != 0:
+        if run_fixture(local_trivy, local_grype, clean_floor, expected_product=local_product) != 0:
             print("self-test failed: local-mode empty/absent repo digests did not pass", file=sys.stderr)
             return 1
         print("assert-vex self-test: local-mode empty/absent repo digests passed")
@@ -768,6 +825,11 @@ def self_test() -> int:
             lambda trivy, _grype, _floor: trivy["Metadata"].__setitem__("ImageID", ""),
         )
         add_probe(
+            "Trivy image ID content digest",
+            "Trivy Metadata.ImageID must be a sha256 content digest",
+            lambda trivy, _grype, _floor: trivy["Metadata"].__setitem__("ImageID", "opaque"),
+        )
+        add_probe(
             "Trivy image config object",
             "Trivy Metadata.ImageConfig must be an object",
             lambda trivy, _grype, _floor: trivy["Metadata"].__setitem__("ImageConfig", []),
@@ -796,6 +858,11 @@ def self_test() -> int:
             "Trivy result object",
             "Trivy Results[1] must be an object",
             lambda trivy, _grype, _floor: trivy.__setitem__("Results", [trivy["Results"][0], []]),
+        )
+        add_probe(
+            "Trivy result target",
+            "Trivy Results[0].Target must be a non-empty string",
+            lambda trivy, _grype, _floor: trivy["Results"][0].pop("Target"),
         )
         add_probe(
             "Trivy OS result class",
@@ -864,6 +931,14 @@ def self_test() -> int:
             ),
         )
         add_probe(
+            "Trivy unsupported finding severity",
+            "Trivy Results[0].Vulnerabilities[0].Severity has unsupported value",
+            lambda trivy, _grype, _floor: trivy["Results"][0].__setitem__(
+                "Vulnerabilities",
+                [{**valid_trivy_finding, "Severity": "UNSUPPORTED"}],
+            ),
+        )
+        add_probe(
             "Trivy finding package",
             "Trivy Results[0].Vulnerabilities[0].PkgName must be a non-empty string",
             lambda trivy, _grype, _floor: trivy["Results"][0].__setitem__(
@@ -871,23 +946,6 @@ def self_test() -> int:
                 [{key: value for key, value in valid_trivy_finding.items() if key != "PkgName"}],
             ),
         )
-        add_probe(
-            "Trivy malformed fixed version",
-            "Trivy Results[0].Vulnerabilities[0].FixedVersion must be a string or null",
-            lambda trivy, _grype, _floor: trivy["Results"][0].__setitem__(
-                "Vulnerabilities",
-                [{**valid_trivy_finding, "FixedVersion": []}],
-            ),
-        )
-        add_probe(
-            "Trivy malformed status",
-            "Trivy Results[0].Vulnerabilities[0].Status must be a string or null",
-            lambda trivy, _grype, _floor: trivy["Results"][0].__setitem__(
-                "Vulnerabilities",
-                [{**valid_trivy_finding, "Status": []}],
-            ),
-        )
-
         probes.append(
             (
                 "Grype non-object document",
@@ -955,6 +1013,11 @@ def self_test() -> int:
             "Grype image ID",
             "Grype source.target.imageID must be a non-empty string",
             lambda _trivy, grype, _floor: grype["source"]["target"].__setitem__("imageID", ""),
+        )
+        add_probe(
+            "Grype image ID content digest",
+            "Grype source.target.imageID must be a sha256 content digest",
+            lambda _trivy, grype, _floor: grype["source"]["target"].__setitem__("imageID", "opaque"),
         )
         add_probe(
             "Grype architecture",
@@ -1058,55 +1121,6 @@ def self_test() -> int:
             ),
         )
         add_probe(
-            "Grype malformed fix",
-            "Grype matches[0].vulnerability.fix must be an object or null",
-            lambda _trivy, grype, _floor: grype.__setitem__(
-                "matches",
-                [
-                    {
-                        **valid_grype_match,
-                        "vulnerability": {
-                            **valid_grype_match["vulnerability"],
-                            "fix": [],
-                        },
-                    }
-                ],
-            ),
-        )
-        add_probe(
-            "Grype malformed fix versions",
-            "Grype matches[0].vulnerability.fix.versions must be a list or null",
-            lambda _trivy, grype, _floor: grype.__setitem__(
-                "matches",
-                [
-                    {
-                        **valid_grype_match,
-                        "vulnerability": {
-                            **valid_grype_match["vulnerability"],
-                            "fix": {"versions": {}},
-                        },
-                    }
-                ],
-            ),
-        )
-        add_probe(
-            "Grype malformed fix state",
-            "Grype matches[0].vulnerability.fix.state must be a string or null",
-            lambda _trivy, grype, _floor: grype.__setitem__(
-                "matches",
-                [
-                    {
-                        **valid_grype_match,
-                        "vulnerability": {
-                            **valid_grype_match["vulnerability"],
-                            "fix": {"versions": [], "state": []},
-                        },
-                    }
-                ],
-            ),
-        )
-
-        add_probe(
             "Directory evidence cannot bypass image binding",
             "report binding requires a Grype image source",
             lambda _trivy, grype, _floor: grype.__setitem__(
@@ -1139,6 +1153,32 @@ def self_test() -> int:
             "Cross-scanner architecture",
             "Trivy and Grype architecture values do not match",
             lambda _trivy, grype, _floor: grype["source"]["target"].__setitem__("architecture", "arm64"),
+        )
+        add_probe(
+            "Cross-scanner OS release",
+            "Trivy OS and Grype distro versions do not match",
+            lambda trivy, grype, _floor: (
+                trivy["Metadata"]["OS"].__setitem__("Name", "8.10"),
+                grype["distro"].__setitem__("version", "7.9"),
+            ),
+        )
+        add_probe(
+            "Consumer RHEL major release",
+            "Trivy OS and Grype distro versions must identify RHEL 9",
+            lambda trivy, grype, _floor: (
+                trivy["Metadata"]["OS"].__setitem__("Name", "8.10"),
+                grype["distro"].__setitem__("version", "8.10"),
+            ),
+        )
+        add_probe(
+            "Trivy required digest repository evidence",
+            "Trivy Metadata.RepoDigests is required for a digest-addressed --product",
+            lambda trivy, _grype, _floor: trivy["Metadata"].pop("RepoDigests"),
+        )
+        add_probe(
+            "Grype required digest repository evidence",
+            "Grype source.target.repoDigests is required for a digest-addressed --product",
+            lambda _trivy, grype, _floor: grype["source"]["target"].__setitem__("repoDigests", []),
         )
         add_probe(
             "Trivy populated repo digest binding",
@@ -1207,6 +1247,149 @@ def self_test() -> int:
                 print(f"self-test failed: {label} unexpectedly passed", file=sys.stderr)
                 return 1
         print(f"assert-vex self-test: {rejected}/{len(probes)} mutations rejected at their expected discriminator")
+
+        try:
+            run_fixture(clean_trivy, clean_grype, clean_floor, expected_product=f" {product}")
+        except VexError as exc:
+            expected_reason = "--product must not contain surrounding whitespace"
+            if expected_reason not in str(exc):
+                print(
+                    f"self-test failed: product whitespace rejected for wrong reason: {exc}",
+                    file=sys.stderr,
+                )
+                return 1
+        else:
+            print("self-test failed: product whitespace unexpectedly passed", file=sys.stderr)
+            return 1
+        print("assert-vex self-test: product whitespace rejected at its expected discriminator")
+
+        parser_probes: list[tuple[str, Callable[[dict[str, Any]], list[Finding]], dict[str, Any], str]] = [
+            ("Trivy parser missing Results", parse_trivy, {}, "Trivy Results must be a list"),
+            ("Grype parser missing matches", parse_grype, {}, "Grype matches must be a list"),
+        ]
+        for label, parser, document, expected_reason in parser_probes:
+            try:
+                parser(document)
+            except VexError as exc:
+                if expected_reason not in str(exc):
+                    print(f"self-test failed: {label} rejected for wrong reason: {exc}", file=sys.stderr)
+                    return 1
+            else:
+                print(f"self-test failed: {label} unexpectedly passed", file=sys.stderr)
+                return 1
+            print(f"assert-vex self-test: {label} rejected at its expected discriminator")
+
+        def trivy_fix_fixture(fix: Any) -> dict[str, Any]:
+            trivy = copy.deepcopy(clean_trivy)
+            trivy["Results"][0]["Vulnerabilities"] = [{**valid_trivy_finding, **fix}]
+            return trivy
+
+        def grype_fix_fixture(fix: Any) -> dict[str, Any]:
+            grype = copy.deepcopy(clean_grype)
+            grype["matches"] = [
+                {
+                    **valid_grype_match,
+                    "vulnerability": {
+                        **valid_grype_match["vulnerability"],
+                        "fix": fix,
+                    },
+                }
+            ]
+            return grype
+
+        no_fix_probes = [
+            (
+                "Trivy malformed FixedVersion type",
+                trivy_fix_fixture({"FixedVersion": [], "Status": "fixed"}),
+                clean_grype,
+                "CVE-2099-0001 severity=HIGH scanners=trivy",
+            ),
+            (
+                "Trivy fixed version with malformed Status type",
+                trivy_fix_fixture({"FixedVersion": "1.2.3", "Status": []}),
+                clean_grype,
+                "CVE-2099-0001 severity=HIGH scanners=trivy",
+            ),
+            (
+                "Trivy fixed version with missing Status",
+                trivy_fix_fixture({"FixedVersion": "1.2.3"}),
+                clean_grype,
+                "CVE-2099-0001 severity=HIGH scanners=trivy",
+            ),
+            (
+                "Trivy fixed version with unrecognised Status",
+                trivy_fix_fixture({"FixedVersion": "1.2.3", "Status": "surprising"}),
+                clean_grype,
+                "CVE-2099-0001 severity=HIGH scanners=trivy",
+            ),
+            (
+                "Grype malformed fix object",
+                clean_trivy,
+                grype_fix_fixture([]),
+                "CVE-2099-0002 severity=HIGH scanners=grype",
+            ),
+            (
+                "Grype malformed versions container",
+                clean_trivy,
+                grype_fix_fixture({"versions": {}, "state": "fixed"}),
+                "CVE-2099-0002 severity=HIGH scanners=grype",
+            ),
+            (
+                "Grype malformed versions entry",
+                clean_trivy,
+                grype_fix_fixture({"versions": [{}], "state": "not-fixed"}),
+                "CVE-2099-0002 severity=HIGH scanners=grype",
+            ),
+            (
+                "Grype empty versions entry",
+                clean_trivy,
+                grype_fix_fixture({"versions": [""], "state": "not-fixed"}),
+                "CVE-2099-0002 severity=HIGH scanners=grype",
+            ),
+            (
+                "Grype version with malformed state type",
+                clean_trivy,
+                grype_fix_fixture({"versions": ["1.2.3"], "state": []}),
+                "CVE-2099-0002 severity=HIGH scanners=grype",
+            ),
+            (
+                "Grype version with missing state",
+                clean_trivy,
+                grype_fix_fixture({"versions": ["1.2.3"]}),
+                "CVE-2099-0002 severity=HIGH scanners=grype",
+            ),
+            (
+                "Grype version with unrecognised state",
+                clean_trivy,
+                grype_fix_fixture({"versions": ["1.2.3"], "state": "surprising"}),
+                "CVE-2099-0002 severity=HIGH scanners=grype",
+            ),
+        ]
+        no_fix_rejected = 0
+        for label, trivy, grype, expected_reason in no_fix_probes:
+            result, output = run_fixture_with_output(trivy, grype, clean_floor)
+            if result != 1 or expected_reason not in output:
+                print(
+                    f"self-test failed: {label} was not treated as an unfixed finding: {output}",
+                    file=sys.stderr,
+                )
+                return 1
+            print(f"assert-vex self-test: {label} treated as no fix")
+            no_fix_rejected += 1
+        print(
+            "assert-vex self-test: "
+            f"{no_fix_rejected}/{len(no_fix_probes)} malformed fix records retained their findings"
+        )
+
+        valid_fixed_trivy = trivy_fix_fixture({"FixedVersion": "1.2.3", "Status": "fixed"})
+        if run_fixture(valid_fixed_trivy, clean_grype, clean_floor) != 0:
+            print("self-test failed: complete Trivy fix evidence was not honoured", file=sys.stderr)
+            return 1
+        valid_fixed_grype = grype_fix_fixture({"versions": ["1.2.3"], "state": "fixed"})
+        if run_fixture(clean_trivy, valid_fixed_grype, clean_floor) != 0:
+            print("self-test failed: complete Grype fix evidence was not honoured", file=sys.stderr)
+            return 1
+        print("assert-vex self-test: complete Trivy and Grype fix evidence honoured")
 
         critical_trivy = copy.deepcopy(clean_trivy)
         critical_trivy["Results"][0]["Vulnerabilities"] = [
