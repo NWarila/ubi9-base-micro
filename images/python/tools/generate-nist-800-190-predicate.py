@@ -70,7 +70,7 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
             "skippedSymlinks": secret_report.get("skippedSymlinks"),
             "sampleScanBytes": secret_report.get("sampleScanBytes"),
             "sampledPatterns": secret_report.get("sampledPatterns"),
-            "scanner": "tools/assert-no-rootfs-secrets.py",
+            "scanner": "images/python/tools/assert-no-rootfs-secrets.py",
         },
         "controls": [
             {
@@ -85,21 +85,21 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
                 "evidence": [
                     evidence(
                         "workflow",
-                        ".github/workflows/python-ci.yaml#Run Trivy fixable vulnerability gates",
+                        ".github/workflows/python-ci.yaml#Run fixable vulnerability gates",
                         "Trivy fixable MEDIUM/HIGH/CRITICAL gate",
                     ),
                     evidence(
                         "workflow",
-                        ".github/workflows/python-ci.yaml#Run Grype fixable vulnerability gates",
+                        ".github/workflows/python-ci.yaml#Run fixable vulnerability gates",
                         "Grype fixable MEDIUM/HIGH/CRITICAL gate",
                     ),
                     evidence(
                         "workflow",
-                        ".github/workflows/python-ci.yaml#Run OpenVEX default-deny gates",
+                        ".github/workflows/python-ci.yaml#Run OpenVEX default-deny gate",
                         "OpenVEX default-deny policy",
                     ),
                     evidence("script", "tools/assert-vex.py", "default-deny OpenVEX assertion"),
-                    evidence("script", "tools/assert-sbom-rpms.py", "rpmdb-backed SBOM package assertion"),
+                    evidence("script", "images/python/tools/assert-sbom-rpms.py", "rpmdb-backed SBOM assertion"),
                 ],
             },
             {
@@ -144,22 +144,22 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
                 "evidence": [
                     evidence(
                         "workflow",
-                        ".github/workflows/python-ci.yaml#Generate and verify rpmdb SBOMs",
+                        ".github/workflows/python-ci.yaml#Generate and gate rpmdb SBOMs",
                         "locally built image package inventory from rpmdb",  # piece-3: reword to published-digest
                     ),
                     evidence(
                         "workflow",
-                        ".github/workflows/python-ci.yaml#Run Trivy fixable vulnerability gates",
+                        ".github/workflows/python-ci.yaml#Run fixable vulnerability gates",
                         "Trivy scan over locally built image contents",  # piece-3: reword to published-digest
                     ),
                     evidence(
                         "workflow",
-                        ".github/workflows/python-ci.yaml#Run Grype fixable vulnerability gates",
+                        ".github/workflows/python-ci.yaml#Run fixable vulnerability gates",
                         "Grype scan over locally built image contents",  # piece-3: reword to published-digest
                     ),
                     evidence(
                         "dockerfile",
-                        "images/python/Dockerfile#rpm-rootfs",
+                        "images/python/Dockerfile#python-rootfs",
                         "minimal installroot with shell/package-manager removal",
                     ),
                 ],
@@ -169,24 +169,24 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
                 "countermeasure": "Embedded clear-text secrets",
                 "status": "addressed",
                 "posture": (
-                    "The exported rootfs is scanned during PR and publish paths for high-confidence "
+                    "The exported rootfs is scanned during pull-request CI for high-confidence "
                     "clear-text credential material. A finding stops the workflow before attestation."
                 ),
                 "evidence": [
                     evidence(
                         "script",
-                        "tools/assert-no-rootfs-secrets.py",
+                        "images/python/tools/assert-no-rootfs-secrets.py",
                         "rootfs clear-text secret scanner with negative self-test",
                     ),
                     evidence(
                         "workflow",
-                        ".github/workflows/python-ci.yaml#Run runtime rootfs secret gate",
+                        ".github/workflows/python-ci.yaml#Run rootfs secret gate",
                         "PR-time rootfs secret gate",
                     ),
                     evidence(
                         "workflow",
-                        ".github/workflows/python-ci.yaml#Run runtime rootfs secret gates",
-                        "publish-time per-architecture rootfs secret gates",
+                        ".github/workflows/python-ci.yaml#Run rootfs secret gate",
+                        "per-architecture rootfs secret gates in CI",
                     ),
                     evidence(
                         "report", args.secret_scan_report.as_posix(), "secret-scan JSON report for this predicate"
@@ -211,19 +211,19 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
                     ),
                     evidence(
                         "workflow",
-                        ".github/workflows/python-ci.yaml#Verify Cosign signature",
-                        "cosign signature verification with exact repository workflow identity",
+                        ".github/workflows/python-ci.yaml#python / required",
+                        "identity recorded in the image contract for the publish workflow introduced later",
                     ),
                     evidence(
                         "workflow",
-                        ".github/workflows/python-ci.yaml#slsa-provenance",
+                        ".github/workflows/python-ci.yaml#python / required",
                         # piece-3: reword to published-digest
                         "SLSA L3 generator reusable workflow (introduced with the publish workflow)",
                     ),
                     evidence(
                         "workflow",
-                        ".github/workflows/python-ci.yaml#Verify Rekor roll-up",
-                        "post-publish roll-up verifies signature and attestations with Rekor tlog entries",
+                        ".github/workflows/python-ci.yaml#python / required",
+                        "signature, attestation and Rekor verification arrive with the publish workflow",
                     ),
                 ],
             },

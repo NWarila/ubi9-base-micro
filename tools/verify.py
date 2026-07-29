@@ -1473,7 +1473,9 @@ def check_renovate_config() -> None:
     require(ubi_managers, "Renovate config must target workflow UBI image digests with docker datasource")
 
     binfmt_manager_contract = {
-        "managerFilePatterns": [r"/^\.github/workflows/(?:build|nightly|publish-image|rpm-lock-refresh)\.yaml$/"],
+        "managerFilePatterns": [
+            r"/^\.github/workflows/(?:build|nightly|publish-image|python-ci|rpm-lock-refresh)\.yaml$/"
+        ],
         "matchStrings": [
             (
                 r"(?<linePrefix>^|\n[ \t]+)image: docker\.io/tonistiigi/binfmt@"
@@ -4297,10 +4299,8 @@ def check_python_evidence() -> None:
         "publish-python.yaml" not in read(".github/workflows/python-ci.yaml"),
         "python CI must not reference a publish workflow that does not exist yet",
     )
-    nist = read("images/python/tools/generate-nist-800-190-predicate.py")
-    require("# piece-3:" in nist, "python NIST fork must mark strings that flip at first publication")
-    for forbidden in ("published image package", "images are signed", "publish-image.yaml"):
-        require(forbidden not in nist, f"python NIST fork must not claim micro/publish semantics: {forbidden}")
+    check_python_nist()
+    check_python_secret_classifier()
 
 
 def check_python_evidence_self_test() -> None:
@@ -4387,6 +4387,283 @@ def check_python_evidence_self_test() -> None:
         else:
             raise VerifyError(f"python evidence mutation unexpectedly passed: {label}")
     print(f"python evidence mutation probes: {rejected}/{len(mutations)} rejected")
+
+
+def _resolve_schema_ref(schema: dict[str, Any], root: dict[str, Any]) -> dict[str, Any]:
+    """Resolve a local JSON-Pointer $ref. Remote refs are refused: this validator is offline."""
+    seen = 0
+    while "$ref" in schema:
+        seen += 1
+        if seen > 16:
+            raise VerifyError("schema $ref chain is too deep or cyclic")
+        ref = schema["$ref"]
+        if not isinstance(ref, str) or not ref.startswith("#/"):
+            raise VerifyError(f"schema $ref must be a local JSON pointer, got: {ref!r}")
+        target: Any = root
+        for raw_token in ref[2:].split("/"):
+            token = raw_token.replace("~1", "/").replace("~0", "~")
+            if not isinstance(target, dict) or token not in target:
+                raise VerifyError(f"schema $ref does not resolve: {ref}")
+            target = target[token]
+        if not isinstance(target, dict):
+            raise VerifyError(f"schema $ref does not name an object: {ref}")
+        schema = target
+    return schema
+
+
+def validate_against_schema(instance: Any, schema: dict[str, Any], root: dict[str, Any], path: str) -> list[str]:
+    """Offline subset validator: the keywords these contracts actually use."""
+    schema = _resolve_schema_ref(schema, root)
+    errors: list[str] = []
+    expected = schema.get("type")
+    kinds: dict[str, type | tuple[type, ...]] = {
+        "object": dict,
+        "array": list,
+        "string": str,
+        "integer": int,
+        "number": (int, float),
+        "boolean": bool,
+        "null": type(None),
+    }
+    if "const" in schema and instance != schema["const"]:
+        errors.append(f"{path}: expected const {schema['const']!r}, got {instance!r}")
+    if "enum" in schema and instance not in schema["enum"]:
+        errors.append(f"{path}: {instance!r} is not one of {schema['enum']!r}")
+    if isinstance(expected, str) and expected in kinds and not isinstance(instance, kinds[expected]):
+        errors.append(f"{path}: expected {expected}, got {type(instance).__name__}")
+        return errors
+    if isinstance(instance, str):
+        pattern = schema.get("pattern")
+        if isinstance(pattern, str) and re.search(pattern, instance) is None:
+            errors.append(f"{path}: {instance!r} does not match {pattern}")
+        minimum = schema.get("minLength")
+        if isinstance(minimum, int) and len(instance) < minimum:
+            errors.append(f"{path}: shorter than minLength {minimum}")
+    if isinstance(instance, list):
+        items = schema.get("items")
+        minimum = schema.get("minItems")
+        if isinstance(minimum, int) and len(instance) < minimum:
+            errors.append(f"{path}: fewer than minItems {minimum}")
+        if isinstance(items, dict):
+            for index, entry in enumerate(instance):
+                errors.extend(validate_against_schema(entry, items, root, f"{path}[{index}]"))
+    if isinstance(instance, dict):
+        properties = schema.get("properties") or {}
+        errors.extend(
+            f"{path}: missing required property {name!r}"
+            for name in schema.get("required") or []
+            if name not in instance
+        )
+        if schema.get("additionalProperties") is False:
+            errors.extend(
+                f"{path}: additional property {name!r} is not permitted" for name in instance if name not in properties
+            )
+        for name, value in instance.items():
+            if name in properties:
+                errors.extend(validate_against_schema(value, properties[name], root, f"{path}.{name}"))
+    return errors
+
+
+def check_python_contract_schema() -> None:
+    schema = json.loads(read("images/python/contracts/image-manifest.schema.json"))
+    contract = json.loads(read("images/python/contracts/image-manifest.json"))
+    errors = validate_against_schema(contract, schema, schema, "contract")
+    require(not errors, "images/python contract violates its schema: " + "; ".join(errors))
+
+
+def check_python_contract_schema_self_test() -> None:
+    schema = json.loads(read("images/python/contracts/image-manifest.schema.json"))
+    contract = json.loads(read("images/python/contracts/image-manifest.json"))
+    require(
+        not validate_against_schema(contract, schema, schema, "contract"),
+        "python contract schema self-test baseline failed",
+    )
+
+    def mutate(apply: Any) -> dict[str, Any]:
+        clone: dict[str, Any] = json.loads(json.dumps(contract))
+        apply(clone)
+        return clone
+
+    def drop_member(clone: dict[str, Any]) -> None:
+        del clone["provenance"]["slsa"]
+
+    def add_nested(clone: dict[str, Any]) -> None:
+        clone["provenance"]["cosign"]["unexpected"] = "x"
+
+    def wrong_identity(clone: dict[str, Any]) -> None:
+        clone["provenance"]["cosign"]["certificate_identity"] = "https://example.invalid/whatever@ref"
+
+    def wrong_type(clone: dict[str, Any]) -> None:
+        clone["provenance"]["attestation_predicate_types"]["spdx"] = 17
+
+    rejected = 0
+    for label, apply in [
+        ("missing provenance member", drop_member),
+        ("nested additional property", add_nested),
+        ("wrong identity value", wrong_identity),
+        ("wrong predicate type", wrong_type),
+    ]:
+        if validate_against_schema(mutate(apply), schema, schema, "contract"):
+            rejected += 1
+        else:
+            raise VerifyError(f"python contract schema mutation unexpectedly passed: {label}")
+
+    broken = json.loads(json.dumps(schema))
+    broken["properties"]["provenance"]["$ref"] = "#/$defs/missing"
+    try:
+        validate_against_schema(contract, broken, broken, "contract")
+    except VerifyError:
+        rejected += 1
+    else:
+        raise VerifyError("python contract schema mutation unexpectedly passed: broken $ref")
+    print(f"python contract schema mutation probes: {rejected}/5 rejected")
+
+
+PYTHON_NIST_FORBIDDEN_CLAIMS = (
+    "published image",
+    "images are signed",
+    "publish-image.yaml",
+    "publish paths",
+    "publish-time",
+    "post-publish",
+    "Verify Cosign signature",
+    "Verify Rekor roll-up",
+    "slsa-provenance",
+    "containers/Dockerfile",
+    "tests/hardening.sh",
+    "tests/fips.sh",
+    "docs/fips.md",
+)
+PYTHON_NIST_REQUIRED_POINTERS = (
+    "images/python/Dockerfile#runtime",
+    "images/python/Dockerfile#python-rootfs",
+    "images/python/tools/assert-sbom-rpms.py",
+    "images/python/tools/assert-no-rootfs-secrets.py",
+    "images/python/tools/run-python-gates.sh",
+    "docs/compliance/fips.md",
+    ".github/workflows/python-ci.yaml#Run fixable vulnerability gates",
+    ".github/workflows/python-ci.yaml#Run OpenVEX default-deny gate",
+    ".github/workflows/python-ci.yaml#Generate and gate rpmdb SBOMs",
+    ".github/workflows/python-ci.yaml#Run rootfs secret gate",
+)
+PYTHON_NIST_FLIP_MARKER = "# piece-3: reword to published-digest"
+
+
+def python_nist_errors(nist: str, workflow: str) -> list[str]:
+    """The predicate may claim only what this repository state proves."""
+    errors: list[str] = []
+    errors.extend(
+        f"python NIST fork asserts something this piece does not prove: {claim}"
+        for claim in PYTHON_NIST_FORBIDDEN_CLAIMS
+        if claim in nist
+    )
+    errors.extend(
+        f"python NIST fork missing evidence pointer: {pointer}"
+        for pointer in PYTHON_NIST_REQUIRED_POINTERS
+        if pointer not in nist
+    )
+    # every workflow anchor must name a step or job that exists
+    errors.extend(
+        f"python NIST fork cites a workflow step that does not exist: {anchor}"
+        for anchor in re.findall(r"\.github/workflows/python-ci\.yaml#([^\"]+)", nist)
+        if f"name: {anchor}" not in workflow
+    )
+    # every file pointer must exist on disk
+    errors.extend(
+        f"python NIST fork cites a missing file: {relative}"
+        for relative in re.findall(r'evidence\(\s*"(?:script|test|doc|config|workflow)",\s*"([^"#]+)', nist)
+        if not (ROOT / relative).exists()
+    )
+    marker_count = nist.count(PYTHON_NIST_FLIP_MARKER)
+    if marker_count < 5:
+        errors.append(f"python NIST fork must mark every publication-dependent string; found {marker_count}")
+    return errors
+
+
+def check_python_nist() -> None:
+    nist = read("images/python/tools/generate-nist-800-190-predicate.py")
+    workflow = read(".github/workflows/python-ci.yaml")
+    errors = python_nist_errors(nist, workflow)
+    require(not errors, "python NIST predicate contract failed: " + "; ".join(errors))
+
+    rejected = 0
+    for label, mutated in [
+        ("published claim restored", nist.replace("locally built image package", "published image package", 1)),
+        ("signing claim restored", nist + "\n# images are signed with the workflow identity\n"),
+        ("nonexistent step", nist.replace("#Run rootfs secret gate", "#Run imaginary secret gate")),
+        (
+            "missing file pointer",
+            nist.replace("images/python/tools/assert-sbom-rpms.py", "images/python/tools/gone.py"),
+        ),
+        ("markers stripped", nist.replace(PYTHON_NIST_FLIP_MARKER, "")),
+    ]:
+        if python_nist_errors(mutated, workflow):
+            rejected += 1
+        else:
+            raise VerifyError(f"python NIST mutation unexpectedly passed: {label}")
+    print(f"python NIST claim probes: {rejected}/5 rejected")
+
+
+PYTHON_SECRET_REQUIRED = (
+    "MIN_SECRET_CONSTANT_LENGTH",
+    "PROMPT_CALLEE_NAMES",
+    "PROMPT_CALLEE_MODULES",
+    "DOCSTRING_EXEMPTIONS",
+    "def _constant_role",
+    "def classify_python_match",
+    "return False  # unresolved alias: fail closed",
+    "REAL_WORLD_BENIGN_FIXTURES",
+    "REAL_WORLD_FINDING_FIXTURES",
+)
+
+
+def python_secret_classifier_errors(source: str) -> list[str]:
+    """The classifier may only ever narrow a match with a proven-benign shape."""
+    errors: list[str] = []
+    errors.extend(
+        f"python secret classifier missing load-bearing element: {marker}"
+        for marker in PYTHON_SECRET_REQUIRED
+        if marker not in source
+    )
+    if "except (SyntaxError, ValueError, RecursionError)" not in source:
+        errors.append("python secret classifier must fail closed on parse errors")
+    if "tree = None  # fail closed" not in source:
+        errors.append("python secret classifier must keep matches when a file cannot be parsed")
+    # a value-role constant must always remain a finding
+    if 'if role == "value":\n            return False' not in source:
+        errors.append("python secret classifier must reject value-role constants")
+    # the docstring exemption must be content-keyed, never path-only
+    if "hashlib.sha256(docstring.encode" not in source:
+        errors.append("python secret docstring exemption must be keyed by content hash")
+    findings = source.count('("') if "REAL_WORLD_FINDING_FIXTURES" in source else 0
+    if findings < 10:
+        errors.append("python secret classifier self-test must plant a broad rejection set")
+    return errors
+
+
+def check_python_secret_classifier() -> None:
+    source = read("images/python/tools/assert-no-rootfs-secrets.py")
+    errors = python_secret_classifier_errors(source)
+    require(not errors, "python secret classifier contract failed: " + "; ".join(errors))
+
+    rejected = 0
+    for label, mutated in [
+        ("fail-open parse", source.replace("except (SyntaxError, ValueError, RecursionError)", "except OSError")),
+        (
+            "value role accepted",
+            source.replace(
+                'if role == "value":\n            return False', 'if role == "value":\n            return True'
+            ),
+        ),
+        ("alias fail-open", source.replace("return False  # unresolved alias: fail closed", "return True")),
+        ("docstring path-only", source.replace("hashlib.sha256(docstring.encode", "str((docstring or '').encode")),
+        ("prompt allowlist removed", source.replace("PROMPT_CALLEE_NAMES", "REMOVED_NAMES")),
+    ]:
+        if python_secret_classifier_errors(mutated):
+            rejected += 1
+        else:
+            raise VerifyError(f"python secret classifier mutation unexpectedly passed: {label}")
+    print(f"python secret classifier probes: {rejected}/5 rejected")
 
 
 def check_build_script() -> None:
@@ -7008,6 +7285,8 @@ def main() -> int:
         check_publish_scope_gate_self_test,
         check_python_evidence,
         check_python_evidence_self_test,
+        check_python_contract_schema,
+        check_python_contract_schema_self_test,
         check_build_script,
         check_hardening_script,
         check_sbom_assertion_script,

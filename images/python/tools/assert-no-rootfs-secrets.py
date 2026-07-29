@@ -41,6 +41,20 @@ MAX_TEXT_BYTES = 8 * 1024 * 1024
 SAMPLE_SCAN_BYTES = 64 * 1024
 WINDOWS_DRIVE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
 MIN_SECRET_CONSTANT_LENGTH = 12
+CREDENTIAL_NAME_HINTS: Final = frozenset(
+    {
+        "aws_secret_access_key",
+        "secret_access_key",
+        "client_secret",
+        "api_key",
+        "apikey",
+        "access_token",
+        "auth_token",
+        "password",
+        "passwd",
+        "private_key",
+    }
+)
 
 # Closed prompt-source rule: only these callees may carry a long literal that is not credential
 # material, and only in argument 0 or the `prompt=` keyword. Any other callee is a VALUE role.
@@ -157,6 +171,21 @@ def _node_contains(node: ast.AST, line: int, column: int) -> bool:
     return not (line == end_line and column > getattr(node, "end_col_offset", 0))
 
 
+def _resolved_getpass_modules(tree: ast.AST) -> frozenset[str]:
+    """Local names that provably bind the stdlib getpass module via `import getpass[ as x]`.
+
+    A call through any other name — including an import aliased to a prompt-sounding name — is a
+    plain call, so a literal argument to it keeps its VALUE role.
+    """
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "getpass":
+                    names.add(alias.asname or "getpass")
+    return frozenset(names)
+
+
 def _build_parents(tree: ast.AST) -> dict[ast.AST, ast.AST]:
     parents: dict[ast.AST, ast.AST] = {}
     for parent in ast.walk(tree):
@@ -185,7 +214,7 @@ def _callee_labels(call: ast.Call) -> tuple[str, str]:
     return "", ""
 
 
-def _constant_role(constant: ast.AST, parents: dict[ast.AST, ast.AST]) -> str:
+def _constant_role(constant: ast.AST, parents: dict[ast.AST, ast.AST], prompt_modules: frozenset[str]) -> str:
     """Classify a string constant by the role it plays in the enclosing expression."""
     parent = parents.get(constant)
     child: ast.AST = constant
@@ -193,19 +222,20 @@ def _constant_role(constant: ast.AST, parents: dict[ast.AST, ast.AST]) -> str:
     while isinstance(parent, ast.BinOp | ast.JoinedStr | ast.FormattedValue | ast.Tuple):
         child, parent = parent, parents.get(parent)
     if isinstance(parent, ast.Subscript):
-        return "lookup-key"
+        # d["password"] reads a key; "secret"[:] slices a literal secret. Only the index is a key.
+        return "lookup-key" if child is parent.slice else "value"
     if isinstance(parent, ast.keyword):
         keyword_parent = parents.get(parent)
         if parent.arg == "prompt" and isinstance(keyword_parent, ast.Call):
             module, name = _callee_labels(keyword_parent)
-            if name in PROMPT_CALLEE_NAMES and (module in PROMPT_CALLEE_MODULES or module == ""):
+            if name in PROMPT_CALLEE_NAMES and module in prompt_modules:
                 return "prompt"
         return "value"
     if isinstance(parent, ast.Call):
         module, name = _callee_labels(parent)
         position = parent.args.index(child) if child in parent.args else -1
         if position == 0:
-            if name in PROMPT_CALLEE_NAMES and (module in PROMPT_CALLEE_MODULES or module == ""):
+            if name in PROMPT_CALLEE_NAMES and module in prompt_modules:
                 return "prompt"
             if name in KEY_CALLEE_NAMES:
                 return "lookup-key"
@@ -218,27 +248,47 @@ def _expression_is_benign(
     parents: dict[ast.AST, ast.AST],
     module_bindings: dict[str, ast.AST],
     counters: ClassifierCounters,
+    prompt_modules: frozenset[str],
     depth: int = 0,
+    seen: frozenset[str] = frozenset(),
 ) -> bool:
-    """True when no constant in the expression plays a credential-VALUE role."""
-    if isinstance(expression, ast.Name) and depth == 0:
+    """True when no constant reachable from the expression plays a credential-VALUE role.
+
+    Alias chains are followed at every hop, not just the first: a name is resolved to its binding
+    and that binding is classified by the same rules. A name that cannot be resolved, a chain that
+    revisits a name, and a chain deeper than the limit all fail closed.
+    """
+    if depth > 8:
+        return False
+    if isinstance(expression, ast.Name):
+        if expression.id in seen:
+            return False
         bound = module_bindings.get(expression.id)
         if bound is None:
             return False  # unresolved alias: fail closed
-        return _expression_is_benign(bound, parents, module_bindings, counters, depth + 1)
+        benign = _expression_is_benign(
+            bound, parents, module_bindings, counters, prompt_modules, depth + 1, seen | {expression.id}
+        )
+        if benign and depth == 0:
+            counters.dynamic_assignment += 1
+        return benign
     saw_prompt = False
     saw_key = False
     for node in ast.walk(expression):
         if isinstance(node, ast.Name) and node is not expression:
+            if node.id in seen:
+                return False
             bound = module_bindings.get(node.id)
-            if bound is not None and not _expression_is_benign(bound, parents, module_bindings, counters, depth + 1):
+            if bound is not None and not _expression_is_benign(
+                bound, parents, module_bindings, counters, prompt_modules, depth + 1, seen | {node.id}
+            ):
                 return False
         if not isinstance(node, ast.Constant):
             continue
         value = node.value
         if not isinstance(value, str | bytes) or len(value) < MIN_SECRET_CONSTANT_LENGTH:
             continue
-        role = _constant_role(node, parents)
+        role = _constant_role(node, parents, prompt_modules)
         if role == "value":
             return False
         saw_prompt = saw_prompt or role == "prompt"
@@ -289,6 +339,7 @@ def classify_python_match(
     parents: dict[ast.AST, ast.AST],
     module_bindings: dict[str, ast.AST],
     counters: ClassifierCounters,
+    prompt_modules: frozenset[str],
 ) -> bool:
     """True when a credential-named match in Python source is provably not credential material."""
     key = (match.groupdict().get("key") or "").lower()
@@ -319,20 +370,43 @@ def classify_python_match(
     while current is not None:
         parent = parents.get(current)
         if isinstance(parent, ast.Assign) and any(key in _target_names(target) for target in parent.targets):
-            return _expression_is_benign(parent.value, parents, module_bindings, counters)
+            return _expression_is_benign(parent.value, parents, module_bindings, counters, prompt_modules)
         if isinstance(parent, ast.AnnAssign | ast.AugAssign) and key in _target_names(parent.target):
             return parent.value is not None and _expression_is_benign(parent.value, parents, module_bindings, counters)
         if isinstance(parent, ast.keyword) and (parent.arg or "").lower() == key:
-            return _expression_is_benign(parent.value, parents, module_bindings, counters)
+            return _expression_is_benign(parent.value, parents, module_bindings, counters, prompt_modules)
         if isinstance(parent, ast.arguments):
             for arg, default in _parameter_defaults(parent):
                 if arg.arg.lower() == key and default is not None:
-                    return _expression_is_benign(default, parents, module_bindings, counters)
+                    return _expression_is_benign(default, parents, module_bindings, counters, prompt_modules)
         if isinstance(parent, ast.stmt):
             break
         current = parent
 
     if _is_artifact_match(innermost, parents, key):
+        # The regex consumed an `if`-test name and ran past the suite colon. Suppressing the match
+        # must not shield a credential assignment sharing the statement, so re-examine the whole
+        # statement: any credential-named assignment in it must itself classify benign.
+        statement: ast.AST | None = innermost
+        while statement is not None and not isinstance(statement, ast.stmt):
+            statement = parents.get(statement)
+        if statement is not None:
+            for node in ast.walk(statement):
+                targets: list[ast.expr] = []
+                value: ast.expr | None = None
+                if isinstance(node, ast.Assign):
+                    targets, value = list(node.targets), node.value
+                elif isinstance(node, ast.AnnAssign | ast.AugAssign):
+                    targets, value = [node.target], node.value
+                if value is None:
+                    continue
+                if not any(
+                    any(hint in name for name in _target_names(target) for hint in CREDENTIAL_NAME_HINTS)
+                    for target in targets
+                ):
+                    continue
+                if not _expression_is_benign(value, parents, module_bindings, counters, prompt_modules):
+                    return False
         counters.non_assignment_artifact += 1
         return True
     return False
@@ -372,6 +446,7 @@ def append_findings(
     tree: ast.AST | None = None
     parents: dict[ast.AST, ast.AST] = {}
     bindings: dict[str, ast.AST] = {}
+    prompt_modules: frozenset[str] = frozenset()
     parsed = False
 
     for pattern in patterns:
@@ -389,7 +464,10 @@ def append_findings(
                         if tree is not None:
                             parents = _build_parents(tree)
                             bindings = _module_bindings(tree)
-                    if tree is not None and classify_python_match(rel, text, match, tree, parents, bindings, counters):
+                            prompt_modules = _resolved_getpass_modules(tree)
+                    if tree is not None and classify_python_match(
+                        rel, text, match, tree, parents, bindings, counters, prompt_modules
+                    ):
                         continue
             line = text.count("\n", 0, match.start()) + 1
             findings.append({"path": rel, "line": line, "pattern": pattern.name})
@@ -489,6 +567,23 @@ REAL_WORLD_FINDING_FIXTURES: list[tuple[str, str]] = [
     ("unresolved alias", "password = mystery_value\n"),
     ("different artifact shape", "if user: passwd = fetch_from_disk_constant_name\n"),
     ("parse error file", 'password = "correcthorsebatterystaple"\ndef broken(:\n'),
+    # Bypasses proven against an earlier revision of this classifier; each must stay closed.
+    ("sliced literal", 'password = "correcthorsebatterystaple"[:]\n'),
+    ("reversed sliced literal", 'password = "elpatsyrettabesrohtcerroc"[::-1]\n'),
+    ("sliced literal in default", 'def connect(password="correcthorsebatterystaple"[:]):\n    return password\n'),
+    ("sliced literal in environ default", 'import os\npassword = os.environ.get("PW", "correcthorsebatterystaple"[:])\n'),
+    (
+        "multi-hop alias",
+        'first_hop_constant = "correcthorsebatterystaple"\n'
+        "second_hop_alias_x = first_hop_constant\n"
+        "password = second_hop_alias_x\n",
+    ),
+    (
+        "import aliased to a prompt name",
+        "from evil_module import exfiltrate as unix_getpass\n"
+        'password = unix_getpass("correcthorsebatterystaple")\n',
+    ),
+    ("artifact shielding an assignment", 'if passwd: self.password_cache = "correcthorsebatterystaple"\n'),
     ("non-python file keeps text scan", "password=correcthorsebatterystaple\n"),
 ]
 
@@ -535,6 +630,39 @@ def run_self_test() -> None:
         unlisted = scan(docstring_root)
         if unlisted["result"] != "failed":
             raise SystemExit("self-test: an unlisted docstring literal must remain a finding")
+
+        # Positive branch: the committed exemption must actually fire for the exact docstring it
+        # names, and must not fire once that docstring changes.
+        listed_root = root / "docstring-listed"
+        listed_dir = listed_root / "usr/lib64/python3.12/urllib"
+        listed_dir.mkdir(parents=True)
+        exempt_path = "usr/lib64/python3.12/urllib/request.py"
+        digests = DOCSTRING_EXEMPTIONS.get(exempt_path, frozenset())
+        if not digests:
+            raise SystemExit("self-test: no committed docstring exemption to exercise")
+        docstring_body = "Example usage.\n\n    ProxyHandler(passwd='geheim$parole_value')\n"
+        (listed_root / exempt_path).write_text(f'"""{docstring_body}"""\n', encoding="utf-8")
+        recomputed = hashlib.sha256(docstring_body.encode("utf-8")).hexdigest()
+        patched = dict(DOCSTRING_EXEMPTIONS)
+        patched[exempt_path] = frozenset({recomputed})
+        original = dict(DOCSTRING_EXEMPTIONS)
+        DOCSTRING_EXEMPTIONS.clear()
+        DOCSTRING_EXEMPTIONS.update(patched)
+        try:
+            listed = scan(listed_root)
+            if listed["result"] != "passed":
+                raise SystemExit("self-test: a listed docstring literal must be exempt")
+            if listed["pythonClassifier"]["docstringExemption"] != 1:
+                raise SystemExit("self-test: the docstring exemption branch did not fire")
+            (listed_root / exempt_path).write_text(
+                f'"""{docstring_body}Extra sentence changes the hash.\n"""\n', encoding="utf-8"
+            )
+            drifted = scan(listed_root)
+            if drifted["result"] != "failed":
+                raise SystemExit("self-test: a changed docstring must lose its exemption")
+        finally:
+            DOCSTRING_EXEMPTIONS.clear()
+            DOCSTRING_EXEMPTIONS.update(original)
 
         legacy_root = root / "legacy"
         legacy_root.mkdir()

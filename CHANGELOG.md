@@ -21,6 +21,13 @@ and this project adheres to
 
 ### Added
 
+- `images/python/` evidence machinery: a python STIG tailoring and justification
+  ledger, forked SBOM, NIST SP 800-190 and rootfs-secret gates, an OpenVEX
+  disclosure, and the image contract's record of the identity a future publish
+  workflow must use. The evidence chain runs in CI on locally built images for
+  both architectures. The image is still not published, tagged, or attested;
+  signing, attestation and transparency-log evidence arrive with the publish
+  workflow.
 - `images/python/`: the base-python image build — a pinned, signature-verified RPM
   transaction applied to a byte-asserted clone of the published `base-micro`
   parent, producing one truthful combined rpmdb; build-support packages are
