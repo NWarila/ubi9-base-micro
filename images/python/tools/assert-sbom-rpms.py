@@ -42,32 +42,83 @@ def rpm_name_from_purl(purl: str) -> str | None:
     return package or None
 
 
+def add_rpm_identity(names: set[str], display_name: Any, purl_name: str, context: str) -> None:
+    """Collect both RPM identities and reject a display-name alias."""
+    if display_name is not None and (not isinstance(display_name, str) or not display_name):
+        raise SbomError(f"{context}: RPM display name must be a non-empty string")
+    if isinstance(display_name, str):
+        names.add(display_name)
+    names.add(purl_name)
+    if display_name is not None and display_name != purl_name:
+        raise SbomError(f"{context}: RPM display name {display_name!r} disagrees with purl name {purl_name!r}")
+
+
 def names_from_spdx(document: dict[str, Any]) -> set[str]:
     names: set[str] = set()
-    for package in document.get("packages") or []:
+    packages = document.get("packages")
+    if not isinstance(packages, list):
+        raise SbomError("SPDX packages must be a list")
+    for package_index, package in enumerate(packages):
+        if not isinstance(package, dict):
+            raise SbomError(f"SPDX packages[{package_index}] must be an object")
         package_name = package.get("name")
-        for ref in package.get("externalRefs") or []:
+        refs = package.get("externalRefs") or []
+        if not isinstance(refs, list):
+            raise SbomError(f"SPDX packages[{package_index}].externalRefs must be a list")
+        for ref_index, ref in enumerate(refs):
+            if not isinstance(ref, dict):
+                raise SbomError(f"SPDX packages[{package_index}].externalRefs[{ref_index}] must be an object")
             locator = ref.get("referenceLocator") or ""
+            if not isinstance(locator, str):
+                raise SbomError(
+                    f"SPDX packages[{package_index}].externalRefs[{ref_index}].referenceLocator must be a string"
+                )
             rpm_name = rpm_name_from_purl(locator)
             if rpm_name:
-                names.add(package_name or rpm_name)
+                add_rpm_identity(names, package_name, rpm_name, f"SPDX packages[{package_index}]")
     return names
 
 
 def names_from_cyclonedx(document: dict[str, Any]) -> set[str]:
     names: set[str] = set()
-    for component in document.get("components") or []:
-        rpm_name = rpm_name_from_purl(component.get("purl") or "")
+    components = document.get("components")
+    if not isinstance(components, list):
+        raise SbomError("CycloneDX components must be a list")
+    for component_index, component in enumerate(components):
+        if not isinstance(component, dict):
+            raise SbomError(f"CycloneDX components[{component_index}] must be an object")
+        purl = component.get("purl") or ""
+        if not isinstance(purl, str):
+            raise SbomError(f"CycloneDX components[{component_index}].purl must be a string")
+        rpm_name = rpm_name_from_purl(purl)
         if rpm_name:
-            names.add(component.get("name") or rpm_name)
+            add_rpm_identity(names, component.get("name"), rpm_name, f"CycloneDX components[{component_index}]")
     return names
 
 
 def names_from_syft_json(document: dict[str, Any]) -> set[str]:
     names: set[str] = set()
-    for artifact in document.get("artifacts") or []:
-        if artifact.get("type") == "rpm" and artifact.get("name"):
-            names.add(artifact["name"])
+    artifacts = document.get("artifacts")
+    if not isinstance(artifacts, list):
+        raise SbomError("Syft artifacts must be a list")
+    for artifact_index, artifact in enumerate(artifacts):
+        if not isinstance(artifact, dict):
+            raise SbomError(f"Syft artifacts[{artifact_index}] must be an object")
+        if artifact.get("type") != "rpm":
+            continue
+        display_name = artifact.get("name")
+        if not isinstance(display_name, str) or not display_name:
+            raise SbomError(f"Syft artifacts[{artifact_index}]: RPM display name must be a non-empty string")
+        names.add(display_name)
+        purl = artifact.get("purl")
+        if purl is None or purl == "":
+            continue
+        if not isinstance(purl, str):
+            raise SbomError(f"Syft artifacts[{artifact_index}].purl must be a string")
+        rpm_name = rpm_name_from_purl(purl)
+        if rpm_name is None:
+            raise SbomError(f"Syft artifacts[{artifact_index}].purl must identify an RPM package")
+        add_rpm_identity(names, display_name, rpm_name, f"Syft artifacts[{artifact_index}]")
     return names
 
 
@@ -147,7 +198,11 @@ def run_self_test() -> None:
                 "bomFormat": "CycloneDX",
                 "components": [{"name": name, "purl": f"pkg:rpm/redhat/{name}@1.0"} for name in sorted(names)],
             },
-            {"artifacts": [{"name": name, "type": "rpm"} for name in sorted(names)]},
+            {
+                "artifacts": [
+                    {"name": name, "type": "rpm", "purl": f"pkg:rpm/redhat/{name}@1.0"} for name in sorted(names)
+                ]
+            },
         ]
 
     expected_formats = ["spdx-json", "cyclonedx-json", "syft-json"]
@@ -182,7 +237,28 @@ def run_self_test() -> None:
             rejected += 1
         else:
             raise SbomError(f"{expected_format} sqlite-libs negative self-test unexpectedly passed")
-    print(f"sbom rpm assertion self-test: positive formats=3; {rejected}/4 mutations rejected")
+
+    alias_documents = documents(positive_names)
+    alias_documents[0]["packages"].append(
+        {
+            "name": "innocent-alias",
+            "externalRefs": [{"referenceLocator": "pkg:rpm/redhat/sqlite-libs@3.34.1"}],
+        }
+    )
+    alias_documents[1]["components"].append({"name": "innocent-alias", "purl": "pkg:rpm/redhat/sqlite-libs@3.34.1"})
+    alias_documents[2]["artifacts"].append(
+        {"name": "innocent-alias", "type": "rpm", "purl": "pkg:rpm/redhat/sqlite-libs@3.34.1"}
+    )
+    for expected_format, document in zip(expected_formats, alias_documents, strict=True):
+        try:
+            format_name, names = rpm_names(document)
+            assert format_name == expected_format
+            assert_names(f"alias-{expected_format}", names, DEFAULT_MIN_RPM_COUNT)
+        except SbomError:
+            rejected += 1
+        else:
+            raise SbomError(f"{expected_format} alias-purl self-test unexpectedly passed")
+    print(f"sbom rpm assertion self-test: positive formats=3; {rejected}/7 mutations rejected")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:

@@ -23,10 +23,11 @@ import stat
 import subprocess
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
+from unittest.mock import patch
 
 from retained_payload_trim import (  # type: ignore[import-not-found]
     TrimError,
@@ -834,7 +835,82 @@ def self_test() -> None:
         swept = walk_root(root)
         assert all(entry.mtime == 1704067200 for entry in swept.values())
 
-        print(f"build-python-rootfs self-test: walker+invariance ok; {rejected}/5 mutation probes rejected")
+        def write_probe(probe_root: Path, relative_path: str, content: bytes = b"probe") -> None:
+            target = probe_root / relative_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+
+        def add_sqlite_library(probe_root: Path) -> None:
+            write_probe(probe_root, "usr/lib64/libsqlite3.so.0")
+
+        def add_sqlite_extension(probe_root: Path) -> None:
+            write_probe(
+                probe_root,
+                "usr/lib64/python3.12/lib-dynload/_sqlite3.cpython-312-x86_64-linux-gnu.so",
+            )
+
+        def add_sqlite_package_dir(probe_root: Path) -> None:
+            (probe_root / "usr/lib64/python3.12/sqlite3").mkdir(parents=True)
+
+        def add_sqlite_build_id_link(probe_root: Path) -> None:
+            link = probe_root / "usr/lib/.build-id/aa/sqlite-probe"
+            link.parent.mkdir(parents=True)
+            link.symlink_to("../../../lib64/libsqlite3.so.0")
+
+        def no_files(_probe_root: Path) -> None:
+            return
+
+        clean_sqlite_root = Path(tmp) / "sqlite-clean"
+        clean_sqlite_root.mkdir()
+        absent_rpm = subprocess.CompletedProcess(["rpm"], 1, "", "")
+        with patch.object(sys.modules[__name__], "_rpm", return_value=absent_rpm):
+            assert_sqlite_absent(clean_sqlite_root)
+
+        sqlite_rejected = 0
+        sqlite_mutations: list[tuple[str, Callable[[Path], None], int]] = [
+            ("SQLite library", add_sqlite_library, 1),
+            ("CPython _sqlite3 extension", add_sqlite_extension, 1),
+            ("CPython sqlite3 package directory", add_sqlite_package_dir, 1),
+            ("SQLite build-id link", add_sqlite_build_id_link, 1),
+            ("sqlite-libs rpmdb entry", no_files, 0),
+        ]
+        for label, populate, rpm_returncode in sqlite_mutations:
+            probe_root = Path(tmp) / f"sqlite-{sqlite_rejected}"
+            probe_root.mkdir()
+            populate(probe_root)
+            rpm_result = subprocess.CompletedProcess(["rpm"], rpm_returncode, "", "")
+            with patch.object(sys.modules[__name__], "_rpm", return_value=rpm_result):
+                try:
+                    assert_sqlite_absent(probe_root)
+                except BuildError:
+                    sqlite_rejected += 1
+                else:
+                    raise SystemExit(f"self-test: SQLite absence mutation unexpectedly passed: {label}")
+
+        elf_root = Path(tmp) / "sqlite-elf-consumer"
+        write_probe(elf_root, "usr/bin/consumer", b"\x7fELFprobe")
+        clean_ldd = subprocess.CompletedProcess(["ldd"], 0, "libc.so.6 => /usr/lib64/libc.so.6\n", "")
+        with patch.object(sys.modules[__name__], "_run", return_value=clean_ldd):
+            assert assert_no_sqlite_elf_dependencies(elf_root) == 1
+        sqlite_ldd = subprocess.CompletedProcess(
+            ["ldd"],
+            0,
+            "libsqlite3.so.0 => /usr/lib64/libsqlite3.so.0\n",
+            "",
+        )
+        with patch.object(sys.modules[__name__], "_run", return_value=sqlite_ldd):
+            try:
+                assert_no_sqlite_elf_dependencies(elf_root)
+            except BuildError:
+                sqlite_rejected += 1
+            else:
+                raise SystemExit("self-test: SQLite DT_NEEDED consumer mutation unexpectedly passed")
+
+        print(
+            "build-python-rootfs self-test: walker+invariance ok; "
+            f"{rejected + sqlite_rejected}/11 mutation probes rejected "
+            "(5 general, 6 SQLite absence)"
+        )
 
 
 def main() -> int:

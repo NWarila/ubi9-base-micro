@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 from collections.abc import Iterator, Sequence
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 SQLITE_PACKAGE: Final = "sqlite-libs"
+RUNTIME_PACKAGE_MARKER: Final = "python3.12-libs"
 SQLITE_CVES: Final = frozenset(
     {
         "CVE-2026-51296",
@@ -59,18 +61,101 @@ def _is_sqlite_package_reference(value: str) -> bool:
 def assert_raw_report(document: dict[str, Any], scanner: str) -> None:
     """Assert a recognized raw report has no SQLite package reference or target CVE."""
     if scanner == "trivy":
-        if not isinstance(document.get("Results"), list):
-            raise RawScannerError("Trivy report must contain a Results list")
+        trivy = document.get("Trivy")
+        if not isinstance(trivy, dict) or not isinstance(trivy.get("Version"), str) or not trivy["Version"].strip():
+            raise RawScannerError("Trivy report must contain a Trivy version identity")
+        if document.get("SchemaVersion") != 2:
+            raise RawScannerError("Trivy report must use SchemaVersion 2")
+        results = document.get("Results")
+        if not isinstance(results, list) or not results:
+            raise RawScannerError("Trivy report must contain a non-empty Results list")
+        runtime_marker_seen = False
+        for result_index, result in enumerate(results):
+            if not isinstance(result, dict):
+                raise RawScannerError(f"Trivy Results[{result_index}] must be an object")
+            for field in ("Target", "Class", "Type"):
+                value = result.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    raise RawScannerError(f"Trivy Results[{result_index}].{field} must be a non-empty string")
+            packages = result.get("Packages")
+            if packages is not None:
+                if not isinstance(packages, list):
+                    raise RawScannerError(f"Trivy Results[{result_index}].Packages must be a list")
+                for package_index, package in enumerate(packages):
+                    if not isinstance(package, dict):
+                        raise RawScannerError(
+                            f"Trivy Results[{result_index}].Packages[{package_index}] must be an object"
+                        )
+                    name = package.get("Name")
+                    if not isinstance(name, str) or not name.strip():
+                        raise RawScannerError(
+                            f"Trivy Results[{result_index}].Packages[{package_index}].Name must be a non-empty string"
+                        )
+                    runtime_marker_seen |= name == RUNTIME_PACKAGE_MARKER
+            vulnerabilities = result.get("Vulnerabilities")
+            if vulnerabilities is not None:
+                if not isinstance(vulnerabilities, list):
+                    raise RawScannerError(f"Trivy Results[{result_index}].Vulnerabilities must be a list or null")
+                for finding_index, finding in enumerate(vulnerabilities):
+                    if not isinstance(finding, dict):
+                        raise RawScannerError(
+                            f"Trivy Results[{result_index}].Vulnerabilities[{finding_index}] must be an object"
+                        )
+                    for field in ("VulnerabilityID", "PkgName"):
+                        value = finding.get(field)
+                        if not isinstance(value, str) or not value.strip():
+                            raise RawScannerError(
+                                f"Trivy Results[{result_index}].Vulnerabilities[{finding_index}].{field} "
+                                "must be a non-empty string"
+                            )
+        if not runtime_marker_seen:
+            raise RawScannerError(f"Trivy report did not enumerate runtime package {RUNTIME_PACKAGE_MARKER}")
     elif scanner == "grype":
-        if not isinstance(document.get("matches"), list):
-            raise RawScannerError("Grype report must contain a matches list")
         descriptor = document.get("descriptor")
-        if not isinstance(descriptor, dict) or descriptor.get("name") != "grype":
-            raise RawScannerError("Grype report must contain a grype descriptor")
-        if not isinstance(document.get("source"), dict):
+        if (
+            not isinstance(descriptor, dict)
+            or descriptor.get("name") != "grype"
+            or not isinstance(descriptor.get("version"), str)
+            or not descriptor["version"].strip()
+        ):
+            raise RawScannerError("Grype report must contain a versioned grype descriptor")
+        source = document.get("source")
+        if not isinstance(source, dict):
             raise RawScannerError("Grype report must contain a source object")
-        if not isinstance(document.get("distro"), dict):
+        for field in ("type", "target"):
+            value = source.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise RawScannerError(f"Grype source.{field} must be a non-empty string")
+        distro = document.get("distro")
+        if not isinstance(distro, dict):
             raise RawScannerError("Grype report must contain a distro object")
+        for field in ("name", "version"):
+            value = distro.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise RawScannerError(f"Grype distro.{field} must be a non-empty string")
+        matches = document.get("matches")
+        if not isinstance(matches, list) or not matches:
+            raise RawScannerError("Grype report must contain a non-empty matches list")
+        runtime_marker_seen = False
+        for match_index, match in enumerate(matches):
+            if not isinstance(match, dict):
+                raise RawScannerError(f"Grype matches[{match_index}] must be an object")
+            artifact = match.get("artifact")
+            if not isinstance(artifact, dict):
+                raise RawScannerError(f"Grype matches[{match_index}].artifact must be an object")
+            for field in ("name", "type"):
+                value = artifact.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    raise RawScannerError(f"Grype matches[{match_index}].artifact.{field} must be a non-empty string")
+            runtime_marker_seen |= artifact["name"] == RUNTIME_PACKAGE_MARKER
+            vulnerability = match.get("vulnerability")
+            if not isinstance(vulnerability, dict):
+                raise RawScannerError(f"Grype matches[{match_index}].vulnerability must be an object")
+            vulnerability_id = vulnerability.get("id")
+            if not isinstance(vulnerability_id, str) or not vulnerability_id.strip():
+                raise RawScannerError(f"Grype matches[{match_index}].vulnerability.id must be a non-empty string")
+        if not runtime_marker_seen:
+            raise RawScannerError(f"Grype report did not enumerate runtime package {RUNTIME_PACKAGE_MARKER}")
     else:
         raise RawScannerError(f"unsupported scanner: {scanner}")
 
@@ -87,46 +172,85 @@ def assert_raw_report(document: dict[str, Any], scanner: str) -> None:
 
 
 def self_test() -> None:
-    clean_trivy = {
+    clean_trivy: dict[str, Any] = {
+        "SchemaVersion": 2,
+        "Trivy": {"Version": "0.71.0"},
         "Results": [
             {
+                "Target": "rootfs (redhat 9.8)",
+                "Class": "os-pkgs",
+                "Type": "redhat",
                 "Packages": [{"Name": "python3.12-libs"}],
                 "Vulnerabilities": [{"VulnerabilityID": "CVE-2025-0001", "PkgName": "python3.12-libs"}],
             }
-        ]
+        ],
     }
-    clean_grype = {
-        "descriptor": {"name": "grype"},
+    clean_grype: dict[str, Any] = {
+        "descriptor": {"name": "grype", "version": "0.115.0"},
         "distro": {"name": "redhat", "version": "9.8"},
-        "matches": [{"vulnerability": {"id": "CVE-2025-0001"}, "artifact": {"name": "python3.12-libs"}}],
-        "source": {"type": "directory"},
+        "matches": [
+            {
+                "vulnerability": {"id": "CVE-2025-0001"},
+                "artifact": {"name": "python3.12-libs", "type": "rpm"},
+            }
+        ],
+        "source": {"type": "directory", "target": "rootfs"},
     }
     assert_raw_report(clean_trivy, "trivy")
     assert_raw_report(clean_grype, "grype")
 
+    trivy_package = copy.deepcopy(clean_trivy)
+    trivy_package["Results"][0]["Packages"][0]["Name"] = SQLITE_PACKAGE
+    trivy_cve = copy.deepcopy(clean_trivy)
+    trivy_cve["Results"][0]["Vulnerabilities"][0]["VulnerabilityID"] = "CVE-2026-51296"
+    trivy_no_marker = copy.deepcopy(clean_trivy)
+    trivy_no_marker["Results"][0]["Packages"][0]["Name"] = "other-libs"
+    trivy_empty = copy.deepcopy(clean_trivy)
+    trivy_empty["Results"] = []
+    trivy_hollow = copy.deepcopy(clean_trivy)
+    trivy_hollow["Results"] = [{}]
+    trivy_malformed_packages = copy.deepcopy(clean_trivy)
+    trivy_malformed_packages["Results"][0]["Packages"] = {}
+    trivy_malformed_package = copy.deepcopy(clean_trivy)
+    trivy_malformed_package["Results"][0]["Packages"] = [{"Name": {"nested": RUNTIME_PACKAGE_MARKER}}]
+    trivy_malformed_finding = copy.deepcopy(clean_trivy)
+    trivy_malformed_finding["Results"][0]["Vulnerabilities"] = [{"VulnerabilityID": ["CVE-2025-0001"]}]
+
+    grype_package = copy.deepcopy(clean_grype)
+    grype_package["matches"][0]["artifact"]["name"] = SQLITE_PACKAGE
+    grype_cve = copy.deepcopy(clean_grype)
+    grype_cve["matches"][0]["vulnerability"]["id"] = "CVE-2026-51304"
+    grype_no_marker = copy.deepcopy(clean_grype)
+    grype_no_marker["matches"][0]["artifact"]["name"] = "other-libs"
+    grype_malformed_match = copy.deepcopy(clean_grype)
+    grype_malformed_match["matches"] = [{"artifact": [], "vulnerability": {"id": "CVE-2025-0001"}}]
+
     mutations: list[tuple[str, dict[str, Any], str]] = [
-        ("Trivy package", {"Results": [{"Packages": [{"Name": SQLITE_PACKAGE}]}]}, "trivy"),
+        ("Trivy package", trivy_package, "trivy"),
+        ("Trivy CVE", trivy_cve, "trivy"),
+        ("Trivy empty Results", {"Results": []}, "trivy"),
+        ("Trivy hollow result", {"Results": [{}]}, "trivy"),
+        ("Trivy identified empty Results", trivy_empty, "trivy"),
+        ("Trivy identified hollow result", trivy_hollow, "trivy"),
+        ("Trivy missing runtime marker", trivy_no_marker, "trivy"),
+        ("Trivy malformed Packages object", trivy_malformed_packages, "trivy"),
+        ("Trivy malformed package name", trivy_malformed_package, "trivy"),
+        ("Trivy malformed finding", trivy_malformed_finding, "trivy"),
+        ("Grype package", grype_package, "grype"),
+        ("Grype CVE", grype_cve, "grype"),
         (
-            "Trivy CVE",
-            {"Results": [{"Vulnerabilities": [{"VulnerabilityID": "CVE-2026-51296", "PkgName": "other"}]}]},
-            "trivy",
-        ),
-        (
-            "Grype package",
+            "Grype hollow report",
             {
-                **clean_grype,
-                "matches": [{"vulnerability": {"id": "CVE-2025-0001"}, "artifact": {"name": SQLITE_PACKAGE}}],
+                "descriptor": {"name": "grype"},
+                "distro": {},
+                "matches": [],
+                "source": {},
             },
             "grype",
         ),
-        (
-            "Grype CVE",
-            {
-                **clean_grype,
-                "matches": [{"vulnerability": {"id": "CVE-2026-51304"}, "artifact": {"name": "other"}}],
-            },
-            "grype",
-        ),
+        ("Grype empty matches", {**clean_grype, "matches": []}, "grype"),
+        ("Grype missing runtime marker", grype_no_marker, "grype"),
+        ("Grype malformed nested artifact", grype_malformed_match, "grype"),
         ("Grype missing matches", {key: value for key, value in clean_grype.items() if key != "matches"}, "grype"),
         ("Grype wrong descriptor", {**clean_grype, "descriptor": {"name": "other"}}, "grype"),
         ("Grype missing source", {key: value for key, value in clean_grype.items() if key != "source"}, "grype"),
@@ -140,7 +264,9 @@ def self_test() -> None:
             rejected += 1
         else:
             raise RawScannerError(f"self-test mutation unexpectedly passed: {label}")
-    print(f"raw scanner SQLite absence self-test: clean reports accepted; {rejected}/8 mutations rejected")
+    print(
+        f"raw scanner SQLite absence self-test: clean reports accepted; {rejected}/{len(mutations)} mutations rejected"
+    )
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
