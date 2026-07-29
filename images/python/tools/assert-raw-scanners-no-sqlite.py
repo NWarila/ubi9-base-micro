@@ -58,6 +58,31 @@ def _is_sqlite_package_reference(value: str) -> bool:
     return lowered == SQLITE_PACKAGE or (lowered.startswith("pkg:rpm/") and f"/{SQLITE_PACKAGE}@" in lowered)
 
 
+def _grype_source_identity(source: dict[str, Any]) -> str:
+    source_type = source.get("type")
+    if not isinstance(source_type, str) or not source_type.strip():
+        raise RawScannerError("Grype source.type must be a non-empty string")
+
+    target = source.get("target")
+    if isinstance(target, str):
+        identity = target.strip()
+        if not identity:
+            raise RawScannerError("Grype directory source.target must be a non-empty path string")
+        return identity
+    if isinstance(target, dict):
+        if source_type != "image":
+            raise RawScannerError("Grype object source.target requires source.type image")
+        identities = [
+            value.strip()
+            for field in ("userInput", "imageID")
+            if isinstance((value := target.get(field)), str) and value.strip()
+        ]
+        if not identities:
+            raise RawScannerError("Grype image source.target must contain a non-empty userInput or imageID identity")
+        return identities[0]
+    raise RawScannerError("Grype source.target must be a directory path string or image identity object")
+
+
 def assert_raw_report(document: dict[str, Any], scanner: str) -> None:
     """Assert a recognized raw report has no SQLite package reference or target CVE."""
     if scanner == "trivy":
@@ -66,6 +91,14 @@ def assert_raw_report(document: dict[str, Any], scanner: str) -> None:
             raise RawScannerError("Trivy report must contain a Trivy version identity")
         if document.get("SchemaVersion") != 2:
             raise RawScannerError("Trivy report must use SchemaVersion 2")
+        artifact_name = document.get("ArtifactName")
+        if not isinstance(artifact_name, str) or not artifact_name.strip():
+            raise RawScannerError("Trivy ArtifactName must be a non-empty string")
+        artifact_type = document.get("ArtifactType")
+        if artifact_type not in {"container_image", "filesystem"}:
+            raise RawScannerError("Trivy ArtifactType must be container_image or filesystem")
+        if not isinstance(document.get("Metadata"), dict):
+            raise RawScannerError("Trivy Metadata must be an object")
         results = document.get("Results")
         if not isinstance(results, list) or not results:
             raise RawScannerError("Trivy report must contain a non-empty Results list")
@@ -122,10 +155,7 @@ def assert_raw_report(document: dict[str, Any], scanner: str) -> None:
         source = document.get("source")
         if not isinstance(source, dict):
             raise RawScannerError("Grype report must contain a source object")
-        for field in ("type", "target"):
-            value = source.get(field)
-            if not isinstance(value, str) or not value.strip():
-                raise RawScannerError(f"Grype source.{field} must be a non-empty string")
+        _grype_source_identity(source)
         distro = document.get("distro")
         if not isinstance(distro, dict):
             raise RawScannerError("Grype report must contain a distro object")
@@ -175,6 +205,9 @@ def self_test() -> None:
     clean_trivy: dict[str, Any] = {
         "SchemaVersion": 2,
         "Trivy": {"Version": "0.71.0"},
+        "ArtifactName": "/rootfs",
+        "ArtifactType": "filesystem",
+        "Metadata": {"OS": {"Family": "redhat", "Name": "9.8"}},
         "Results": [
             {
                 "Target": "rootfs (redhat 9.8)",
@@ -185,7 +218,13 @@ def self_test() -> None:
             }
         ],
     }
-    clean_grype: dict[str, Any] = {
+    clean_trivy_image = copy.deepcopy(clean_trivy)
+    clean_trivy_image["ArtifactName"] = "local/ubi9-base-python:self-test"
+    clean_trivy_image["ArtifactType"] = "container_image"
+    clean_trivy_image["Metadata"] = {"ImageID": "sha256:self-test"}
+    clean_trivy_image["Results"][0]["Target"] = "local/ubi9-base-python:self-test (redhat 9.8)"
+
+    clean_grype_directory: dict[str, Any] = {
         "descriptor": {"name": "grype", "version": "0.115.0"},
         "distro": {"name": "redhat", "version": "9.8"},
         "matches": [
@@ -194,10 +233,24 @@ def self_test() -> None:
                 "artifact": {"name": "python3.12-libs", "type": "rpm"},
             }
         ],
-        "source": {"type": "directory", "target": "rootfs"},
+        "source": {"type": "directory", "target": "/rootfs"},
     }
+    clean_grype_image = copy.deepcopy(clean_grype_directory)
+    clean_grype_image["source"] = {
+        "type": "image",
+        "target": {
+            "userInput": "local/ubi9-base-python:self-test",
+            "imageID": "sha256:self-test",
+        },
+    }
+    clean_grype_image_id_only = copy.deepcopy(clean_grype_image)
+    clean_grype_image_id_only["source"]["target"]["userInput"] = ""
+
     assert_raw_report(clean_trivy, "trivy")
-    assert_raw_report(clean_grype, "grype")
+    assert_raw_report(clean_trivy_image, "trivy")
+    assert_raw_report(clean_grype_directory, "grype")
+    assert_raw_report(clean_grype_image, "grype")
+    assert_raw_report(clean_grype_image_id_only, "grype")
 
     trivy_package = copy.deepcopy(clean_trivy)
     trivy_package["Results"][0]["Packages"][0]["Name"] = SQLITE_PACKAGE
@@ -215,15 +268,27 @@ def self_test() -> None:
     trivy_malformed_package["Results"][0]["Packages"] = [{"Name": {"nested": RUNTIME_PACKAGE_MARKER}}]
     trivy_malformed_finding = copy.deepcopy(clean_trivy)
     trivy_malformed_finding["Results"][0]["Vulnerabilities"] = [{"VulnerabilityID": ["CVE-2025-0001"]}]
+    trivy_missing_artifact_identity = copy.deepcopy(clean_trivy)
+    trivy_missing_artifact_identity["ArtifactName"] = ""
+    trivy_unknown_artifact_type = copy.deepcopy(clean_trivy)
+    trivy_unknown_artifact_type["ArtifactType"] = "unknown"
+    trivy_malformed_metadata = copy.deepcopy(clean_trivy)
+    trivy_malformed_metadata["Metadata"] = []
 
-    grype_package = copy.deepcopy(clean_grype)
+    grype_package = copy.deepcopy(clean_grype_directory)
     grype_package["matches"][0]["artifact"]["name"] = SQLITE_PACKAGE
-    grype_cve = copy.deepcopy(clean_grype)
+    grype_cve = copy.deepcopy(clean_grype_directory)
     grype_cve["matches"][0]["vulnerability"]["id"] = "CVE-2026-51304"
-    grype_no_marker = copy.deepcopy(clean_grype)
+    grype_no_marker = copy.deepcopy(clean_grype_directory)
     grype_no_marker["matches"][0]["artifact"]["name"] = "other-libs"
-    grype_malformed_match = copy.deepcopy(clean_grype)
+    grype_malformed_match = copy.deepcopy(clean_grype_directory)
     grype_malformed_match["matches"] = [{"artifact": [], "vulnerability": {"id": "CVE-2025-0001"}}]
+    grype_empty_image_identity = copy.deepcopy(clean_grype_image)
+    grype_empty_image_identity["source"]["target"] = {"userInput": " ", "imageID": ""}
+    grype_malformed_target = copy.deepcopy(clean_grype_image)
+    grype_malformed_target["source"]["target"] = []
+    grype_object_directory_target = copy.deepcopy(clean_grype_directory)
+    grype_object_directory_target["source"]["target"] = {"userInput": "/rootfs"}
 
     mutations: list[tuple[str, dict[str, Any], str]] = [
         ("Trivy package", trivy_package, "trivy"),
@@ -236,6 +301,9 @@ def self_test() -> None:
         ("Trivy malformed Packages object", trivy_malformed_packages, "trivy"),
         ("Trivy malformed package name", trivy_malformed_package, "trivy"),
         ("Trivy malformed finding", trivy_malformed_finding, "trivy"),
+        ("Trivy missing artifact identity", trivy_missing_artifact_identity, "trivy"),
+        ("Trivy unknown artifact type", trivy_unknown_artifact_type, "trivy"),
+        ("Trivy malformed metadata", trivy_malformed_metadata, "trivy"),
         ("Grype package", grype_package, "grype"),
         ("Grype CVE", grype_cve, "grype"),
         (
@@ -248,13 +316,28 @@ def self_test() -> None:
             },
             "grype",
         ),
-        ("Grype empty matches", {**clean_grype, "matches": []}, "grype"),
+        ("Grype empty matches", {**clean_grype_directory, "matches": []}, "grype"),
         ("Grype missing runtime marker", grype_no_marker, "grype"),
         ("Grype malformed nested artifact", grype_malformed_match, "grype"),
-        ("Grype missing matches", {key: value for key, value in clean_grype.items() if key != "matches"}, "grype"),
-        ("Grype wrong descriptor", {**clean_grype, "descriptor": {"name": "other"}}, "grype"),
-        ("Grype missing source", {key: value for key, value in clean_grype.items() if key != "source"}, "grype"),
-        ("Grype missing distro", {key: value for key, value in clean_grype.items() if key != "distro"}, "grype"),
+        (
+            "Grype missing matches",
+            {key: value for key, value in clean_grype_directory.items() if key != "matches"},
+            "grype",
+        ),
+        ("Grype wrong descriptor", {**clean_grype_directory, "descriptor": {"name": "other"}}, "grype"),
+        (
+            "Grype missing source",
+            {key: value for key, value in clean_grype_directory.items() if key != "source"},
+            "grype",
+        ),
+        (
+            "Grype missing distro",
+            {key: value for key, value in clean_grype_directory.items() if key != "distro"},
+            "grype",
+        ),
+        ("Grype empty image identity", grype_empty_image_identity, "grype"),
+        ("Grype malformed target", grype_malformed_target, "grype"),
+        ("Grype object directory target", grype_object_directory_target, "grype"),
     ]
     rejected = 0
     for label, document, scanner in mutations:
