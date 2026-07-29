@@ -112,5 +112,22 @@
       "amd64": "73c4fc28ea45207a900a526b6efd6e90044602984c40b0f2347c20ee759747d2",
       "arm64": "c304f699dfc33208825f7c8f0499cbc946fd36abda4357d9f8e1122f1278dd52"
     }
+  },
+  "provenance": {
+    "_comment": "Identity for the publish workflow introduced by a later change. No attestations exist for this image yet; these values are the derivation source that workflow and its verification locks must use.",
+    "cosign": {
+      "certificate_identity": "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-python.yaml@<ref>",
+      "certificate_oidc_issuer": "https://token.actions.githubusercontent.com"
+    },
+    "slsa": {
+      "builder_id": "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0"
+    },
+    "attestation_predicate_types": {
+      "spdx": "spdxjson",
+      "cyclonedx": "cyclonedx",
+      "openvex": "openvex",
+      "nist_800_190": "https://nwarila.dev/attestations/nist-sp-800-190-image/v1",
+      "stig_arf": "https://nwarila.dev/attestations/stig-arf/v1"
+    }
   }
 }

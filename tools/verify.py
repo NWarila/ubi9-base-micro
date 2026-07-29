@@ -1171,12 +1171,23 @@ def check_required_files() -> None:
         "images/python/rpm-lock/scriptlets.arm64.txt",
         "images/python/tools/assert-builder-toolchain-floor.sh",
         "images/python/tools/assert-parent-subset.py",
+        "images/python/tools/assert-no-rootfs-secrets.py",
+        "images/python/tools/assert-sbom-rpms.py",
+        "images/python/tools/generate-nist-800-190-predicate.py",
         "images/python/tools/assert-reproducible.py",
         "images/python/tools/build-python-rootfs.py",
         "images/python/tools/fetch-builder-rpms.sh",
         "images/python/tools/fetch-python-rpms.sh",
         "images/python/tools/generate-python-lock.sh",
         "images/python/tools/rpmlock.py",
+        "images/python/tools/assert-no-rootfs-secrets.py",
+        "images/python/tools/assert-sbom-rpms.py",
+        "images/python/tools/generate-nist-800-190-predicate.py",
+        "images/python/tools/run-stig-arf.sh",
+        "images/python/stig/rhel9-base-python-tailoring.xml",
+        "images/python/stig/tailoring-justifications.json",
+        "images/python/vex/README.md",
+        "images/python/vex/cve-2026-31790.openvex.json",
         "images/python/tools/run-python-gates.sh",
         ".github/workflows/python-ci.yaml",
         "docs/explanation/fips-mechanism.md",
@@ -4161,6 +4172,223 @@ def check_publish_scope_gate_self_test() -> None:
     print(f"publish scope gate mutation probes: {rejected}/{rejected} rejected")
 
 
+PYTHON_STIG_PROFILE = "xccdf_org.nwarila.content_profile_ubi9_base_python_stig"
+PYTHON_STIG_TAILORING = "images/python/stig/rhel9-base-python-tailoring.xml"
+PYTHON_STIG_JUSTIFICATIONS = "images/python/stig/tailoring-justifications.json"
+PYTHON_EVIDENCE_SHARED_DEPENDENCIES = (
+    "^tools/build-stig-datastream\\.sh$",
+    "^tools/install-(openscap|syft|trivy|grype|crane)\\.sh$",
+    "^tools/assert-(stig-tailoring|stig-arf|rootfs-identity)\\.py$",
+    "^tools/assert-(scanner-db-freshness|scanner-canary|ignore-scope|vex)\\.py$",
+    "^tools/generate-stig-arf-predicate\\.py$",
+    "^security/cve-ignore\\.(trivyignore|grype)\\.yaml$",
+    "^stig/(rhel9-base-micro-tailoring\\.xml|tailoring-justifications\\.json)$",
+    "^tests/fixtures/scanner-canary/log4shell\\.cdx\\.json$",
+)
+PYTHON_EVIDENCE_FORBIDDEN = (
+    "cosign sign",
+    "cosign attest",
+    "generator_container_slsa3",
+    "docker push",
+    "crane push",
+)
+
+
+def python_evidence_errors(workflow: str, tailoring: str, ledger: str, gitignore: str, codeowners: str) -> list[str]:
+    errors: list[str] = []
+
+    def expect(condition: object, message: str) -> None:
+        if not condition:
+            errors.append(message)
+
+    # The python image must be scanned under its OWN profile and tailoring: micro's profile also
+    # passes against this image, so a stale binding would be a false green rather than a failure.
+    expect(PYTHON_STIG_PROFILE in tailoring, "python tailoring must declare the python profile id")
+    expect(
+        "ubi9_base_micro_stig" not in tailoring,
+        "python tailoring must not retain the micro profile or tailoring id",
+    )
+    expect(f'"tailored_profile": "{PYTHON_STIG_PROFILE}"' in ledger, "python ledger must bind the python profile")
+    expect("ubi9-base-micro" not in ledger, "python justification texts must not describe the micro image")
+
+    micro_selects = set(re.findall(r'idref="([^"]+)"', read("stig/rhel9-base-micro-tailoring.xml")))
+    python_selects = set(re.findall(r'idref="([^"]+)"', tailoring))
+    expect(
+        micro_selects == python_selects,
+        "python tailoring must select exactly micro's rule set; "
+        f"only-micro={sorted(micro_selects - python_selects)} only-python={sorted(python_selects - micro_selects)}",
+    )
+
+    for marker in (
+        "images/python/tools/run-stig-arf.sh",
+        "images/python/tools/assert-sbom-rpms.py",
+        "images/python/tools/assert-no-rootfs-secrets.py",
+        "images/python/tools/generate-nist-800-190-predicate.py",
+        "--vex-dir images/python/vex",
+        "tools/assert-scanner-canary.py",
+        "tools/assert-ignore-scope.py",
+        "--severity MEDIUM,HIGH,CRITICAL",
+        "--fail-on medium",
+        "--validate",
+        "timeout-minutes: 120",
+    ):
+        expect(marker in workflow, f"python CI missing evidence marker: {marker}")
+    for pattern in PYTHON_EVIDENCE_SHARED_DEPENDENCIES:
+        expect(pattern in workflow, f"python CI change filter missing shared dependency: {pattern}")
+    for forbidden in PYTHON_EVIDENCE_FORBIDDEN:
+        expect(forbidden not in workflow, f"python CI must not publish or attest: {forbidden}")
+    expect(
+        "evidence:" not in workflow and "needs.evidence" not in workflow,
+        "python evidence must run inside the build job, not a separate job",
+    )
+    expect(
+        "dist/python-evidence/sbom/image." not in workflow.rsplit("path: |", maxsplit=1)[-1],
+        "python evidence upload must not include image archives",
+    )
+    expect(
+        "rootfs." not in workflow.rsplit("path: |", maxsplit=1)[-1],
+        "python evidence upload must not include exported rootfs trees",
+    )
+
+    for entry in ("!/images/python/stig/", "!/images/python/vex/"):
+        expect(f"\n{entry}\n" in gitignore, f".gitignore must allowlist {entry} on its own line")
+    for entry in ("/images/python/stig/ @NWarila", "/images/python/vex/ @NWarila"):
+        expect(entry in codeowners, f"CODEOWNERS must gate {entry}")
+    return errors
+
+
+def check_python_evidence() -> None:
+    errors = python_evidence_errors(
+        read(".github/workflows/python-ci.yaml"),
+        read(PYTHON_STIG_TAILORING),
+        read(PYTHON_STIG_JUSTIFICATIONS),
+        read(".gitignore"),
+        read(".github/CODEOWNERS"),
+    )
+    require(not errors, "python evidence contract failed: " + "; ".join(errors))
+
+    contract = json.loads(read("images/python/contracts/image-manifest.json"))
+    provenance = contract.get("provenance", {})
+    identity = provenance.get("cosign", {}).get("certificate_identity", "")
+    require(
+        identity.startswith("https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-python.yaml@"),
+        f"python contract must record the publish-python identity template, got: {identity!r}",
+    )
+    require(
+        provenance.get("cosign", {}).get("certificate_oidc_issuer") == cosign_oidc_issuer(),
+        "python contract OIDC issuer must match the repository issuer",
+    )
+    require(
+        provenance.get("slsa", {}).get("builder_id") == slsa_builder_id(),
+        "python contract SLSA builder id must match the pinned generator identity",
+    )
+    require(
+        set(provenance.get("attestation_predicate_types", {}))
+        == {
+            "spdx",
+            "cyclonedx",
+            "openvex",
+            "nist_800_190",
+            "stig_arf",
+        },
+        "python contract must map exactly the five attestation predicate types",
+    )
+    require(
+        "publish-python.yaml" not in read(".github/workflows/python-ci.yaml"),
+        "python CI must not reference a publish workflow that does not exist yet",
+    )
+    nist = read("images/python/tools/generate-nist-800-190-predicate.py")
+    require("# piece-3:" in nist, "python NIST fork must mark strings that flip at first publication")
+    for forbidden in ("published image package", "images are signed", "publish-image.yaml"):
+        require(forbidden not in nist, f"python NIST fork must not claim micro/publish semantics: {forbidden}")
+
+
+def check_python_evidence_self_test() -> None:
+    workflow = read(".github/workflows/python-ci.yaml")
+    tailoring = read(PYTHON_STIG_TAILORING)
+    ledger = read(PYTHON_STIG_JUSTIFICATIONS)
+    gitignore = read(".gitignore")
+    codeowners = read(".github/CODEOWNERS")
+    baseline = python_evidence_errors(workflow, tailoring, ledger, gitignore, codeowners)
+    require(not baseline, "python evidence self-test baseline failed: " + "; ".join(baseline))
+
+    mutations: list[tuple[str, tuple[str, str, str, str, str]]] = [
+        (
+            "micro profile restored",
+            (
+                workflow,
+                tailoring.replace(PYTHON_STIG_PROFILE, "xccdf_org.nwarila.content_profile_ubi9_base_micro_stig"),
+                ledger,
+                gitignore,
+                codeowners,
+            ),
+        ),
+        (
+            "micro justification text",
+            (workflow, tailoring, ledger.replace("ubi9-base-python", "ubi9-base-micro", 1), gitignore, codeowners),
+        ),
+        (
+            "rule dropped",
+            (
+                workflow,
+                tailoring.replace("xccdf_org.ssgproject.content_rule_", "removed_rule_", 1),
+                ledger,
+                gitignore,
+                codeowners,
+            ),
+        ),
+        (
+            "vex dir default",
+            (workflow.replace("--vex-dir images/python/vex", "--vex-only"), tailoring, ledger, gitignore, codeowners),
+        ),
+        (
+            "shared dependency dropped",
+            (
+                workflow.replace("^tools/generate-stig-arf-predicate\\.py$", "^tools/nope$"),
+                tailoring,
+                ledger,
+                gitignore,
+                codeowners,
+            ),
+        ),
+        (
+            "attestation added",
+            (
+                workflow.replace("python-tree change detection", "cosign attest --type openvex"),
+                tailoring,
+                ledger,
+                gitignore,
+                codeowners,
+            ),
+        ),
+        (
+            "separate evidence job",
+            (
+                workflow.replace("  self-tests:", "  evidence:\n    x: y\n  self-tests:"),
+                tailoring,
+                ledger,
+                gitignore,
+                codeowners,
+            ),
+        ),
+        (
+            "gitignore entry dropped",
+            (workflow, tailoring, ledger, gitignore.replace("!/images/python/vex/\n", ""), codeowners),
+        ),
+        (
+            "codeowners entry dropped",
+            (workflow, tailoring, ledger, gitignore, codeowners.replace("/images/python/stig/ @NWarila\n", "")),
+        ),
+    ]
+    rejected = 0
+    for label, args in mutations:
+        if python_evidence_errors(*args):
+            rejected += 1
+        else:
+            raise VerifyError(f"python evidence mutation unexpectedly passed: {label}")
+    print(f"python evidence mutation probes: {rejected}/{len(mutations)} rejected")
+
+
 def check_build_script() -> None:
     text = read("tools/build.sh")
     for marker in [
@@ -5295,6 +5523,9 @@ def check_helper_self_tests() -> None:
     for relative_path in [
         "tools/decide-publish-scope.py",
         "images/python/tools/rpmlock.py",
+        "images/python/tools/assert-no-rootfs-secrets.py",
+        "images/python/tools/assert-sbom-rpms.py",
+        "images/python/tools/generate-nist-800-190-predicate.py",
         "images/python/tools/build-python-rootfs.py",
         "images/python/tools/assert-reproducible.py",
         "images/python/tools/assert-parent-subset.py",
@@ -6775,6 +7006,8 @@ def main() -> int:
         check_publish_workflow,
         check_publish_scope_gate,
         check_publish_scope_gate_self_test,
+        check_python_evidence,
+        check_python_evidence_self_test,
         check_build_script,
         check_hardening_script,
         check_sbom_assertion_script,

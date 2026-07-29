@@ -54,6 +54,19 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Paths whose change must run the python evidence chain: the tree itself, this workflow,
+          # and every shared root helper the chain executes.
+          selector='^images/python/'
+          selector="${selector}|^\.github/workflows/python-ci\.yaml$"
+          selector="${selector}|^tools/build-stig-datastream\.sh$"
+          selector="${selector}|^tools/install-(openscap|syft|trivy|grype|crane)\.sh$"
+          selector="${selector}|^tools/assert-(stig-tailoring|stig-arf|rootfs-identity)\.py$"
+          selector="${selector}|^tools/assert-(scanner-db-freshness|scanner-canary|ignore-scope|vex)\.py$"
+          selector="${selector}|^tools/generate-stig-arf-predicate\.py$"
+          selector="${selector}|^security/cve-ignore\.(trivyignore|grype)\.yaml$"
+          selector="${selector}|^stig/(rhel9-base-micro-tailoring\.xml|tailoring-justifications\.json)$"
+          selector="${selector}|^tests/fixtures/scanner-canary/log4shell\.cdx\.json$"
+
           python="true"
           range_base=""
           case "${EVENT_NAME}" in
@@ -65,12 +78,9 @@ jobs:
             && [[ "${range_base}" != "0000000000000000000000000000000000000000" ]] \
             && git cat-file -e "${range_base}^{commit}" 2>/dev/null; then
             changed="$(git diff --no-renames --name-only "${range_base}" "${GITHUB_SHA}")"
-            if [[ -n "${changed}" ]] \
-              && ! printf '%s\n' "${changed}" \
-                | grep -q -v -E '^(images/python/|\.github/workflows/python-ci\.yaml$)'; then
+            if [[ -z "${changed}" ]]; then
               python="true"
-            elif printf '%s\n' "${changed}" \
-              | grep -q -E '^(images/python/|\.github/workflows/python-ci\.yaml$)'; then
+            elif printf '%s\n' "${changed}" | grep -q -E "${selector}"; then
               python="true"
             else
               python="false"
@@ -162,7 +172,7 @@ jobs:
   build:
     name: python build and gates
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     needs: changes
     if: ${{ needs.changes.outputs.python == 'true' }}
     permissions:
@@ -323,6 +333,146 @@ jobs:
             --exit-code 1 \
             "${image}"
           dist/tools/grype "${image}" --only-fixed --fail-on high -o table
+
+
+      - name: Install OpenSCAP STIG tooling
+        run: bash tools/install-openscap.sh
+
+      - name: Build RHEL9 STIG datastream
+        run: bash tools/build-stig-datastream.sh
+
+      - name: Run tailored STIG ARF gate
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          bash images/python/tools/run-stig-arf.sh \
+            "local/ubi9-base-python:ci-${ARCH}" \
+            "${ARCH}" \
+            "linux/${ARCH}" \
+            "dist/python-evidence/stig/${ARCH}"
+
+      - name: Install Syft for SBOM generation
+        run: bash tools/install-syft.sh
+
+      - name: Generate and gate rpmdb SBOMs
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/python-evidence/sbom
+          docker save "local/ubi9-base-python:ci-${ARCH}" -o "dist/python-evidence/sbom/image.${ARCH}.tar"
+          dist/tools/syft scan "docker-archive:dist/python-evidence/sbom/image.${ARCH}.tar" \
+            -o "json=dist/python-evidence/sbom/base-python.${ARCH}.syft.json" \
+            -o "spdx-json=dist/python-evidence/sbom/base-python.${ARCH}.spdx.json" \
+            -o "cyclonedx-json=dist/python-evidence/sbom/base-python.${ARCH}.cdx.json"
+          python3 images/python/tools/assert-sbom-rpms.py \
+            --source "dist/python-evidence/sbom/base-python.${ARCH}.syft.json" \
+            "dist/python-evidence/sbom/base-python.${ARCH}.spdx.json" \
+            "dist/python-evidence/sbom/base-python.${ARCH}.cdx.json"
+
+      - name: Assert scanner content canary and ignore scope
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/python-evidence/vuln
+          GRYPE_DB_AUTO_UPDATE=false dist/tools/grype \
+            "sbom:tests/fixtures/scanner-canary/log4shell.cdx.json" -o json -q \
+            > dist/python-evidence/vuln/scanner-canary.grype.json
+          dist/tools/trivy sbom tests/fixtures/scanner-canary/log4shell.cdx.json \
+            --format json --output dist/python-evidence/vuln/scanner-canary.trivy.json \
+            --skip-db-update --skip-java-db-update --offline-scan -q
+          python3 tools/assert-scanner-canary.py \
+            --grype-json dist/python-evidence/vuln/scanner-canary.grype.json \
+            --trivy-json dist/python-evidence/vuln/scanner-canary.trivy.json \
+            --expect-cve CVE-2021-44228
+          python3 tools/assert-ignore-scope.py
+
+      - name: Run fixable vulnerability gates
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+
+          image="local/ubi9-base-python:ci-${ARCH}"
+          dist/tools/trivy image --platform "linux/${ARCH}" \
+            --vuln-type os,library --ignore-unfixed --severity MEDIUM,HIGH,CRITICAL \
+            --ignorefile security/cve-ignore.trivyignore.yaml --exit-code 1 "${image}"
+          dist/tools/grype "${image}" --only-fixed --fail-on medium \
+            -c security/cve-ignore.grype.yaml --show-suppressed -o json \
+            --file "dist/python-evidence/vuln/base-python.${ARCH}.grype.gate.json"
+          python3 tools/assert-ignore-scope.py \
+            --grype-report "dist/python-evidence/vuln/base-python.${ARCH}.grype.gate.json"
+
+      - name: Run OpenVEX default-deny gate
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+
+          image="local/ubi9-base-python:ci-${ARCH}"
+          dist/tools/trivy image --platform "linux/${ARCH}" --vuln-type os,library \
+            --severity HIGH,CRITICAL --format json \
+            --output "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json" "${image}"
+          dist/tools/grype "${image}" -o json \
+            --file "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json"
+          python3 tools/assert-vex.py \
+            --product "${image}" \
+            --trivy-json "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json" \
+            --grype-json "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json" \
+            --vex-dir images/python/vex
+
+      - name: Run rootfs secret gate
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+
+          rootfs_dir="dist/python-evidence/rootfs.${ARCH}"
+          mkdir -p "${rootfs_dir}"
+          container_id="$(docker create --platform "linux/${ARCH}" "local/ubi9-base-python:ci-${ARCH}" /secret-scan-export)"
+          docker export "${container_id}" | tar --no-same-owner --no-same-permissions -x -C "${rootfs_dir}"
+          docker rm "${container_id}" > /dev/null
+          chmod -R u+rwX "${rootfs_dir}"
+          python3 images/python/tools/assert-no-rootfs-secrets.py \
+            --rootfs "${rootfs_dir}" \
+            --report "dist/python-evidence/base-python.${ARCH}.secret-scan.json"
+
+      - name: Generate and validate NIST SP 800-190 predicate
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/python-evidence/attestations
+          base_micro="$(sed -n 's/^ARG BASE_MICRO_IMAGE=\(.*\)$/\1/p' images/python/Dockerfile)"
+          predicate="dist/python-evidence/attestations/nist-800-190.base-python.${ARCH}.json"
+          python3 images/python/tools/generate-nist-800-190-predicate.py \
+            --image-ref "local/ubi9-base-python:ci-${ARCH}" \
+            --platform "linux/${ARCH}" \
+            --arch "${ARCH}" \
+            --base-image "${base_micro}" \
+            --source-uri "github.com/${GITHUB_REPOSITORY}" \
+            --revision "${GITHUB_SHA}" \
+            --secret-scan-report "dist/python-evidence/base-python.${ARCH}.secret-scan.json" \
+            --output "${predicate}"
+          python3 images/python/tools/generate-nist-800-190-predicate.py --validate "${predicate}"
+
+      - name: Upload evidence artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: python-evidence-${{ matrix.arch }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            dist/python-evidence/stig/${{ matrix.arch }}/*.json
+            dist/python-evidence/stig/${{ matrix.arch }}/*.xml
+            dist/python-evidence/stig/${{ matrix.arch }}/*.html
+            dist/python-evidence/sbom/*.json
+            dist/python-evidence/vuln/*.json
+            dist/python-evidence/attestations/*.json
+            dist/python-evidence/base-python.${{ matrix.arch }}.secret-scan.json
 
   reproducibility:
     name: python reproducibility (${{ matrix.arch }})
