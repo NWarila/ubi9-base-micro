@@ -23,10 +23,18 @@ import stat
 import subprocess
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
+from unittest.mock import patch
+
+from retained_payload_trim import (  # type: ignore[import-not-found]
+    TrimError,
+    apply_retained_payload_trim,
+    assert_exact_rpm_verify_deviations,
+    load_trim_contract,
+)
 
 EXECUTABLE_DIRS: Final = ("usr/bin", "usr/sbin", "bin", "sbin")
 FORBIDDEN_EXECUTABLES: Final = (
@@ -333,11 +341,11 @@ def strip_packages(
     rows: list[dict[str, str]],
     floor_names: set[str],
     pre: dict[str, Entry],
+    protected: set[str],
 ) -> list[str]:
     strip_names = sorted(row["name"] for row in rows if row["final_rpmdb"] == "no")
     overlap = sorted(set(strip_names) & floor_names)
     _require(not overlap, "strip candidates may never include parent floor packages: " + ", ".join(overlap))
-    protected = protected_paths(rootfs)
     preserved: dict[str, tuple[Entry, bytes | None]] = {}
     for name in strip_names:
         owned = _rpm_output(rootfs, ["-ql", name]).splitlines()
@@ -372,6 +380,27 @@ def strip_packages(
             target.chmod(previous.mode)
         os.chown(target, previous.uid, previous.gid, follow_symlinks=False)
     return strip_names
+
+
+def assert_no_sqlite_elf_dependencies(rootfs: Path) -> int:
+    """Prove no ELF object still declares or resolves the removed SQLite soname."""
+    ldd_env = os.environ.copy()
+    ldd_env["LD_LIBRARY_PATH"] = str(_rooted(rootfs, "/usr/lib64"))
+    scanned = 0
+    consumers: list[str] = []
+    for path in sorted(rootfs.rglob("*")):
+        if not path.is_file() or path.is_symlink() or not _is_elf(path):
+            continue
+        scanned += 1
+        result = _run(["ldd", str(path)], capture_output=True, check=False, env=ldd_env)
+        if "libsqlite3.so.0" in result.stdout or "libsqlite3.so.0" in result.stderr:
+            consumers.append("/" + path.relative_to(rootfs).as_posix())
+    _require(scanned > 0, "post-trim ELF dependency scan found no ELF objects")
+    _require(
+        not consumers,
+        "post-trim ELF objects still need libsqlite3.so.0: " + ", ".join(consumers),
+    )
+    return scanned
 
 
 def assert_set_exactness(rootfs: Path, floor_nevras: list[str], shipped_nevras: list[str]) -> None:
@@ -531,6 +560,32 @@ def run_ldconfig(rootfs: Path) -> None:
     _require(cache.is_file() and cache.stat().st_size > 0, "ld.so.cache missing or empty after ldconfig")
 
 
+def assert_sqlite_absent(rootfs: Path) -> None:
+    package = _rpm(rootfs, ["-q", "sqlite-libs"], check=False)
+    _require(package.returncode != 0, "sqlite-libs still present in the final rpmdb")
+    libraries = sorted("/" + path.relative_to(rootfs).as_posix() for path in rootfs.rglob("libsqlite3*"))
+    _require(not libraries, "SQLite libraries survived: " + ", ".join(libraries))
+    extensions = sorted(
+        "/" + path.relative_to(rootfs).as_posix()
+        for path in _rooted(rootfs, "/usr/lib64/python3.12/lib-dynload").glob("_sqlite3*")
+    )
+    _require(not extensions, "CPython _sqlite3 extension survived: " + ", ".join(extensions))
+    package_dir = _rooted(rootfs, "/usr/lib64/python3.12/sqlite3")
+    _require(not os.path.lexists(package_dir), "CPython sqlite3 package directory survived")
+    build_id_links: list[str] = []
+    build_id_root = _rooted(rootfs, "/usr/lib/.build-id")
+    if build_id_root.is_dir():
+        for path in build_id_root.rglob("*"):
+            if path.is_symlink():
+                target = path.readlink().as_posix()
+                if "_sqlite3" in target or "libsqlite3" in target:
+                    build_id_links.append("/" + path.relative_to(rootfs).as_posix())
+    _require(
+        not build_id_links,
+        "SQLite build-id links survived: " + ", ".join(sorted(build_id_links)),
+    )
+
+
 def final_cleanup(rootfs: Path, pre: dict[str, Entry], current: dict[str, Entry]) -> list[str]:
     removed: list[str] = []
     for sidecar in RPMDB_SIDECARS:
@@ -613,6 +668,7 @@ def build(args: argparse.Namespace) -> None:
     shipped_nevras = [row["package"] for row in shipped_rows]
     shipped_names = [row["name"] for row in shipped_rows]
     exceptions = load_requires_exceptions(Path(args.requires_exceptions))
+    trim_entries = load_trim_contract(Path(args.retained_payload_trim), args.target_arch)
     source_date_epoch = int(headers.get("source_date_epoch", "0"))
     _require(source_date_epoch > 0, "lock header missing source_date_epoch")
 
@@ -627,37 +683,55 @@ def build(args: argparse.Namespace) -> None:
     print(f"  parent baseline: {len(baseline_requires)} pre-existing unsatisfied require(s)", flush=True)
     print("step 3: pinned transaction", flush=True)
     run_transaction(rootfs, Path(args.rpm_dir), rows)
-    print("step 4: guarded strip", flush=True)
-    stripped = strip_packages(rootfs, rows, floor_names, pre)
+    print("step 4: exact retained-package payload trim", flush=True)
+    apply_retained_payload_trim(
+        rootfs,
+        trim_entries,
+        lambda path: _rpm_output(rootfs, ["-qf", "--qf", "%{NAME}\n", path]),
+    )
+    assert_exact_rpm_verify_deviations(
+        trim_entries,
+        lambda package: _rpm(rootfs, ["-V", "--nodeps", package], check=False),
+    )
+    print(f"  trimmed: {len(trim_entries)} exact python3.12-libs payload paths", flush=True)
+    print("step 5: compute protected runtime paths", flush=True)
+    protected = protected_paths(rootfs)
+    print(f"  protected: {len(protected)} resolved runtime paths", flush=True)
+    print("step 6: guarded final_rpmdb=no package erase", flush=True)
+    stripped = strip_packages(rootfs, rows, floor_names, pre, protected)
     print(f"  stripped: {' '.join(stripped)}", flush=True)
-    print("step 5: rpm-based assertions", flush=True)
+    print("step 7: set, Requires, ownership, collision, and ELF-honesty assertions", flush=True)
     mid = walk_root(rootfs)
     assert_set_exactness(rootfs, floor_nevras, shipped_nevras)
     assert_requires_satisfied(rootfs, exceptions, baseline_requires)
     assert_new_paths_owned(rootfs, pre, mid)
     assert_collisions(rootfs, pre, mid, shipped_names)
     assert_no_alternatives({k: v for k, v in mid.items() if k not in pre})
+    elf_count = assert_no_sqlite_elf_dependencies(rootfs)
+    print(f"  post-trim ELF scan: {elf_count} object(s), no libsqlite3.so.0 consumers", flush=True)
     for executable in FORBIDDEN_EXECUTABLES:
         for directory in EXECUTABLE_DIRS:
             _require(
                 not _rooted(rootfs, f"/{directory}/{executable}").exists(),
                 f"forbidden executable survived: /{directory}/{executable}",
             )
-    print("step 6: ldconfig", flush=True)
+    print("step 8: ldconfig", flush=True)
     run_ldconfig(rootfs)
-    print("step 7: final cleanup (no rpm calls beyond this point)", flush=True)
+    print("step 9: SQLite component absence assertions", flush=True)
+    assert_sqlite_absent(rootfs)
+    print("step 10: final cleanup (no rpm calls beyond this point)", flush=True)
     mid = walk_root(rootfs)
     removed = final_cleanup(rootfs, pre, mid)
     print(f"  removed: {' '.join(removed) if removed else 'nothing'}", flush=True)
-    print("step 8: mtime normalization", flush=True)
+    print("step 11: mtime normalization", flush=True)
     normalize_mtimes(rootfs, source_date_epoch)
-    print("step 9: post manifest + parent invariance", flush=True)
+    print("step 12: post manifest + parent invariance", flush=True)
     post = walk_root(rootfs)
     write_manifest(post, Path(args.manifest_dir) / "post.manifest")
     allowed_changed = {RPMDB_SQLITE, LD_SO_CACHE}
     allowed_deleted = {*RPMDB_SIDECARS, *(rel for rel in removed if rel.startswith("var/cache/"))}
     assert_parent_invariance(pre, post, allowed_changed, allowed_deleted)
-    print("step 10: shipped-rpmdb validation in a disposable root", flush=True)
+    print("step 13: shipped-rpmdb validation in a disposable root", flush=True)
     validate_shipped_rpmdb(rootfs, floor_nevras, shipped_nevras, exceptions, baseline_requires)
     print("build-python-rootfs: all invariants satisfied", flush=True)
 
@@ -761,7 +835,82 @@ def self_test() -> None:
         swept = walk_root(root)
         assert all(entry.mtime == 1704067200 for entry in swept.values())
 
-        print(f"build-python-rootfs self-test: walker+invariance ok; {rejected}/5 mutation probes rejected")
+        def write_probe(probe_root: Path, relative_path: str, content: bytes = b"probe") -> None:
+            target = probe_root / relative_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+
+        def add_sqlite_library(probe_root: Path) -> None:
+            write_probe(probe_root, "usr/lib64/libsqlite3.so.0")
+
+        def add_sqlite_extension(probe_root: Path) -> None:
+            write_probe(
+                probe_root,
+                "usr/lib64/python3.12/lib-dynload/_sqlite3.cpython-312-x86_64-linux-gnu.so",
+            )
+
+        def add_sqlite_package_dir(probe_root: Path) -> None:
+            (probe_root / "usr/lib64/python3.12/sqlite3").mkdir(parents=True)
+
+        def add_sqlite_build_id_link(probe_root: Path) -> None:
+            link = probe_root / "usr/lib/.build-id/aa/sqlite-probe"
+            link.parent.mkdir(parents=True)
+            link.symlink_to("../../../lib64/libsqlite3.so.0")
+
+        def no_files(_probe_root: Path) -> None:
+            return
+
+        clean_sqlite_root = Path(tmp) / "sqlite-clean"
+        clean_sqlite_root.mkdir()
+        absent_rpm = subprocess.CompletedProcess(["rpm"], 1, "", "")
+        with patch.object(sys.modules[__name__], "_rpm", return_value=absent_rpm):
+            assert_sqlite_absent(clean_sqlite_root)
+
+        sqlite_rejected = 0
+        sqlite_mutations: list[tuple[str, Callable[[Path], None], int]] = [
+            ("SQLite library", add_sqlite_library, 1),
+            ("CPython _sqlite3 extension", add_sqlite_extension, 1),
+            ("CPython sqlite3 package directory", add_sqlite_package_dir, 1),
+            ("SQLite build-id link", add_sqlite_build_id_link, 1),
+            ("sqlite-libs rpmdb entry", no_files, 0),
+        ]
+        for label, populate, rpm_returncode in sqlite_mutations:
+            probe_root = Path(tmp) / f"sqlite-{sqlite_rejected}"
+            probe_root.mkdir()
+            populate(probe_root)
+            rpm_result = subprocess.CompletedProcess(["rpm"], rpm_returncode, "", "")
+            with patch.object(sys.modules[__name__], "_rpm", return_value=rpm_result):
+                try:
+                    assert_sqlite_absent(probe_root)
+                except BuildError:
+                    sqlite_rejected += 1
+                else:
+                    raise SystemExit(f"self-test: SQLite absence mutation unexpectedly passed: {label}")
+
+        elf_root = Path(tmp) / "sqlite-elf-consumer"
+        write_probe(elf_root, "usr/bin/consumer", b"\x7fELFprobe")
+        clean_ldd = subprocess.CompletedProcess(["ldd"], 0, "libc.so.6 => /usr/lib64/libc.so.6\n", "")
+        with patch.object(sys.modules[__name__], "_run", return_value=clean_ldd):
+            assert assert_no_sqlite_elf_dependencies(elf_root) == 1
+        sqlite_ldd = subprocess.CompletedProcess(
+            ["ldd"],
+            0,
+            "libsqlite3.so.0 => /usr/lib64/libsqlite3.so.0\n",
+            "",
+        )
+        with patch.object(sys.modules[__name__], "_run", return_value=sqlite_ldd):
+            try:
+                assert_no_sqlite_elf_dependencies(elf_root)
+            except BuildError:
+                sqlite_rejected += 1
+            else:
+                raise SystemExit("self-test: SQLite DT_NEEDED consumer mutation unexpectedly passed")
+
+        print(
+            "build-python-rootfs self-test: walker+invariance ok; "
+            f"{rejected + sqlite_rejected}/11 mutation probes rejected "
+            "(5 general, 6 SQLite absence)"
+        )
 
 
 def main() -> int:
@@ -774,6 +923,7 @@ def main() -> int:
     parser.add_argument("--target-arch", choices=("amd64", "arm64"), help="target architecture")
     parser.add_argument("--txn-writer-snapshot", help="pkg|NEVRA snapshot of the builder's rpmdb-writing toolchain")
     parser.add_argument("--requires-exceptions", help="committed intentional-unsatisfied-Requires JSON")
+    parser.add_argument("--retained-payload-trim", help="exact retained-RPM payload trim JSON")
     parser.add_argument("--self-test", action="store_true", help="run the offline self-test")
     args = parser.parse_args()
     if args.self_test:
@@ -788,6 +938,7 @@ def main() -> int:
         "target_arch",
         "txn_writer_snapshot",
         "requires_exceptions",
+        "retained_payload_trim",
     ):
         if not getattr(args, required):
             parser.error(f"--{required.replace('_', '-')} is required in build mode")
@@ -798,6 +949,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except BuildError as error:
+    except (BuildError, TrimError) as error:
         print(f"build-python-rootfs failed: {error}", file=sys.stderr)
         raise SystemExit(1) from error

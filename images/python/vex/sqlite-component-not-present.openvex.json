@@ -1,0 +1,119 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/NWarila/ubi9-base-micro/images/python/vex/sqlite-component-not-present",
+  "author": "NWarila",
+  "timestamp": "2026-07-29T13:34:28Z",
+  "version": 2,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-51296"
+      },
+      "products": [
+        {
+          "@id": "local/ubi9-base-python:ci-amd64"
+        },
+        {
+          "@id": "local/ubi9-base-python:ci-arm64"
+        },
+        {
+          "@id": "pkg:oci/ubi9-base-python",
+          "identifiers": {
+            "purl": "pkg:oci/ubi9-base-python"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "The component pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8 is absent from the final image rpmdb and rootfs. The exact retained-payload trim and absence gates in images/python/tools/build-python-rootfs.py and images/python/tools/run-python-gates.sh prove that libsqlite3, the CPython _sqlite3 extension, its sqlite3 stdlib package directory, and its build-id link are also absent. Therefore the component is not present in this product."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-51297"
+      },
+      "products": [
+        {
+          "@id": "local/ubi9-base-python:ci-amd64"
+        },
+        {
+          "@id": "local/ubi9-base-python:ci-arm64"
+        },
+        {
+          "@id": "pkg:oci/ubi9-base-python",
+          "identifiers": {
+            "purl": "pkg:oci/ubi9-base-python"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "The component pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8 is absent from the final image rpmdb and rootfs. The exact retained-payload trim and absence gates in images/python/tools/build-python-rootfs.py and images/python/tools/run-python-gates.sh prove that libsqlite3, the CPython _sqlite3 extension, its sqlite3 stdlib package directory, and its build-id link are also absent. Therefore the component is not present in this product."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-51302"
+      },
+      "products": [
+        {
+          "@id": "local/ubi9-base-python:ci-amd64"
+        },
+        {
+          "@id": "local/ubi9-base-python:ci-arm64"
+        },
+        {
+          "@id": "pkg:oci/ubi9-base-python",
+          "identifiers": {
+            "purl": "pkg:oci/ubi9-base-python"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "The component pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8 is absent from the final image rpmdb and rootfs. The exact retained-payload trim and absence gates in images/python/tools/build-python-rootfs.py and images/python/tools/run-python-gates.sh prove that libsqlite3, the CPython _sqlite3 extension, its sqlite3 stdlib package directory, and its build-id link are also absent. Therefore the component is not present in this product."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-51303"
+      },
+      "products": [
+        {
+          "@id": "local/ubi9-base-python:ci-amd64"
+        },
+        {
+          "@id": "local/ubi9-base-python:ci-arm64"
+        },
+        {
+          "@id": "pkg:oci/ubi9-base-python",
+          "identifiers": {
+            "purl": "pkg:oci/ubi9-base-python"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "The component pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8 is absent from the final image rpmdb and rootfs. The exact retained-payload trim and absence gates in images/python/tools/build-python-rootfs.py and images/python/tools/run-python-gates.sh prove that libsqlite3, the CPython _sqlite3 extension, its sqlite3 stdlib package directory, and its build-id link are also absent. Therefore the component is not present in this product."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-51304"
+      },
+      "products": [
+        {
+          "@id": "local/ubi9-base-python:ci-amd64"
+        },
+        {
+          "@id": "local/ubi9-base-python:ci-arm64"
+        },
+        {
+          "@id": "pkg:oci/ubi9-base-python",
+          "identifiers": {
+            "purl": "pkg:oci/ubi9-base-python"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "justification": "component_not_present",
+      "impact_statement": "The component pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8 is absent from the final image rpmdb and rootfs. The exact retained-payload trim and absence gates in images/python/tools/build-python-rootfs.py and images/python/tools/run-python-gates.sh prove that libsqlite3, the CPython _sqlite3 extension, its sqlite3 stdlib package directory, and its build-id link are also absent. Therefore the component is not present in this product."
+    }
+  ]
+}

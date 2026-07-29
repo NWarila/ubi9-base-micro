@@ -120,6 +120,7 @@ echo "gate B/O/R: in-image hardening + ownership + functional battery"
   -v "${workdir}/tls.key:/tmp/tls.key:ro" \
   "${image}" - << 'BATTERY'
 import hashlib
+import importlib.util
 import os
 import socket
 import ssl
@@ -169,6 +170,40 @@ expect(not os.path.exists("/var/lib/rpm/rpmdb.sqlite-shm"), "rpmdb -shm sidecar 
 expect(not os.path.exists("/var/lib/rpm/rpmdb.sqlite-wal"), "rpmdb -wal sidecar shipped")
 expect(os.path.getsize("/var/lib/rpm/rpmdb.sqlite") > 0, "rpmdb.sqlite missing/empty")
 
+expect(importlib.util.find_spec("sqlite3") is None, "sqlite3 stdlib package is still discoverable")
+try:
+    __import__("sqlite3")
+except ModuleNotFoundError as error:
+    expect(error.name == "sqlite3", f"sqlite3 import failed through a partial module: {error.name!r}")
+else:
+    expect(False, "sqlite3 import unexpectedly succeeded")
+
+sqlite_libraries = []
+for library_root in ("/usr/lib64", "/usr/lib", "/lib64", "/lib"):
+    if os.path.isdir(library_root):
+        for dirpath, _dirnames, filenames in os.walk(library_root):
+            sqlite_libraries.extend(
+                os.path.join(dirpath, name) for name in filenames if name.startswith("libsqlite3")
+            )
+expect(not sqlite_libraries, f"SQLite libraries survived: {sqlite_libraries[:5]}")
+dynload = "/usr/lib64/python3.12/lib-dynload"
+sqlite_extensions = [
+    os.path.join(dynload, name)
+    for name in os.listdir(dynload)
+    if name.startswith("_sqlite3")
+]
+expect(not sqlite_extensions, f"CPython _sqlite3 extension survived: {sqlite_extensions}")
+expect(not os.path.lexists("/usr/lib64/python3.12/sqlite3"), "CPython sqlite3 package directory survived")
+sqlite_build_ids = []
+for dirpath, _dirnames, filenames in os.walk("/usr/lib/.build-id"):
+    for name in filenames:
+        path = os.path.join(dirpath, name)
+        if os.path.islink(path):
+            target = os.readlink(path)
+            if "_sqlite3" in target or "libsqlite3" in target:
+                sqlite_build_ids.append(path)
+expect(not sqlite_build_ids, f"SQLite build-id links survived: {sqlite_build_ids}")
+
 import bz2  # noqa: E402
 import ctypes  # noqa: E402
 import curses  # noqa: E402
@@ -177,7 +212,6 @@ import decimal  # noqa: E402
 import json  # noqa: E402
 import lzma  # noqa: E402
 import readline  # noqa: E402
-import sqlite3  # noqa: E402
 import uuid  # noqa: E402
 import zlib  # noqa: E402
 

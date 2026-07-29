@@ -37,7 +37,6 @@
         "python3.12-libs-3.12.13-3.el9_8.1.x86_64",
         "python3.12-pip-wheel-23.2.1-5.el9.noarch",
         "readline-8.1-4.el9.x86_64",
-        "sqlite-libs-3.34.1-10.el9_8.x86_64",
         "xz-libs-5.2.5-8.el9_0.x86_64"
       ],
       "arm64": [
@@ -64,7 +63,6 @@
         "python3.12-libs-3.12.13-3.el9_8.1.aarch64",
         "python3.12-pip-wheel-23.2.1-5.el9.noarch",
         "readline-8.1-4.el9.aarch64",
-        "sqlite-libs-3.34.1-10.el9_8.aarch64",
         "xz-libs-5.2.5-8.el9_0.aarch64"
       ]
     }
@@ -105,12 +103,29 @@
   },
   "reproducibility": {
     "canonical_rootfs_digest": {
-      "amd64": "d91423b305f976bcf294b85346862d933024acaeb6841c83733feae7c2802a4c",
-      "arm64": "c528fc2a41648de13a4c68505bf478a551bf9e39e6112391767ccee5321fd17d"
+      "amd64": "e112a802ffdc89a2466109f53f694bfde0f8e46bd0d53b0d56b4aab2e6cc794d",
+      "arm64": "99f1f7b8047a24d9272be72aba31e418e4292da647b4dde80b83cf285e26f9b2"
     },
     "rpmdb_sha256": {
-      "amd64": "73c4fc28ea45207a900a526b6efd6e90044602984c40b0f2347c20ee759747d2",
-      "arm64": "c304f699dfc33208825f7c8f0499cbc946fd36abda4357d9f8e1122f1278dd52"
+      "amd64": "848d6ba1dadad73bae1ea03c1fd4a3743c51f39effa70204396e50eb3797f745",
+      "arm64": "a6c36b72156c7225659e9f4d82e3fe1cc032de1368595983239d656e18d0c9c4"
+    }
+  },
+  "provenance": {
+    "_comment": "Identity for the publish workflow introduced by a later change. No attestations exist for this image yet; these values are the derivation source that workflow and its verification locks must use.",
+    "cosign": {
+      "certificate_identity": "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-python.yaml@<ref>",
+      "certificate_oidc_issuer": "https://token.actions.githubusercontent.com"
+    },
+    "slsa": {
+      "builder_id": "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0"
+    },
+    "attestation_predicate_types": {
+      "spdx": "spdxjson",
+      "cyclonedx": "cyclonedx",
+      "openvex": "openvex",
+      "nist_800_190": "https://nwarila.dev/attestations/nist-sp-800-190-image/v1",
+      "stig_arf": "https://nwarila.dev/attestations/stig-arf/v1"
     }
   }
 }

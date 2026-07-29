@@ -72,8 +72,11 @@ parent_repo="${parent_ref%@*}"
 crane export "${parent_repo}@${child_digest}" "${workdir}/parent.tar"
 
 cp "${image_dir}/rpm-lock/requires-exceptions.json" "${workdir}/requires-exceptions.json"
+cp "${image_dir}/rpm-lock/retained-payload-trim.json" "${workdir}/retained-payload-trim.json"
+cp "${image_dir}/tools/retained_payload_trim.py" "${workdir}/retained_payload_trim.py"
 
 podman run --rm --platform "${platform}" \
+  -e TARGETARCH="${targetarch}" \
   -v "${workdir}:/work" \
   "${ubi_minimal}" bash -e -o pipefail -c '
   microdnf install -y tar findutils python3.12 >/dev/null 2>&1
@@ -109,9 +112,18 @@ podman run --rm --platform "${platform}" \
 
   python3.12 - << "DERIVE"
 import json
+import os
 import pathlib
 import re
 import subprocess
+import sys
+
+sys.path.insert(0, "/work")
+from retained_payload_trim import (  # noqa: E402
+    apply_retained_payload_trim,
+    assert_exact_rpm_verify_deviations,
+    load_trim_contract,
+)
 
 work = pathlib.Path("/work")
 exceptions_raw = json.loads((work / "requires-exceptions.json").read_text())
@@ -131,6 +143,24 @@ floor_names = {line.rsplit("-", 2)[0] for line in (work / "parent-floor.nevras")
 overlap = sorted(set(rows) & floor_names)
 if overlap:
     raise SystemExit(f"resolved closure overlaps the parent floor (CDN drift?): {overlap}")
+
+# This is the same exact retained-package payload trim consumed by the image
+# build. It is load-bearing: trim before deriving the protected ELF closure.
+trim_entries = load_trim_contract(work / "retained-payload-trim.json", os.environ["TARGETARCH"])
+apply_retained_payload_trim(
+    pathlib.Path("/rootfs"),
+    trim_entries,
+    lambda path: rpm_root(["-qf", "--qf", "%{NAME}\n", path]).strip(),
+)
+assert_exact_rpm_verify_deviations(
+    trim_entries,
+    lambda package: subprocess.run(
+        ["rpm", "--root=/rootfs", "-V", "--nodeps", package],
+        capture_output=True,
+        text=True,
+    ),
+)
+print(f"exact retained-payload trim: {len(trim_entries)} paths")
 
 # Shipped derivation: ELF-reachability closure from the python roots plus RPM Requires/Provides closure.
 protected = set()

@@ -3,39 +3,72 @@
   "title": "base-python image contract",
   "type": "object",
   "additionalProperties": false,
-  "required": ["image", "parent", "runtime", "config", "reproducibility"],
+  "required": [
+    "image",
+    "parent",
+    "runtime",
+    "config",
+    "reproducibility",
+    "provenance"
+  ],
   "properties": {
     "image": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "entrypoint_binary"],
+      "required": [
+        "name",
+        "entrypoint_binary"
+      ],
       "properties": {
-        "name": { "const": "ubi9-base-python" },
-        "entrypoint_binary": { "const": "/usr/bin/python3.12" }
+        "name": {
+          "const": "ubi9-base-python"
+        },
+        "entrypoint_binary": {
+          "const": "/usr/bin/python3.12"
+        }
       }
     },
     "parent": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repository", "digest", "children"],
+      "required": [
+        "repository",
+        "digest",
+        "children"
+      ],
       "properties": {
-        "repository": { "const": "ghcr.io/nwarila/ubi9-base-micro" },
-        "digest": { "$ref": "#/$defs/sha256ref" },
-        "children": { "$ref": "#/$defs/perArchDigest" }
+        "repository": {
+          "const": "ghcr.io/nwarila/ubi9-base-micro"
+        },
+        "digest": {
+          "$ref": "#/$defs/sha256ref"
+        },
+        "children": {
+          "$ref": "#/$defs/perArchDigest"
+        }
       }
     },
     "runtime": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["shipped"],
+      "required": [
+        "shipped"
+      ],
       "properties": {
         "shipped": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["amd64", "arm64"],
+          "required": [
+            "amd64",
+            "arm64"
+          ],
           "properties": {
-            "amd64": { "$ref": "#/$defs/nevraList" },
-            "arm64": { "$ref": "#/$defs/nevraList" }
+            "amd64": {
+              "$ref": "#/$defs/nevraList"
+            },
+            "arm64": {
+              "$ref": "#/$defs/nevraList"
+            }
           }
         }
       }
@@ -43,13 +76,39 @@
     "config": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["user", "entrypoint", "cmd", "working_dir", "env", "labels_common", "labels_arch"],
+      "required": [
+        "user",
+        "entrypoint",
+        "cmd",
+        "working_dir",
+        "env",
+        "labels_common",
+        "labels_arch"
+      ],
       "properties": {
-        "user": { "const": "65532:65532" },
-        "entrypoint": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
-        "cmd": { "type": "null" },
-        "working_dir": { "const": "/" },
-        "env": { "type": "array", "items": { "type": "string" }, "minItems": 5 },
+        "user": {
+          "const": "65532:65532"
+        },
+        "entrypoint": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "cmd": {
+          "type": "null"
+        },
+        "working_dir": {
+          "const": "/"
+        },
+        "env": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 5
+        },
         "labels_common": {
           "type": "object",
           "additionalProperties": false,
@@ -59,18 +118,33 @@
             "org.opencontainers.image.title"
           ],
           "properties": {
-            "org.opencontainers.image.description": { "type": "string", "minLength": 1 },
-            "org.opencontainers.image.source": { "type": "string", "minLength": 1 },
-            "org.opencontainers.image.title": { "const": "ubi9-base-python" }
+            "org.opencontainers.image.description": {
+              "type": "string",
+              "minLength": 1
+            },
+            "org.opencontainers.image.source": {
+              "type": "string",
+              "minLength": 1
+            },
+            "org.opencontainers.image.title": {
+              "const": "ubi9-base-python"
+            }
           }
         },
         "labels_arch": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["amd64", "arm64"],
+          "required": [
+            "amd64",
+            "arm64"
+          ],
           "properties": {
-            "amd64": { "$ref": "#/$defs/fipsLabels" },
-            "arm64": { "$ref": "#/$defs/fipsLabels" }
+            "amd64": {
+              "$ref": "#/$defs/fipsLabels"
+            },
+            "arm64": {
+              "$ref": "#/$defs/fipsLabels"
+            }
           }
         }
       }
@@ -78,35 +152,72 @@
     "reproducibility": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["canonical_rootfs_digest", "rpmdb_sha256"],
+      "required": [
+        "canonical_rootfs_digest",
+        "rpmdb_sha256"
+      ],
       "properties": {
-        "canonical_rootfs_digest": { "$ref": "#/$defs/perArchSha" },
-        "rpmdb_sha256": { "$ref": "#/$defs/perArchSha" }
+        "canonical_rootfs_digest": {
+          "$ref": "#/$defs/perArchSha"
+        },
+        "rpmdb_sha256": {
+          "$ref": "#/$defs/perArchSha"
+        }
       }
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance"
     }
   },
   "$defs": {
-    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "sha256ref": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "sha256ref": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
     "perArchSha": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["amd64", "arm64"],
+      "required": [
+        "amd64",
+        "arm64"
+      ],
       "properties": {
-        "amd64": { "$ref": "#/$defs/sha256" },
-        "arm64": { "$ref": "#/$defs/sha256" }
+        "amd64": {
+          "$ref": "#/$defs/sha256"
+        },
+        "arm64": {
+          "$ref": "#/$defs/sha256"
+        }
       }
     },
     "perArchDigest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["amd64", "arm64"],
+      "required": [
+        "amd64",
+        "arm64"
+      ],
       "properties": {
-        "amd64": { "$ref": "#/$defs/sha256ref" },
-        "arm64": { "$ref": "#/$defs/sha256ref" }
+        "amd64": {
+          "$ref": "#/$defs/sha256ref"
+        },
+        "arm64": {
+          "$ref": "#/$defs/sha256ref"
+        }
       }
     },
-    "nevraList": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
+    "nevraList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1
+    },
     "fipsLabels": {
       "type": "object",
       "additionalProperties": false,
@@ -117,10 +228,102 @@
         "org.nwarila.fips.provider-nvr"
       ],
       "properties": {
-        "org.nwarila.fips.cmvp": { "const": "4857" },
-        "org.nwarila.fips.cmvp.oe-validated": { "enum": ["true", "false"] },
-        "org.nwarila.fips.module-version": { "type": "string", "minLength": 1 },
-        "org.nwarila.fips.provider-nvr": { "type": "string", "minLength": 1 }
+        "org.nwarila.fips.cmvp": {
+          "const": "4857"
+        },
+        "org.nwarila.fips.cmvp.oe-validated": {
+          "enum": [
+            "true",
+            "false"
+          ]
+        },
+        "org.nwarila.fips.module-version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "org.nwarila.fips.provider-nvr": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "_comment",
+        "cosign",
+        "slsa",
+        "attestation_predicate_types"
+      ],
+      "properties": {
+        "_comment": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cosign": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "certificate_identity",
+            "certificate_oidc_issuer"
+          ],
+          "properties": {
+            "certificate_identity": {
+              "type": "string",
+              "pattern": "^https://github\\.com/NWarila/ubi9-base-micro/\\.github/workflows/publish-python\\.yaml@"
+            },
+            "certificate_oidc_issuer": {
+              "const": "https://token.actions.githubusercontent.com"
+            }
+          }
+        },
+        "slsa": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "builder_id"
+          ],
+          "properties": {
+            "builder_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "attestation_predicate_types": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "spdx",
+            "cyclonedx",
+            "openvex",
+            "nist_800_190",
+            "stig_arf"
+          ],
+          "properties": {
+            "spdx": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cyclonedx": {
+              "type": "string",
+              "minLength": 1
+            },
+            "openvex": {
+              "type": "string",
+              "minLength": 1
+            },
+            "nist_800_190": {
+              "type": "string",
+              "minLength": 1
+            },
+            "stig_arf": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
       }
     }
   }

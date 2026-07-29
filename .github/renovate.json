@@ -57,7 +57,7 @@
       "customType": "regex",
       "description": "Track the QEMU/binfmt emulator image digest at every setup-qemu-action site.",
       "managerFilePatterns": [
-        "/^\\.github/workflows/(?:build|nightly|publish-image|rpm-lock-refresh)\\.yaml$/"
+        "/^\\.github/workflows/(?:build|nightly|publish-image|python-ci|rpm-lock-refresh)\\.yaml$/"
       ],
       "matchStrings": [
         "(?<linePrefix>^|\\n[ \\t]+)image: docker\\.io/tonistiigi/binfmt@(?<currentDigest>sha256:[a-f0-9]{64})[ \\t]*(?:\\n|$)"

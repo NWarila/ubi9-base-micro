@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Security
 
+- Removed `sqlite-libs`, `libsqlite3`, and Python's optional `sqlite3` surface
+  from `images/python/` on both architectures. The component was outside the
+  image's declared supported surface and was the source of five unfixed scanner
+  findings. Exact retained-payload, RPM verification, ELF dependency, runtime,
+  rpmdb, SBOM, phantom-package, raw-scanner, and OpenVEX gates now prove the
+  component is absent; consumers needing `sqlite3` must use a fuller Red Hat
+  Python base or retain both the matching Python payload and library.
 - Absorbed the Red Hat `glibc` z-stream update (`2.34-272.el9_8` → `2.34-274.el9_8`) on both
   architectures, remediating the fixable CVE-2026-5435, CVE-2026-5928, and CVE-2026-6238 findings the
   nightly sentinel flagged; reproducibility baselines re-established from the CI gate.
@@ -21,6 +28,13 @@ and this project adheres to
 
 ### Added
 
+- `images/python/` evidence machinery: a python STIG tailoring and justification
+  ledger, forked SBOM, NIST SP 800-190 and rootfs-secret gates, an OpenVEX
+  disclosure, and the image contract's record of the identity a future publish
+  workflow must use. The evidence chain runs in CI on locally built images for
+  both architectures. The image is still not published, tagged, or attested;
+  signing, attestation and transparency-log evidence arrive with the publish
+  workflow.
 - `images/python/`: the base-python image build — a pinned, signature-verified RPM
   transaction applied to a byte-asserted clone of the published `base-micro`
   parent, producing one truthful combined rpmdb; build-support packages are

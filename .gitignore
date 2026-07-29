@@ -104,6 +104,13 @@
 !/images/python/tools/
 !/images/python/tools/*.py
 !/images/python/tools/*.sh
+!/images/python/stig/
+!/images/python/stig/*.xml
+!/images/python/stig/*.json
+!/images/python/vex/
+!/images/python/vex/.gitkeep
+!/images/python/vex/*.json
+!/images/python/vex/README.md
 
 !/vex/
 !/vex/.gitkeep
