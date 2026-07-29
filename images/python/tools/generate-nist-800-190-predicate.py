@@ -172,8 +172,9 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
                     "The exported rootfs is scanned during pull-request CI for inherited high-confidence "
                     "token patterns and credential-named assignments whose values match the inherited "
                     "textual assignment pattern. Exact reviewed CPython false positives are exempted by "
-                    "path, statement span, normalized AST hash, and expected AST kind. A finding stops "
-                    "NIST predicate generation."
+                    "path, statement span, the SHA-256 of exact physical source bytes, and a separate expected "
+                    "AST-kind proof. Files over 8 MiB or with a NUL in the first 65,536 bytes receive only "
+                    "sampled high-confidence coverage. A finding stops NIST predicate generation."
                 ),
                 "evidence": [
                     evidence(
@@ -227,6 +228,16 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
                 "including str(), bytes().decode(), .join(), .format(), % formatting, dict or tuple indexing, "
                 "walrus expressions, conditionals, annotated class attributes, comprehensions, lambda values, "
                 "star-args, +=, and alias chains."
+            ),
+            (
+                "The generic secret-assignment pattern covers only the listed credential names at regex word "
+                "boundaries. Underscore is a word character, so prefixed or suffixed forms such as "
+                "ADMIN_PASSWORD, db_passwd, and MY_API_KEY are outside coverage."
+            ),
+            (
+                "Files larger than 8 MiB, and files with a NUL within the first 65,536 bytes, receive only their "
+                "first 65,536 bytes and only the named high-confidence patterns. Generic assignments and later "
+                "bytes are outside coverage; a NUL only after byte 65,536 does not select this sampled path."
             ),
             (
                 "The image contract records a future publish-workflow identity template, but publication, signing, "
@@ -327,7 +338,12 @@ def run_self_test() -> None:
         if len(trust_control["evidence"]) != 1 or trust_control["evidence"][0]["kind"] != "dockerfile":
             raise SystemExit("self-test 4.1.5 must contain only present digest-pinned Dockerfile evidence")
         limitations = "\n".join(predicate["limitations"])
-        for marker in ("alias chains", "not present in this predicate"):
+        for marker in (
+            "alias chains",
+            "ADMIN_PASSWORD, db_passwd, and MY_API_KEY",
+            "a NUL only after byte 65,536 does not select this sampled path",
+            "not present in this predicate",
+        ):
             if marker not in limitations:
                 raise SystemExit(f"self-test predicate limitation missing: {marker}")
 

@@ -9,8 +9,10 @@
 This is a deliberately narrow fork of the root scanner. It detects the inherited
 high-confidence token patterns and credential-named assignments only when the
 assignment value matches the inherited textual pattern. Exact reviewed CPython
-false positives are exempted by rootfs-relative path, statement span, normalized
-enclosing-statement hash, and an AST proof of the expected statement kind.
+false positives are exempted by rootfs-relative path, statement span, the SHA-256
+of the exact physical source bytes in that span, and a separate AST proof of the
+expected statement kind. Comments, whitespace, quoting, and line endings are part
+of the source identity; any byte drift loses the exemption.
 
 This gate does not claim general hard-coded-secret coverage. Encoded, composed,
 or indirect values are outside the generic assignment pattern, including
@@ -18,6 +20,15 @@ or indirect values are outside the generic assignment pattern, including
 dict or tuple indexing, walrus expressions, conditionals, annotated class
 attributes, comprehensions, lambda values, star-args, ``+=``, and alias chains.
 Those inherited coverage limits are explicit self-test fixtures below.
+
+The generic pattern covers only the listed credential names at regex word
+boundaries. Underscore is a word character, so prefixed or suffixed forms such as
+``ADMIN_PASSWORD``, ``db_passwd``, and ``MY_API_KEY`` are outside that coverage.
+
+Files larger than 8 MiB, and files with a NUL within the first 65,536 bytes, take
+the sampled path. Sampled files receive only their first 65,536 bytes and only the named high-confidence
+patterns; generic assignments and later bytes are outside coverage.
+A NUL appearing only after the first 65,536 bytes does not select the sampled path.
 
 Classification is fail-closed for surfaced matches: parse failures, exemption
 drift, moved statements, new statements, and unreviewed paths remain findings.
@@ -81,178 +92,179 @@ HIGH_CONFIDENCE_SAMPLE_PATTERNS = [
 
 @dataclass(frozen=True)
 class StatementExemption:
-    """One measured CPython statement, bound to content, location, and AST shape."""
+    """One measured CPython statement, bound to exact source, location, and AST shape."""
 
     path: str
     start_line: int
     end_line: int
-    statement_hash: str
+    source_hash: str
     expected_kind: str
 
 
 # These are the 23 generic-assignment matches measured in the pinned CPython 3.12.13 rootfs.
-# The hash is sha256(ast.dump(statement, include_attributes=False)). A package update, source
-# relocation, or statement edit intentionally loses the exemption and requires fresh review.
+# The hash is sha256(exact physical source bytes for the complete line span), including comments,
+# whitespace, quoting, and line endings. AST kind is proved separately. A package update, source
+# relocation, or any byte edit intentionally loses the exemption and requires fresh review.
 CPYTHON_STATEMENT_EXEMPTIONS: Final[tuple[StatementExemption, ...]] = (
     StatementExemption(
         "usr/lib64/python3.12/ftplib.py",
         943,
         943,
-        "cb8194107c08d9c2bdc617a2b9dace5519a52e13b2dad6db4dc4359a5ca317d6",
+        "7edd18a012c3b5db675b79cf134e8a2918927e9d350093c6d85a1d8d99cd723a",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/getpass.py",
         62,
         62,
-        "771073b30ca7c10870b083b35f86949019cbc84d090562526d242a9c4d115072",
+        "19a52eefc30ffb16ba0e7ba0f29adcd0c186f4922afba10452d4afc44d3126fd",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/getpass.py",
         91,
         91,
-        "771073b30ca7c10870b083b35f86949019cbc84d090562526d242a9c4d115072",
+        "19a52eefc30ffb16ba0e7ba0f29adcd0c186f4922afba10452d4afc44d3126fd",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/imaplib.py",
         1565,
         1565,
-        "ac45565227fdd07d427d4c029a91e7bc5bb2e42397a21b343e3c383540cd09db",
+        "b8086451ba4c162c4755ffbde87ebe8484e32b0aaebeb8d92a8f6b3a5a80c68e",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/netrc.py",
         138,
         138,
-        "b96895a5a21507fde1ea2e1651baf80509423c0fa9c39772fd20794ca556a59c",
+        "3ab733ff81ac05d7b0708fabe22136daa7f22e98cbe57a1196c8f8df00620665",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/urllib/parse.py",
         198,
         198,
-        "f97cb77ecd5ecc4f585ca175d5d665801f008ab835110811ce0ef2493ec97af9",
+        "09d523c59071f8ea2294030c7df2010e4d95d219f3b5393ac2742efbf8e7408f",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/urllib/parse.py",
         228,
         228,
-        "a7b6aa6aa9a059419352aa5658794e1659da2802b711bb0b837ac3ee479bda15",
+        "23a21b735901ec7e326c866ed4f65e06cc86e6ab4bec9ab16943be10008ae3f1",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/urllib/parse.py",
         1157,
         1157,
-        "3583ce5ff4cd6ef189bf3a2997374d5f7646d2afe1aba5c73975e65601b68c20",
+        "5e5e46ba761da0f52ef87fcadde04b38b2048a2c5edd8b5130781772452bdece",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/urllib/request.py",
         1,
         68,
-        "bbe2ec8b9a6ab52c1ed04b97a657c8e362890cdaa94cb0bdff77f48eb98d1b8c",
+        "f64d26ae8396af8efb7b2c39c6936e31ad0609f8ab13f2e4f3c19a29e242cfb3",
         "module-docstring",
     ),
     StatementExemption(
         "usr/lib64/python3.12/urllib/request.py",
         782,
         782,
-        "3e6eb2f5d600551a85470b99efb8fa902ec5bd9e88b7b792296794b0d6e95b59",
+        "116e0f8ac8378d69577a633d040c55d07b5bcf69b4310296480ef28fd210d4cd",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/urllib/request.py",
         897,
         898,
-        "6e07a0d837833fbec393598d38683249e2ac178869fd432acaa5ba1a711d5075",
+        "92fdb5014659fa011dcd56f2a0ebd6534f989a901c8d014ae35d86ec9eb65c3d",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/urllib/request.py",
         959,
         959,
-        "8ad7fb3d088dcc793035b9c8a66b4d84548a0617e30dcd5fbe86272671b6e569",
+        "0204cd78a5ed4adc110c528d2ae48529dad6fd18d9c8f0fc9dd04d0c03f07273",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/urllib/request.py",
         1026,
         1026,
-        "27ce53ce8467932203fa48cf4210597d2f961bf860915295516e6e499a3cb844",
+        "2d4fe156c131418689c4781591361f03c3971130e07ff663a9a797e862166f3c",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/urllib/request.py",
         1089,
         1089,
-        "286ba1f2afed78804f965b70bb8efa43832f78d691dc13b7a17ed3367111cf66",
+        "7fbcf5b99b4493ebb3bad7948708f09c24607e1af560f941cd361d21b43b9f12",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/urllib/request.py",
         1548,
         1548,
-        "7af5901a10d55f76db49025f4c4aa32ba37d8a9a31e833f57ab60274521935da",
+        "647533f2454f179fa8ca4d134183e88b6bcdc01da7c7d2daa7b849e2d9f275af",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/urllib/request.py",
         2074,
         2074,
-        "7af5901a10d55f76db49025f4c4aa32ba37d8a9a31e833f57ab60274521935da",
+        "86c2a4f45dcc5540d3e522d793d28c574ad549c559707061d2abfde83d0fff73",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/urllib/request.py",
         2304,
         2304,
-        "dfd155a710256dc8f338832497d70a288a8d9893465af49190bc023c15cd2945",
+        "248bfca4985348e4e6abdff730e5cf6cace1523052ab34a466c8cd4c6a93c104",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/urllib/request.py",
         2322,
         2322,
-        "dfd155a710256dc8f338832497d70a288a8d9893465af49190bc023c15cd2945",
+        "248bfca4985348e4e6abdff730e5cf6cace1523052ab34a466c8cd4c6a93c104",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/urllib/request.py",
         2336,
         2336,
-        "ff2554b4ec291817c441a5d94c24036eef9505d43be9346313f9a28aa7a42d4b",
+        "93aea40dec25eacb64ca787ce6185e93b36c9a1d6f9c949f87edf89d2046ea01",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/urllib/request.py",
         2350,
         2350,
-        "ff2554b4ec291817c441a5d94c24036eef9505d43be9346313f9a28aa7a42d4b",
+        "93aea40dec25eacb64ca787ce6185e93b36c9a1d6f9c949f87edf89d2046ea01",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/urllib/request.py",
         2367,
         2367,
-        "4cc19560e297c8c835dd39e1d44c0cfb1b2ef31b194926114c40d91de84ed1f5",
+        "d0e632aed995b3d49f5d767a9742a740d896ee1845c29be9bedf9652af0b7ac3",
         "credential-assignment",
     ),
     StatementExemption(
         "usr/lib64/python3.12/urllib/request.py",
         2368,
         2368,
-        "9f6d815cd1e039f74457748c96232043779b2a26d03d7416a8545d874ae00ad0",
+        "a5c2d219616b76b31a728c35aadcec6ed746e8f75eb6ae2ce6594e9d4a05d5d2",
         "conditional-test-artifact",
     ),
     StatementExemption(
         "usr/lib64/python3.12/urllib/request.py",
         2376,
         2377,
-        "761da6d80a8c89a32eb73e99104da67dcd0c8038fad4566507918174184b8797",
+        "60d2179bd3bd653f42d358b3d118cb629f25cef4fda544575ea039163994ecbb",
         "credential-assignment",
     ),
 )
@@ -273,6 +285,13 @@ KNOWN_COVERAGE_LIMIT_FIXTURES: Final[tuple[tuple[str, str], ...]] = (
     ("star-args", 'password, *rest = ["correcthorsebatterystaple", "unused"]\n'),
     ("+=", 'password = ""\npassword += "correcthorsebatterystaple"\n'),
     ("short alias chain", 'a = "correcthorsebatterystaple"; b = a; password = b\n'),
+)
+
+CREDENTIAL_NAME_BOUNDARY_LIMIT_FIXTURES: Final[tuple[tuple[str, str], ...]] = (
+    ("uppercase password prefix", 'ADMIN_PASSWORD = "correcthorsebatterystaple"\n'),
+    ("lowercase password prefix", 'admin_password = "correcthorsebatterystaple"\n'),
+    ("passwd prefix", 'db_passwd = "correcthorsebatterystaple"\n'),
+    ("api-key prefix", 'MY_API_KEY = "correcthorsebatterystaple"\n'),
 )
 
 
@@ -347,9 +366,11 @@ def _enclosing_statement(tree: ast.AST, line: int, column: int) -> ast.stmt | No
     )
 
 
-def _normalized_statement_hash(statement: ast.stmt) -> str:
-    normalized = ast.dump(statement, annotate_fields=True, include_attributes=False)
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+def _exact_statement_source_hash(text: str, statement: ast.stmt) -> str:
+    """Hash the exact physical bytes for every source line occupied by statement."""
+    physical_lines = text.splitlines(keepends=True)
+    source = "".join(physical_lines[statement.lineno - 1 : statement.end_lineno])
+    return hashlib.sha256(source.encode("utf-8", errors="surrogateescape")).hexdigest()
 
 
 def _statement_proves_expected_kind(
@@ -389,13 +410,13 @@ def _is_reviewed_cpython_statement(
     if statement is None:
         return False
     key = (match.groupdict().get("key") or "").lower()
-    statement_hash = _normalized_statement_hash(statement)
+    source_hash = _exact_statement_source_hash(text, statement)
     for record in exemptions:
         if (
             record.path == rel
             and record.start_line == statement.lineno
             and record.end_line == statement.end_lineno
-            and record.statement_hash == statement_hash
+            and record.source_hash == source_hash
             and _statement_proves_expected_kind(
                 statement,
                 tree,
@@ -431,7 +452,7 @@ def append_findings(
                         parsed = True
                         try:
                             tree = ast.parse(text)
-                        except (SyntaxError, ValueError, RecursionError):
+                        except (SyntaxError, ValueError, RecursionError, UnicodeError):
                             tree = None  # fail closed: every surfaced match stays a finding
                     if tree is not None and _is_reviewed_cpython_statement(
                         rel,
@@ -471,7 +492,7 @@ def scan(
             size = path.stat().st_size
             with path.open("rb") as handle:
                 sample = handle.read(SAMPLE_SCAN_BYTES)
-                sample_text = sample.decode("utf-8", errors="ignore")
+                sample_text = sample.decode("utf-8", errors="surrogateescape")
                 if is_probably_binary(sample):
                     append_findings(
                         findings,
@@ -498,7 +519,7 @@ def scan(
         except OSError as exc:
             raise SystemExit(f"failed to read {rel}: {exc}") from exc
 
-        text = (sample + remainder).decode("utf-8", errors="ignore")
+        text = (sample + remainder).decode("utf-8", errors="surrogateescape")
         files_scanned += 1
         append_findings(findings, rel, text, SECRET_PATTERNS, counters, exemptions)
 
@@ -526,6 +547,7 @@ def write_report(report: dict[str, Any], path: Path | None) -> None:
 
 CLAIMED_DETECTION_FIXTURES: Final[tuple[tuple[str, str], ...]] = (
     ("direct credential assignment", 'password = "correcthorsebatterystaple"\n'),
+    ("direct API-key assignment", 'api_key = "correcthorsebatterystaple"\n'),
     ("unreviewed dynamic assignment", "password = lexer.get_token()\n"),
     ("private key token", "-----BEGIN PRIVATE KEY-----\n"),
     ("non-Python text assignment", "password=correcthorsebatterystaple\n"),
@@ -583,6 +605,9 @@ def run_self_test() -> None:
         "does not claim general hard-coded-secret coverage",
         "inherited textual pattern",
         "alias chains",
+        "Underscore is a word character",
+        "first 65,536 bytes",
+        "only the named high-confidence",
     )
     docstring = __doc__ or ""
     if any(term not in docstring for term in required_doc_terms):
@@ -605,8 +630,10 @@ def run_self_test() -> None:
 
         for label, source in KNOWN_COVERAGE_LIMIT_FIXTURES:
             _assert_scan_result(root, f"known-limit-{label}", source, "passed")
+        for label, source in CREDENTIAL_NAME_BOUNDARY_LIMIT_FIXTURES:
+            _assert_scan_result(root, f"name-boundary-limit-{label}", source, "passed")
 
-        reviewed_source = "password = lexer.get_token()\n"
+        reviewed_source = 'password = lexer.get_token("Password: ")\n'
         reviewed_tree = ast.parse(reviewed_source)
         reviewed_statement = reviewed_tree.body[0]
         if not isinstance(reviewed_statement, ast.stmt):
@@ -616,7 +643,7 @@ def run_self_test() -> None:
             reviewed_path,
             1,
             1,
-            _normalized_statement_hash(reviewed_statement),
+            _exact_statement_source_hash(reviewed_source, reviewed_statement),
             "credential-assignment",
         )
 
@@ -631,16 +658,42 @@ def run_self_test() -> None:
             raise SystemExit("self-test: exact content-addressed exemption branch did not execute")
 
         drift_cases = (
-            ("changed statement", "password = other_source.get_token()\n", reviewed),
-            ("moved statement", "\npassword = lexer.get_token()\n", reviewed),
+            ("changed statement", 'password = other_source.get_token("Password: ")\n', reviewed),
+            ("moved statement", "\n" + reviewed_source, reviewed),
             ("wrong path", reviewed_source, replace(reviewed, path="usr/lib64/python3.12/other.py")),
             ("wrong AST kind", reviewed_source, replace(reviewed, expected_kind="module-docstring")),
+            ("quote-style drift", "password = lexer.get_token('Password: ')\n", reviewed),
         )
         for label, source, record in drift_cases:
             exact_file.write_text(source, encoding="utf-8")
             drifted = scan(exact_root, (record,))
             if drifted["result"] != "failed":
                 raise SystemExit(f"self-test: exemption drift unexpectedly passed: {label}")
+
+        multiline_source = "password = (\n    # reviewed prompt retrieval\n    lexer.get_token()\n)\n"
+        multiline_statement = ast.parse(multiline_source).body[0]
+        if not isinstance(multiline_statement, ast.stmt):
+            raise SystemExit("self-test: multiline reviewed statement is not an AST statement")
+        multiline_path = "usr/lib64/python3.12/multiline.py"
+        multiline = StatementExemption(
+            multiline_path,
+            1,
+            4,
+            _exact_statement_source_hash(multiline_source, multiline_statement),
+            "credential-assignment",
+        )
+        multiline_root = root / "multiline-reviewed"
+        multiline_file = multiline_root / multiline_path
+        multiline_file.parent.mkdir(parents=True)
+        multiline_file.write_text(multiline_source, encoding="utf-8")
+        if scan(multiline_root, (multiline,))["result"] != "passed":
+            raise SystemExit("self-test: exact multiline source exemption did not pass")
+        multiline_file.write_text(
+            "password = (\n    # password=correcthorsebatterystaple\n    lexer.get_token()\n)\n",
+            encoding="utf-8",
+        )
+        if scan(multiline_root, (multiline,))["result"] != "failed":
+            raise SystemExit("self-test: credential-looking comment inside exempt span unexpectedly passed")
 
         legacy_root = root / "legacy"
         legacy_root.mkdir()
@@ -653,11 +706,39 @@ def run_self_test() -> None:
         if legacy["result"] != "failed" or legacy["skippedBinaryFiles"] != 1:
             raise SystemExit("self-test: inherited binary/high-confidence behavior regressed")
 
+        sampled_root = root / "sampled-semantics"
+        sampled_root.mkdir()
+        (sampled_root / "nul-generic.bin").write_bytes(b"\x00password=correcthorsebatterystaple\n")
+        (sampled_root / "large-generic.txt").write_bytes(
+            b"password=correcthorsebatterystaple\n" + b"x" * MAX_TEXT_BYTES
+        )
+        (sampled_root / "post-sample-token.bin").write_bytes(
+            b"\x00" + b"x" * (SAMPLE_SCAN_BYTES - 1) + b"-----BEGIN PRIVATE KEY-----\n"
+        )
+        sampled = scan(sampled_root)
+        if sampled["result"] != "passed":
+            raise SystemExit("self-test: sampled-path out-of-coverage fixtures unexpectedly failed")
+        if sampled["skippedBinaryFiles"] != 2 or sampled["skippedLargeTextFiles"] != 1:
+            raise SystemExit("self-test: sampled-path counters do not reflect NUL/large fixtures exactly")
+        if sampled["sampleScanBytes"] != SAMPLE_SCAN_BYTES or sampled["sampledPatterns"] != [
+            pattern.name for pattern in HIGH_CONFIDENCE_SAMPLE_PATTERNS
+        ]:
+            raise SystemExit("self-test: sampled-path bytes or named high-confidence patterns drifted")
+
+        late_nul_root = root / "late-nul"
+        late_nul_root.mkdir()
+        (late_nul_root / "late-nul.bin").write_bytes(b"x" * SAMPLE_SCAN_BYTES + b"\x00-----BEGIN PRIVATE KEY-----\n")
+        late_nul = scan(late_nul_root)
+        if late_nul["result"] != "failed" or late_nul["filesScanned"] != 1 or late_nul["skippedBinaryFiles"] != 0:
+            raise SystemExit("self-test: a NUL after the sample incorrectly selected the sampled path")
+
     print(
         "python rootfs secret scanner self-test passed: "
         f"{len(CLAIMED_DETECTION_FIXTURES)} claimed detections found, "
-        "exact exemption accepted with four drift forms rejected, parse fallback failed closed, "
-        f"{len(KNOWN_COVERAGE_LIMIT_FIXTURES)} inherited coverage limits confirmed"
+        "exact exemption accepted with five drift forms and comment injection rejected, "
+        "parse fallback failed closed, sampled-file semantics and counters confirmed, "
+        f"{len(KNOWN_COVERAGE_LIMIT_FIXTURES)} value-shape and "
+        f"{len(CREDENTIAL_NAME_BOUNDARY_LIMIT_FIXTURES)} name-boundary limits confirmed"
     )
 
 
