@@ -600,6 +600,7 @@ jobs:
             dist/tools/trivy image \
               --platform "${platform}" \
               --vuln-type os,library \
+              --list-all-pkgs \
               --severity HIGH,CRITICAL \
               --format json \
               --output "${trivy_json}" \
@@ -610,7 +611,8 @@ jobs:
             python tools/assert-vex.py \
               --product "${image_ref}" \
               --trivy-json "${trivy_json}" \
-              --grype-json "${grype_json}"
+              --grype-json "${grype_json}" \
+              --package-floor contracts/image-manifest.json
           done
 
       - name: Attest rpmdb SBOMs
