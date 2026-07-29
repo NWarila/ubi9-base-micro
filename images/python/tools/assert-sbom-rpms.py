@@ -24,7 +24,8 @@ REQUIRED_RPMS = frozenset(
         "python3.12-libs",
     }
 )
-# The combined parent-plus-python rpmdb carries 40 packages (15 inherited floor + 25 shipped).
+FORBIDDEN_RPMS = frozenset({"sqlite-libs"})
+# The combined parent-plus-python rpmdb carries 39 packages (15 inherited floor + 24 shipped).
 # The floor absorbs ordinary upstream churn without going vacuous.
 DEFAULT_MIN_RPM_COUNT = 35
 
@@ -96,6 +97,7 @@ def assert_names(
     names: set[str],
     min_rpm_count: int,
     required: frozenset[str] = REQUIRED_RPMS,
+    forbidden: frozenset[str] = FORBIDDEN_RPMS,
 ) -> None:
     missing = sorted(required - names)
     if missing:
@@ -104,6 +106,9 @@ def assert_names(
         )
     if len(names) < min_rpm_count:
         raise SbomError(f"{label}: rpm package count {len(names)} is below minimum {min_rpm_count}")
+    present_forbidden = sorted(forbidden & names)
+    if present_forbidden:
+        raise SbomError(f"{label}: forbidden RPM package(s) present: {', '.join(present_forbidden)}")
 
 
 def check_file(path: Path, min_rpm_count: int) -> tuple[str, set[str]]:
@@ -114,29 +119,42 @@ def check_file(path: Path, min_rpm_count: int) -> tuple[str, set[str]]:
 
 
 def run_self_test() -> None:
-    positive_spdx = {
-        "spdxVersion": "SPDX-2.3",
-        "packages": [
+    positive_names = (
+        REQUIRED_RPMS
+        | {"basesystem", "filesystem", "setup", "tzdata", "zlib", "libgcc"}
+        | {f"combined-rpmdb-filler-{index:02d}" for index in range(DEFAULT_MIN_RPM_COUNT)}
+    )
+
+    def documents(names: frozenset[str]) -> list[dict[str, Any]]:
+        return [
             {
-                "name": name,
-                "externalRefs": [
+                "spdxVersion": "SPDX-2.3",
+                "packages": [
                     {
-                        "referenceCategory": "PACKAGE-MANAGER",
-                        "referenceType": "purl",
-                        "referenceLocator": f"pkg:rpm/redhat/{name}@1.0",
+                        "name": name,
+                        "externalRefs": [
+                            {
+                                "referenceCategory": "PACKAGE-MANAGER",
+                                "referenceType": "purl",
+                                "referenceLocator": f"pkg:rpm/redhat/{name}@1.0",
+                            }
+                        ],
                     }
+                    for name in sorted(names)
                 ],
-            }
-            for name in sorted(
-                REQUIRED_RPMS
-                | {"basesystem", "filesystem", "setup", "tzdata", "zlib", "libgcc"}
-                | {f"combined-rpmdb-filler-{index:02d}" for index in range(DEFAULT_MIN_RPM_COUNT)}
-            )
-        ],
-    }
-    format_name, names = rpm_names(positive_spdx)
-    assert format_name == "spdx-json"
-    assert_names("positive-spdx", names, DEFAULT_MIN_RPM_COUNT)
+            },
+            {
+                "bomFormat": "CycloneDX",
+                "components": [{"name": name, "purl": f"pkg:rpm/redhat/{name}@1.0"} for name in sorted(names)],
+            },
+            {"artifacts": [{"name": name, "type": "rpm"} for name in sorted(names)]},
+        ]
+
+    expected_formats = ["spdx-json", "cyclonedx-json", "syft-json"]
+    for expected_format, document in zip(expected_formats, documents(positive_names), strict=True):
+        format_name, names = rpm_names(document)
+        assert format_name == expected_format
+        assert_names(f"positive-{expected_format}", names, DEFAULT_MIN_RPM_COUNT)
 
     negative_cdx = {
         "bomFormat": "CycloneDX",
@@ -144,14 +162,27 @@ def run_self_test() -> None:
             {"name": "glibc", "purl": "pkg:rpm/redhat/glibc@1.0"},
         ],
     }
+    rejected = 0
     try:
         format_name, names = rpm_names(negative_cdx)
         assert format_name == "cyclonedx-json"
         assert_names("negative-cyclonedx", names, DEFAULT_MIN_RPM_COUNT)
     except SbomError:
-        print("sbom rpm assertion self-test: ok")
-        return
-    raise SbomError("negative self-test unexpectedly passed")
+        rejected += 1
+    else:
+        raise SbomError("missing-floor negative self-test unexpectedly passed")
+
+    forbidden_names = positive_names | FORBIDDEN_RPMS
+    for expected_format, document in zip(expected_formats, documents(forbidden_names), strict=True):
+        try:
+            format_name, names = rpm_names(document)
+            assert format_name == expected_format
+            assert_names(f"forbidden-{expected_format}", names, DEFAULT_MIN_RPM_COUNT)
+        except SbomError:
+            rejected += 1
+        else:
+            raise SbomError(f"{expected_format} sqlite-libs negative self-test unexpectedly passed")
+    print(f"sbom rpm assertion self-test: positive formats=3; {rejected}/4 mutations rejected")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:

@@ -20,11 +20,11 @@ statement is documentary: it does not suppress the finding or satisfy the
 default-deny gate. The exact, expiring scanner suppression is maintained
 separately under `security/` and tracked as TD-6 in `docs/TECH-DEBT.md`.
 
-`sqlite-under-investigation.openvex.json` records five distinct
-`under_investigation` dispositions for CVE-2026-51296, CVE-2026-51297,
-CVE-2026-51302, CVE-2026-51303, and CVE-2026-51304. The image ships
-`sqlite-libs` 3.34.1-10.el9_8, but the available CVE records do not establish
-affected versions or fixes, and no Red Hat product assessment or exact
-shipped-SRPM source comparison supports a stronger disposition. These honest
-statements deliberately do not satisfy the default-deny gate. They bind both CI
-product references and the stable base-python family identifier.
+`sqlite-component-not-present.openvex.json` records five distinct
+`not_affected` / `component_not_present` dispositions for CVE-2026-51296,
+CVE-2026-51297, CVE-2026-51302, CVE-2026-51303, and CVE-2026-51304. The
+statements bind the image products, not an included SQLite subcomponent:
+`sqlite-libs`, `libsqlite3`, the CPython `_sqlite3` extension, the `sqlite3`
+stdlib package directory, and the matching build-id link are all absent from
+the final image. Build, runtime, rpmdb, SBOM, phantom-package, and raw-scanner
+gates independently prove that absence before OpenVEX is applied.

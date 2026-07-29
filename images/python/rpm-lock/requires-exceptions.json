@@ -9,7 +9,11 @@
     "listed here and on listed entries that are unexpectedly satisfied.",
     "python3.12-libs declares /usr/bin/sh solely via the shebang auto-dependency of the packaged",
     "developer helper /usr/lib64/python3.12/ctypes/macholib/fetch_macholib, which the runtime never",
-    "executes; the image intentionally ships no shell (same posture as the parent's glibc-common)."
+    "executes; the image intentionally ships no shell (same posture as the parent's glibc-common).",
+    "python3.12-libs declares both a manual sqlite-libs dependency and an automatic",
+    "libsqlite3.so.0()(64bit) dependency solely for the optional _sqlite3 extension. The exact",
+    "retained-payload trim removes that extension, its build-id link, and the sqlite3 Python package",
+    "before ELF closure derivation, so neither SQLite Requires has a surviving consumer."
   ],
   "krb5-libs": [
     "coreutils",
@@ -18,6 +22,8 @@
     "sed"
   ],
   "python3.12-libs": [
-    "/usr/bin/sh"
+    "/usr/bin/sh",
+    "libsqlite3.so.0()(64bit)",
+    "sqlite-libs"
   ]
 }

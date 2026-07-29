@@ -75,5 +75,5 @@ python3.12-libs-3.12.13-3.el9_8.1.aarch64|yes|python3.12-libs|0|3.12.13|3.el9_8.
 python3.12-pip-wheel-23.2.1-5.el9.noarch|yes|python3.12-pip-wheel|0|23.2.1|5.el9|noarch|3fa760910ea0dc5a9057805a6af565d0c24c9a32028fe1f59955f2fe067f3e4b|a54442064cd31c734bdcd395a759784d
 readline-8.1-4.el9.aarch64|yes|readline|0|8.1|4.el9|aarch64|41d1fedb516cf832ab93bd58016abba5acc5463aed5eaf1538f6c29cbce94fb1|33715b69a055bdbe5a24e545595450d9
 sed-4.8-10.el9.aarch64|no|sed|0|4.8|10.el9|aarch64|5a32d4229725bc0ebc6515b18b9f95c7caf543c054b17c2f6ea8d8aed7d86d3c|960881487d1a3fe448fbdb6fc1195287
-sqlite-libs-3.34.1-10.el9_8.aarch64|yes|sqlite-libs|0|3.34.1|10.el9_8|aarch64|21f7d39e39012718b2b5a38b1ce24e51a9030bf632f749e1139eb4ff51de96e3|615bbca9c3beb9956228e598b6a19396
+sqlite-libs-3.34.1-10.el9_8.aarch64|no|sqlite-libs|0|3.34.1|10.el9_8|aarch64|21f7d39e39012718b2b5a38b1ce24e51a9030bf632f749e1139eb4ff51de96e3|615bbca9c3beb9956228e598b6a19396
 xz-libs-5.2.5-8.el9_0.aarch64|yes|xz-libs|0|5.2.5|8.el9_0|aarch64|8a285ebd674d24282d8aa121b43fbcac8e01f99e4f6fe5f2b8ab72e13d571f5f|cab0f33ad722e476944e64e58db06336

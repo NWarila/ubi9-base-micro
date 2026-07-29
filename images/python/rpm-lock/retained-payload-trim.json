@@ -1,0 +1,216 @@
+{
+  "_comment": [
+    "Exact package-owned payload intentionally removed from retained RPMs.",
+    "Every listed path must exist with the declared owner and kind before the trim, and rpm -V --nodeps",
+    "must report exactly these missing paths afterward. Any other retained-package payload deviation fails.",
+    "The sqlite3 Python package, its native extension, and the extension build-id link are removed together",
+    "so python3.12-libs remains useful without leaving a partial sqlite3 API or a dangling ELF dependency."
+  ],
+  "version": 1,
+  "architectures": {
+    "amd64": [
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib/.build-id/da/5677abef2e197752f29bb0858e059c5dd853c5",
+        "kind": "symlink"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/lib-dynload/_sqlite3.cpython-312-x86_64-linux-gnu.so",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3",
+        "kind": "directory"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__init__.py",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__main__.py",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__",
+        "kind": "directory"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/__init__.cpython-312.opt-1.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/__init__.cpython-312.opt-2.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/__init__.cpython-312.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/__main__.cpython-312.opt-1.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/__main__.cpython-312.opt-2.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/__main__.cpython-312.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/dbapi2.cpython-312.opt-1.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/dbapi2.cpython-312.opt-2.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/dbapi2.cpython-312.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/dump.cpython-312.opt-1.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/dump.cpython-312.opt-2.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/dump.cpython-312.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/dbapi2.py",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/dump.py",
+        "kind": "file"
+      }
+    ],
+    "arm64": [
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib/.build-id/4a/e9ee800c7402c23f7863da73d13f8bf6ca2b54",
+        "kind": "symlink"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/lib-dynload/_sqlite3.cpython-312-aarch64-linux-gnu.so",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3",
+        "kind": "directory"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__init__.py",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__main__.py",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__",
+        "kind": "directory"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/__init__.cpython-312.opt-1.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/__init__.cpython-312.opt-2.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/__init__.cpython-312.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/__main__.cpython-312.opt-1.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/__main__.cpython-312.opt-2.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/__main__.cpython-312.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/dbapi2.cpython-312.opt-1.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/dbapi2.cpython-312.opt-2.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/dbapi2.cpython-312.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/dump.cpython-312.opt-1.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/dump.cpython-312.opt-2.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/__pycache__/dump.cpython-312.pyc",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/dbapi2.py",
+        "kind": "file"
+      },
+      {
+        "package": "python3.12-libs",
+        "path": "/usr/lib64/python3.12/sqlite3/dump.py",
+        "kind": "file"
+      }
+    ]
+  }
+}

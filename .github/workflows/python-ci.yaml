@@ -66,6 +66,7 @@ jobs:
           selector="${selector}|^tools/install-(openscap|syft|trivy|grype|crane)\.sh$"
           selector="${selector}|^tools/assert-(stig-tailoring|stig-arf|rootfs-identity)\.py$"
           selector="${selector}|^tools/assert-(scanner-db-freshness|scanner-canary|ignore-scope|vex)\.py$"
+          selector="${selector}|^tools/assert-no-phantom-packages\.py$"
           selector="${selector}|^tools/generate-stig-arf-predicate\.py$"
           selector="${selector}|^security/cve-ignore\.(trivyignore|grype)\.yaml$"
           selector="${selector}|^stig/(rhel9-base-micro-tailoring\.xml|tailoring-justifications\.json)$"
@@ -124,6 +125,8 @@ jobs:
           python3 images/python/tools/build-python-rootfs.py --self-test
           python3 images/python/tools/assert-reproducible.py --self-test
           python3 images/python/tools/assert-parent-subset.py --self-test
+          python3 images/python/tools/assert-raw-scanners-no-sqlite.py --self-test
+          python3 images/python/tools/retained_payload_trim.py --self-test
           bash -n images/python/tools/fetch-python-rpms.sh
           bash -n images/python/tools/fetch-builder-rpms.sh
           bash -n images/python/tools/generate-python-lock.sh
@@ -132,6 +135,7 @@ jobs:
           python3 -m json.tool images/python/contracts/image-manifest.schema.json > /dev/null
           python3 -m json.tool images/python/rpm-lock/micro-floor.json > /dev/null
           python3 -m json.tool images/python/rpm-lock/requires-exceptions.json > /dev/null
+          python3 -m json.tool images/python/rpm-lock/retained-payload-trim.json > /dev/null
           dockerfile_digest="$(sed -n 's/^ARG BASE_MICRO_IMAGE=.*@\(sha256:[0-9a-f]\{64\}\)$/\1/p' images/python/Dockerfile)"
           contract_digest="$(python3 -c "
           import json
@@ -374,6 +378,12 @@ jobs:
             --source "dist/python-evidence/sbom/base-python.${ARCH}.syft.json" \
             "dist/python-evidence/sbom/base-python.${ARCH}.spdx.json" \
             "dist/python-evidence/sbom/base-python.${ARCH}.cdx.json"
+          python3 tools/assert-no-phantom-packages.py \
+            --image "local/ubi9-base-python:ci-${ARCH}" \
+            --platform "linux/${ARCH}" \
+            --syft-json "dist/python-evidence/sbom/base-python.${ARCH}.syft.json" \
+            --output "dist/python-evidence/sbom/base-python.${ARCH}.phantom-packages.json" \
+            --expect-absent sqlite-libs
 
       - name: Assert scanner content canary and ignore scope
         run: |
@@ -420,6 +430,9 @@ jobs:
             --output "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json" "${image}"
           dist/tools/grype "${image}" -o json \
             --file "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json"
+          python3 images/python/tools/assert-raw-scanners-no-sqlite.py \
+            --trivy-json "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json" \
+            --grype-json "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json"
           python3 tools/assert-vex.py \
             --product "${image}" \
             --trivy-json "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json" \

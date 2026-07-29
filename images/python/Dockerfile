@@ -22,10 +22,12 @@ COPY rpm-lock/builder.amd64.txt rpm-lock/builder.arm64.txt /tmp/rpm-lock/
 COPY rpm-lock/python.amd64.txt rpm-lock/python.arm64.txt /tmp/rpm-lock/
 COPY rpm-lock/micro-floor.json /tmp/micro-floor.json
 COPY rpm-lock/requires-exceptions.json /tmp/requires-exceptions.json
+COPY rpm-lock/retained-payload-trim.json /tmp/retained-payload-trim.json
 COPY tools/assert-builder-toolchain-floor.sh /tmp/assert-builder-toolchain-floor.sh
 COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh
 COPY tools/fetch-python-rpms.sh /tmp/fetch-python-rpms.sh
 COPY tools/build-python-rootfs.py /tmp/build-python-rootfs.py
+COPY tools/retained_payload_trim.py /tmp/retained_payload_trim.py
 COPY tools/rpmlock.py /tmp/rpmlock.py
 
 COPY --from=micro-base / /rootfs
@@ -76,7 +78,8 @@ RUN set -eux; \
       --manifest-dir /tmp/manifests \
       --target-arch "${TARGETARCH}" \
       --txn-writer-snapshot /tmp/builder-toolchain.after \
-      --requires-exceptions /tmp/requires-exceptions.json
+      --requires-exceptions /tmp/requires-exceptions.json \
+      --retained-payload-trim /tmp/retained-payload-trim.json
 
 # Shipped image: the assembled combined rootfs as one layer. FROM scratch inherits nothing, so the
 # full runtime configuration is restated here and asserted against the committed config contract.

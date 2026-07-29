@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Security
 
+- Removed `sqlite-libs`, `libsqlite3`, and Python's optional `sqlite3` surface
+  from `images/python/` on both architectures. The component was outside the
+  image's declared supported surface and was the source of five unfixed scanner
+  findings. Exact retained-payload, RPM verification, ELF dependency, runtime,
+  rpmdb, SBOM, phantom-package, raw-scanner, and OpenVEX gates now prove the
+  component is absent; consumers needing `sqlite3` must use a fuller Red Hat
+  Python base or retain both the matching Python payload and library.
 - Absorbed the Red Hat `glibc` z-stream update (`2.34-272.el9_8` → `2.34-274.el9_8`) on both
   architectures, remediating the fixable CVE-2026-5435, CVE-2026-5928, and CVE-2026-6238 findings the
   nightly sentinel flagged; reproducibility baselines re-established from the CI gate.

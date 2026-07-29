@@ -10,8 +10,10 @@
 !rpm-lock/python.arm64.txt
 !rpm-lock/micro-floor.json
 !rpm-lock/requires-exceptions.json
+!rpm-lock/retained-payload-trim.json
 !tools/assert-builder-toolchain-floor.sh
 !tools/fetch-builder-rpms.sh
 !tools/fetch-python-rpms.sh
 !tools/build-python-rootfs.py
+!tools/retained_payload_trim.py
 !tools/rpmlock.py

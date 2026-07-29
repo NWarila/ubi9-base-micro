@@ -37,7 +37,6 @@
         "python3.12-libs-3.12.13-3.el9_8.1.x86_64",
         "python3.12-pip-wheel-23.2.1-5.el9.noarch",
         "readline-8.1-4.el9.x86_64",
-        "sqlite-libs-3.34.1-10.el9_8.x86_64",
         "xz-libs-5.2.5-8.el9_0.x86_64"
       ],
       "arm64": [
@@ -64,7 +63,6 @@
         "python3.12-libs-3.12.13-3.el9_8.1.aarch64",
         "python3.12-pip-wheel-23.2.1-5.el9.noarch",
         "readline-8.1-4.el9.aarch64",
-        "sqlite-libs-3.34.1-10.el9_8.aarch64",
         "xz-libs-5.2.5-8.el9_0.aarch64"
       ]
     }
@@ -105,12 +103,12 @@
   },
   "reproducibility": {
     "canonical_rootfs_digest": {
-      "amd64": "d91423b305f976bcf294b85346862d933024acaeb6841c83733feae7c2802a4c",
-      "arm64": "c528fc2a41648de13a4c68505bf478a551bf9e39e6112391767ccee5321fd17d"
+      "amd64": "1d5391056686ff6b1c49695858c3402786587c5a4667e4788a1563439915f768",
+      "arm64": "d21920eddb84e7980d42627b0deacd5d78e92783b3b4405749180a7c28d72898"
     },
     "rpmdb_sha256": {
-      "amd64": "73c4fc28ea45207a900a526b6efd6e90044602984c40b0f2347c20ee759747d2",
-      "arm64": "c304f699dfc33208825f7c8f0499cbc946fd36abda4357d9f8e1122f1278dd52"
+      "amd64": "848d6ba1dadad73bae1ea03c1fd4a3743c51f39effa70204396e50eb3797f745",
+      "arm64": "a6c36b72156c7225659e9f4d82e3fe1cc032de1368595983239d656e18d0c9c4"
     }
   },
   "provenance": {

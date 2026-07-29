@@ -202,6 +202,10 @@ REPO_ADRS = [
         "docs/decision-records/repo/0015-separate-python-policy-logic-from-shell-orchestration.md",
         "Separate Python Policy Logic From Shell Orchestration",
     ),
+    (
+        "docs/decision-records/repo/0016-remove-vulnerable-components-outside-supported-surfaces.md",
+        "Remove Vulnerable Components Only Outside Declared Supported Surfaces",
+    ),
 ]
 
 
@@ -1167,6 +1171,7 @@ def check_required_files() -> None:
         "images/python/rpm-lock/python.arm64.txt",
         "images/python/rpm-lock/micro-floor.json",
         "images/python/rpm-lock/requires-exceptions.json",
+        "images/python/rpm-lock/retained-payload-trim.json",
         "images/python/rpm-lock/scriptlet-classification.md",
         "images/python/rpm-lock/scriptlets.amd64.txt",
         "images/python/rpm-lock/scriptlets.arm64.txt",
@@ -1174,6 +1179,7 @@ def check_required_files() -> None:
         "images/python/tools/assert-parent-subset.py",
         "images/python/tools/assert-no-rootfs-secrets.py",
         "images/python/tools/assert-sbom-rpms.py",
+        "images/python/tools/assert-raw-scanners-no-sqlite.py",
         "images/python/tools/generate-nist-800-190-predicate.py",
         "images/python/tools/assert-reproducible.py",
         "images/python/tools/build-python-rootfs.py",
@@ -1181,6 +1187,7 @@ def check_required_files() -> None:
         "images/python/tools/fetch-python-rpms.sh",
         "images/python/tools/generate-python-lock.sh",
         "images/python/tools/rpmlock.py",
+        "images/python/tools/retained_payload_trim.py",
         "images/python/tools/assert-no-rootfs-secrets.py",
         "images/python/tools/assert-sbom-rpms.py",
         "images/python/tools/generate-nist-800-190-predicate.py",
@@ -1189,7 +1196,7 @@ def check_required_files() -> None:
         "images/python/stig/tailoring-justifications.json",
         "images/python/vex/README.md",
         "images/python/vex/cve-2026-31790.openvex.json",
-        "images/python/vex/sqlite-under-investigation.openvex.json",
+        "images/python/vex/sqlite-component-not-present.openvex.json",
         "images/python/tools/run-python-gates.sh",
         ".github/workflows/python-ci.yaml",
         "docs/explanation/fips-mechanism.md",
@@ -4203,6 +4210,7 @@ PYTHON_EVIDENCE_SHARED_DEPENDENCIES = (
     "^tools/install-(openscap|syft|trivy|grype|crane)\\.sh$",
     "^tools/assert-(stig-tailoring|stig-arf|rootfs-identity)\\.py$",
     "^tools/assert-(scanner-db-freshness|scanner-canary|ignore-scope|vex)\\.py$",
+    "^tools/assert-no-phantom-packages\\.py$",
     "^tools/generate-stig-arf-predicate\\.py$",
     "^security/cve-ignore\\.(trivyignore|grype)\\.yaml$",
     "^stig/(rhel9-base-micro-tailoring\\.xml|tailoring-justifications\\.json)$",
@@ -4318,6 +4326,9 @@ def python_evidence_errors(workflow: str, tailoring: str, ledger: str, gitignore
     for marker in (
         "images/python/tools/run-stig-arf.sh",
         "images/python/tools/assert-sbom-rpms.py",
+        "tools/assert-no-phantom-packages.py",
+        "--expect-absent sqlite-libs",
+        "images/python/tools/assert-raw-scanners-no-sqlite.py",
         "images/python/tools/assert-no-rootfs-secrets.py",
         "images/python/tools/generate-nist-800-190-predicate.py",
         "--vex-dir images/python/vex",
@@ -4336,6 +4347,23 @@ def python_evidence_errors(workflow: str, tailoring: str, ledger: str, gitignore
     expect(
         "evidence:" not in workflow and "needs.evidence" not in workflow,
         "python evidence must run inside the build job, not a separate job",
+    )
+    sbom_step = _workflow_named_step(build_block, "Generate and gate rpmdb SBOMs")
+    expect(
+        sbom_step.count("tools/assert-no-phantom-packages.py") == 1
+        and sbom_step.count("--expect-absent sqlite-libs") == 1,
+        "python SBOM step must run the shared phantom-package gate once with sqlite-libs expected absent",
+    )
+    vex_step = _workflow_named_step(build_block, "Run OpenVEX default-deny gate")
+    raw_gate = "images/python/tools/assert-raw-scanners-no-sqlite.py"
+    vex_gate = "python3 tools/assert-vex.py"
+    expect(
+        vex_step.count(raw_gate) == 1
+        and vex_step.count(vex_gate) == 1
+        and vex_step.index(raw_gate) < vex_step.index(vex_gate)
+        if raw_gate in vex_step and vex_gate in vex_step
+        else False,
+        "python raw SQLite scanner assertion must run exactly once before OpenVEX is applied",
     )
     upload_step = _workflow_named_step(build_block, "Upload evidence artifacts")
     expect(bool(upload_step), "python CI must contain one parseable Upload evidence artifacts step")
@@ -4462,6 +4490,28 @@ def check_python_evidence_self_test() -> None:
         "            dist/python-evidence/sbom/image.${{ matrix.arch }}.tar\n",
         1,
     )
+    phantom_expectation_changed = workflow.replace(
+        "--expect-absent sqlite-libs",
+        "--expect-absent other-libs",
+        1,
+    )
+    raw_scanner_block = (
+        "          python3 images/python/tools/assert-raw-scanners-no-sqlite.py \\\n"
+        '            --trivy-json "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json" \\\n'
+        '            --grype-json "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json"\n'
+    )
+    vex_block = (
+        "          python3 tools/assert-vex.py \\\n"
+        '            --product "${image}" \\\n'
+        '            --trivy-json "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json" \\\n'
+        '            --grype-json "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json" \\\n'
+        "            --vex-dir images/python/vex\n"
+    )
+    raw_scanner_after_vex = workflow.replace(
+        raw_scanner_block + vex_block,
+        vex_block + raw_scanner_block,
+        1,
+    )
     mutations: list[tuple[str, tuple[str, str, str, str, str]]] = [
         (
             "both SSG pins removed",
@@ -4556,6 +4606,14 @@ def check_python_evidence_self_test() -> None:
         (
             "image archive upload added",
             (image_archive_upload, tailoring, ledger, gitignore, codeowners),
+        ),
+        (
+            "phantom-package absent expectation changed",
+            (phantom_expectation_changed, tailoring, ledger, gitignore, codeowners),
+        ),
+        (
+            "raw scanner assertion moved after VEX",
+            (raw_scanner_after_vex, tailoring, ledger, gitignore, codeowners),
         ),
     ]
     rejected = 0
@@ -5390,7 +5448,9 @@ def check_python_secret_classifier() -> None:
     print(f"python secret classifier executable probes: {rejected}/{len(mutations)} rejected")
 
 
-PYTHON_SQLITE_VEX_PATH = "images/python/vex/sqlite-under-investigation.openvex.json"
+PYTHON_SQLITE_VEX_PATH = "images/python/vex/sqlite-component-not-present.openvex.json"
+PYTHON_SQLITE_VEX_ID = "https://github.com/NWarila/ubi9-base-micro/images/python/vex/sqlite-component-not-present"
+PYTHON_SQLITE_VEX_TIMESTAMP = "2026-07-29T13:34:28Z"
 PYTHON_SQLITE_CVES = (
     "CVE-2026-51296",
     "CVE-2026-51297",
@@ -5403,59 +5463,22 @@ PYTHON_SQLITE_VEX_PRODUCTS = (
     "local/ubi9-base-python:ci-arm64",
     "pkg:oci/ubi9-base-python",
 )
-PYTHON_SQLITE_SUBCOMPONENT = "pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8"
-PYTHON_SQLITE_IMPACTS = {
-    "CVE-2026-51296": (
-        "The image ships sqlite-libs 3.34.1-10.el9_8. The CVE record does not identify an affected version or "
-        "fix (https://github.com/CVEProject/cvelistV5/blob/main/cves/2026/51xxx/CVE-2026-51296.json), while "
-        "upstream SQLite 3.34.1 already contains jsonRemoveFunc "
-        "(https://github.com/sqlite/sqlite/blob/version-3.34.1/ext/misc/json1.c). No Red Hat product assessment "
-        "or exact shipped-SRPM source comparison was established, so vulnerable-code absence is not proven."
-    ),
-    "CVE-2026-51297": (
-        "The image ships sqlite-libs 3.34.1-10.el9_8. The CVE record does not identify an affected version or "
-        "fix (https://github.com/CVEProject/cvelistV5/blob/main/cves/2026/51xxx/CVE-2026-51297.json). The alleged "
-        "jsonBlobEdit symbol is absent from upstream 3.34.1 and 3.41.0, and SQLite documents a JSON implementation "
-        "rewrite in 3.45.0 (https://www.sqlite.org/releaselog/3_45_0.html), but no Red Hat product assessment or "
-        "exact shipped-SRPM comparison proves the vulnerable code absent."
-    ),
-    "CVE-2026-51302": (
-        "The image ships sqlite-libs 3.34.1-10.el9_8. The CVE record does not identify an affected version or "
-        "fix (https://github.com/CVEProject/cvelistV5/blob/main/cves/2026/51xxx/CVE-2026-51302.json). Upstream "
-        "3.34.1 contains sqlite3ReleaseTempReg but not the alleged exprComputeOperands use site "
-        "(https://github.com/sqlite/sqlite/blob/version-3.34.1/src/expr.c); no Red Hat product assessment or exact "
-        "shipped-SRPM comparison establishes whether the flaw is present or fixed."
-    ),
-    "CVE-2026-51303": (
-        "The image ships sqlite-libs 3.34.1-10.el9_8. The CVE record does not identify an affected version or "
-        "fix (https://github.com/CVEProject/cvelistV5/blob/main/cves/2026/51xxx/CVE-2026-51303.json), and upstream "
-        "version-3.51.2 and version-3.51.3 have identical src/expr.c content. No Red Hat product assessment or "
-        "exact shipped-SRPM comparison establishes the affected range or a backported fix."
-    ),
-    "CVE-2026-51304": (
-        "The image ships sqlite-libs 3.34.1-10.el9_8. The CVE record does not identify an affected version or "
-        "fix (https://github.com/CVEProject/cvelistV5/blob/main/cves/2026/51xxx/CVE-2026-51304.json). The alleged "
-        "delete-then-dereference sequence is not apparent in upstream version-3.51.2 src/expr.c "
-        "(https://github.com/sqlite/sqlite/blob/version-3.51.2/src/expr.c), but no Red Hat product assessment or "
-        "exact shipped-SRPM comparison proves vulnerable-code absence."
-    ),
-}
+PYTHON_SQLITE_IMPACT = (
+    "The component pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8 is absent from the final image rpmdb and rootfs. "
+    "The exact retained-payload trim and absence gates in images/python/tools/build-python-rootfs.py and "
+    "images/python/tools/run-python-gates.sh prove that libsqlite3, the CPython _sqlite3 extension, its sqlite3 "
+    "stdlib package directory, and its build-id link are also absent. Therefore the component is not present in "
+    "this product."
+)
 
 
 def _expected_python_sqlite_products() -> list[dict[str, Any]]:
     return [
-        {
-            "@id": "local/ubi9-base-python:ci-amd64",
-            "subcomponents": [{"@id": PYTHON_SQLITE_SUBCOMPONENT}],
-        },
-        {
-            "@id": "local/ubi9-base-python:ci-arm64",
-            "subcomponents": [{"@id": PYTHON_SQLITE_SUBCOMPONENT}],
-        },
+        {"@id": "local/ubi9-base-python:ci-amd64"},
+        {"@id": "local/ubi9-base-python:ci-arm64"},
         {
             "@id": "pkg:oci/ubi9-base-python",
             "identifiers": {"purl": "pkg:oci/ubi9-base-python"},
-            "subcomponents": [{"@id": PYTHON_SQLITE_SUBCOMPONENT}],
         },
     ]
 
@@ -5464,6 +5487,16 @@ def python_sqlite_vex_errors(document: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     if document.get("@context") != "https://openvex.dev/ns/v0.2.0":
         errors.append("python SQLite VEX must use the OpenVEX 0.2 context")
+    if document.get("@id") != PYTHON_SQLITE_VEX_ID:
+        errors.append("python SQLite VEX id must identify the component-not-present document")
+    if document.get("author") != "NWarila":
+        errors.append("python SQLite VEX author drifted")
+    if document.get("timestamp") != PYTHON_SQLITE_VEX_TIMESTAMP:
+        errors.append("python SQLite VEX timestamp must record the disposition rebaseline")
+    if document.get("version") != 2:
+        errors.append("python SQLite VEX version must be incremented to 2")
+    if set(document) != {"@context", "@id", "author", "timestamp", "version", "statements"}:
+        errors.append("python SQLite VEX document has unexpected or missing top-level fields")
     statements = document.get("statements")
     if not isinstance(statements, list):
         return [*errors, "python SQLite VEX statements must be a list"]
@@ -5473,7 +5506,7 @@ def python_sqlite_vex_errors(document: dict[str, Any]) -> list[str]:
 
     found_cves: list[str] = []
     expected_products = _expected_python_sqlite_products()
-    expected_keys = {"vulnerability", "products", "status", "impact_statement"}
+    expected_keys = {"vulnerability", "products", "status", "justification", "impact_statement"}
     for index, raw_statement in enumerate(statements):
         if not isinstance(raw_statement, dict):
             errors.append(f"python SQLite VEX statement {index} must be an object")
@@ -5485,14 +5518,16 @@ def python_sqlite_vex_errors(document: dict[str, Any]) -> list[str]:
             errors.append(f"python SQLite VEX statement {cve or index} has unexpected or missing fields")
         if vulnerability != {"name": cve}:
             errors.append(f"python SQLite VEX statement {cve or index} vulnerability must contain only its name")
-        if raw_statement.get("status") != "under_investigation":
-            errors.append(f"python SQLite VEX statement {cve or index} status must be under_investigation")
-        if raw_statement.get("impact_statement") != PYTHON_SQLITE_IMPACTS.get(cve):
-            errors.append(f"python SQLite VEX statement {cve or index} must retain its exact evidence and gap")
+        if raw_statement.get("status") != "not_affected":
+            errors.append(f"python SQLite VEX statement {cve or index} status must be not_affected")
+        if raw_statement.get("justification") != "component_not_present":
+            errors.append(f"python SQLite VEX statement {cve or index} justification must be component_not_present")
+        if raw_statement.get("impact_statement") != PYTHON_SQLITE_IMPACT:
+            errors.append(f"python SQLite VEX statement {cve or index} must retain its exact absence evidence")
         if raw_statement.get("products") != expected_products:
             errors.append(
                 f"python SQLite VEX statement {cve or index} must bind both CI products, the family id, "
-                "and the exact sqlite-libs subcomponent"
+                "and no absent sqlite-libs subcomponent"
             )
     if tuple(found_cves) != PYTHON_SQLITE_CVES or len(set(found_cves)) != len(PYTHON_SQLITE_CVES):
         errors.append("python SQLite VEX vulnerability set or statement order drifted")
@@ -5552,13 +5587,13 @@ def _python_sqlite_vex_replay(document: dict[str, Any]) -> list[str]:
                 check=False,
             )
             output = result.stdout + result.stderr
-            if result.returncode != 1:
+            if result.returncode != 0:
                 errors.append(
-                    f"python SQLite VEX default-deny replay did not reject {product}: "
+                    f"python SQLite VEX default-deny replay did not accept the five absence statements for {product}: "
                     f"{result.stderr.strip() or result.stdout.strip()}"
                 )
             errors.extend(
-                f"python SQLite VEX default-deny replay for {product} did not report {cve}"
+                f"python SQLite VEX default-deny replay for {product} did not accept {cve}"
                 for cve in PYTHON_SQLITE_CVES
                 if cve not in output
             )
@@ -5573,9 +5608,7 @@ def check_python_sqlite_vex() -> None:
     errors.extend(_python_sqlite_vex_replay(typed_document))
     require(not errors, "python SQLite VEX contract failed: " + "; ".join(errors))
     check_python_sqlite_vex_self_test()
-    raise VerifyError(
-        "python SQLite VEX default-deny gate correctly blocks five under_investigation findings for both CI products"
-    )
+    print("python SQLite VEX: five component-not-present statements accepted for both CI products")
 
 
 def check_python_sqlite_vex_self_test() -> None:
@@ -5595,10 +5628,10 @@ def check_python_sqlite_vex_self_test() -> None:
             mutated_document(lambda clone: clone["statements"][0]["vulnerability"].update(name="CVE-2099-0000")),
         ),
         (
-            "sqlite version altered",
+            "absent subcomponent added",
             mutated_document(
-                lambda clone: clone["statements"][0]["products"][0]["subcomponents"][0].update(
-                    {"@id": "pkg:rpm/redhat/sqlite-libs@3.41.0"}
+                lambda clone: clone["statements"][0]["products"][0].update(
+                    {"subcomponents": [{"@id": "pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8"}]}
                 )
             ),
         ),
@@ -5607,8 +5640,8 @@ def check_python_sqlite_vex_self_test() -> None:
             mutated_document(lambda clone: clone["statements"][0].update(status="affected")),
         ),
         (
-            "unexpected justification added",
-            mutated_document(lambda clone: clone["statements"][0].update(justification="component_not_present")),
+            "justification altered",
+            mutated_document(lambda clone: clone["statements"][0].update(justification="vulnerable_code_not_present")),
         ),
         (
             "product altered",
@@ -5620,6 +5653,7 @@ def check_python_sqlite_vex_self_test() -> None:
             "impact evidence altered",
             mutated_document(lambda clone: clone["statements"][0].update(impact_statement="Evidence unavailable.")),
         ),
+        ("document version altered", mutated_document(lambda clone: clone.update(version=1))),
     ]
     rejected = 0
     for label, mutated in mutations:
@@ -5629,7 +5663,7 @@ def check_python_sqlite_vex_self_test() -> None:
             raise VerifyError(f"python SQLite VEX mutation unexpectedly passed: {label}")
     print(
         f"python SQLite VEX mutation probes: {rejected}/{len(mutations)} rejected; "
-        "both CI product default-deny replays rejected all five findings"
+        "both CI product default-deny replays accepted all five component-not-present statements"
     )
 
 
@@ -6773,6 +6807,8 @@ def check_helper_self_tests() -> None:
         "images/python/tools/build-python-rootfs.py",
         "images/python/tools/assert-reproducible.py",
         "images/python/tools/assert-parent-subset.py",
+        "images/python/tools/assert-raw-scanners-no-sqlite.py",
+        "images/python/tools/retained_payload_trim.py",
         "tools/assert-rpm-lock-hashes.py",
         "tools/assert-no-rootfs-secrets.py",
         "tools/generate-nist-800-190-predicate.py",
@@ -6877,6 +6913,7 @@ def check_decision_records() -> None:
         "0013": "2026-06-25",
         "0014": "2026-07-10",
         "0015": "2026-07-11",
+        "0016": "2026-07-29",
     }
     for number, (relative_path, title) in zip(expected_numbers, REPO_ADRS, strict=True):
         text = read(relative_path)
