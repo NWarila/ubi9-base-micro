@@ -169,14 +169,17 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
                 "countermeasure": "Embedded clear-text secrets",
                 "status": "addressed",
                 "posture": (
-                    "The exported rootfs is scanned during pull-request CI for high-confidence "
-                    "clear-text credential material. A finding stops the workflow before attestation."
+                    "The exported rootfs is scanned during pull-request CI for inherited high-confidence "
+                    "token patterns and credential-named assignments whose values match the inherited "
+                    "textual assignment pattern. Exact reviewed CPython false positives are exempted by "
+                    "path, statement span, normalized AST hash, and expected AST kind. A finding stops "
+                    "NIST predicate generation."
                 ),
                 "evidence": [
                     evidence(
                         "script",
                         "images/python/tools/assert-no-rootfs-secrets.py",
-                        "rootfs clear-text secret scanner with negative self-test",
+                        "narrow textual-pattern scanner with exact CPython exemptions and coverage-limit self-test",
                     ),
                     evidence(
                         "workflow",
@@ -198,32 +201,14 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
                 "countermeasure": "Use of untrusted images",
                 "status": "addressed",
                 "posture": (
-                    "The runtime base is UBI micro pinned by sha256 digest and covered by Renovate "
-                    # piece-3: reword to published-digest
-                    "metadata. Signing and SLSA L3 provenance are introduced with the publish "
-                    "workflow; this image is built and gated but not yet published or attested."
+                    "The runtime base is UBI micro pinned by sha256 digest and covered by Renovate metadata. "
+                    "This control presently relies on source-level base-image identity and the local build gates."
                 ),
                 "evidence": [
                     evidence(
                         "dockerfile",
                         "images/python/Dockerfile#ARG BASE_MICRO_IMAGE",
                         "UBI micro base image is digest-pinned and Renovate-tracked",
-                    ),
-                    evidence(
-                        "workflow",
-                        ".github/workflows/python-ci.yaml#python / required",
-                        "identity recorded in the image contract for the publish workflow introduced later",
-                    ),
-                    evidence(
-                        "workflow",
-                        ".github/workflows/python-ci.yaml#python / required",
-                        # piece-3: reword to published-digest
-                        "SLSA L3 generator reusable workflow (introduced with the publish workflow)",
-                    ),
-                    evidence(
-                        "workflow",
-                        ".github/workflows/python-ci.yaml#python / required",
-                        "signature, attestation and Rekor verification arrive with the publish workflow",
                     ),
                 ],
             },
@@ -236,6 +221,16 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
             (
                 "The embedded-malware entry is bounded to package-content scanning and minimal-image controls; "
                 "it does not assert arbitrary malware detection."
+            ),
+            (
+                "The clear-text-secret entry does not claim detection of encoded, composed, or indirect values, "
+                "including str(), bytes().decode(), .join(), .format(), % formatting, dict or tuple indexing, "
+                "walrus expressions, conditionals, annotated class attributes, comprehensions, lambda values, "
+                "star-args, +=, and alias chains."
+            ),
+            (
+                "The image contract records a future publish-workflow identity template, but publication, signing, "
+                "attestation, Rekor, and SLSA L3 evidence are not present in this predicate."
             ),
             "FIPS evidence is architecture-scoped exactly as documented in docs/compliance/fips.md.",
         ],
@@ -323,6 +318,18 @@ def run_self_test() -> None:
         }
         if not expected_scanner_labels.issubset(evidence_descriptions):
             raise SystemExit("self-test 4.1.1 scanner evidence labels mismatch")
+
+        controls = {control["id"]: control for control in predicate["controls"]}
+        secret_control = controls["4.1.4"]
+        if "inherited textual assignment pattern" not in secret_control["posture"]:
+            raise SystemExit("self-test 4.1.4 narrow secret-scan posture mismatch")
+        trust_control = controls["4.1.5"]
+        if len(trust_control["evidence"]) != 1 or trust_control["evidence"][0]["kind"] != "dockerfile":
+            raise SystemExit("self-test 4.1.5 must contain only present digest-pinned Dockerfile evidence")
+        limitations = "\n".join(predicate["limitations"])
+        for marker in ("alias chains", "not present in this predicate"):
+            if marker not in limitations:
+                raise SystemExit(f"self-test predicate limitation missing: {marker}")
 
         predicate["controls"][0]["evidence"] = []
         try:

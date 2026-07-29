@@ -1,0 +1,194 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/NWarila/ubi9-base-micro/images/python/vex/sqlite-3.41-not-affected",
+  "author": "NWarila",
+  "timestamp": "2026-07-29T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2026-51296"
+      },
+      "products": [
+        {
+          "@id": "local/ubi9-base-python:ci-amd64",
+          "subcomponents": [
+            {
+              "@id": "pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8"
+            }
+          ]
+        },
+        {
+          "@id": "local/ubi9-base-python:ci-arm64",
+          "subcomponents": [
+            {
+              "@id": "pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:oci/ubi9-base-python",
+          "identifiers": {
+            "purl": "pkg:oci/ubi9-base-python"
+          },
+          "subcomponents": [
+            {
+              "@id": "pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The image ships sqlite-libs 3.34.1-10.el9_8. This vulnerability applies to code introduced in upstream SQLite 3.41, so the vulnerable code is not present in the shipped 3.34.1 package."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-51297"
+      },
+      "products": [
+        {
+          "@id": "local/ubi9-base-python:ci-amd64",
+          "subcomponents": [
+            {
+              "@id": "pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8"
+            }
+          ]
+        },
+        {
+          "@id": "local/ubi9-base-python:ci-arm64",
+          "subcomponents": [
+            {
+              "@id": "pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:oci/ubi9-base-python",
+          "identifiers": {
+            "purl": "pkg:oci/ubi9-base-python"
+          },
+          "subcomponents": [
+            {
+              "@id": "pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The image ships sqlite-libs 3.34.1-10.el9_8. This vulnerability applies to code introduced in upstream SQLite 3.41, so the vulnerable code is not present in the shipped 3.34.1 package."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-51302"
+      },
+      "products": [
+        {
+          "@id": "local/ubi9-base-python:ci-amd64",
+          "subcomponents": [
+            {
+              "@id": "pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8"
+            }
+          ]
+        },
+        {
+          "@id": "local/ubi9-base-python:ci-arm64",
+          "subcomponents": [
+            {
+              "@id": "pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:oci/ubi9-base-python",
+          "identifiers": {
+            "purl": "pkg:oci/ubi9-base-python"
+          },
+          "subcomponents": [
+            {
+              "@id": "pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The image ships sqlite-libs 3.34.1-10.el9_8. This vulnerability applies to code introduced in upstream SQLite 3.41, so the vulnerable code is not present in the shipped 3.34.1 package."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-51303"
+      },
+      "products": [
+        {
+          "@id": "local/ubi9-base-python:ci-amd64",
+          "subcomponents": [
+            {
+              "@id": "pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8"
+            }
+          ]
+        },
+        {
+          "@id": "local/ubi9-base-python:ci-arm64",
+          "subcomponents": [
+            {
+              "@id": "pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:oci/ubi9-base-python",
+          "identifiers": {
+            "purl": "pkg:oci/ubi9-base-python"
+          },
+          "subcomponents": [
+            {
+              "@id": "pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The image ships sqlite-libs 3.34.1-10.el9_8. This vulnerability applies to code introduced in upstream SQLite 3.41, so the vulnerable code is not present in the shipped 3.34.1 package."
+    },
+    {
+      "vulnerability": {
+        "name": "CVE-2026-51304"
+      },
+      "products": [
+        {
+          "@id": "local/ubi9-base-python:ci-amd64",
+          "subcomponents": [
+            {
+              "@id": "pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8"
+            }
+          ]
+        },
+        {
+          "@id": "local/ubi9-base-python:ci-arm64",
+          "subcomponents": [
+            {
+              "@id": "pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8"
+            }
+          ]
+        },
+        {
+          "@id": "pkg:oci/ubi9-base-python",
+          "identifiers": {
+            "purl": "pkg:oci/ubi9-base-python"
+          },
+          "subcomponents": [
+            {
+              "@id": "pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8"
+            }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "The image ships sqlite-libs 3.34.1-10.el9_8. This vulnerability applies to code introduced in upstream SQLite 3.41, so the vulnerable code is not present in the shipped 3.34.1 package."
+    }
+  ]
+}

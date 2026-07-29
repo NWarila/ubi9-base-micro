@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import ast
 import copy
 import io
 import json
@@ -1188,6 +1189,7 @@ def check_required_files() -> None:
         "images/python/stig/tailoring-justifications.json",
         "images/python/vex/README.md",
         "images/python/vex/cve-2026-31790.openvex.json",
+        "images/python/vex/sqlite-3.41-not-affected.openvex.json",
         "images/python/tools/run-python-gates.sh",
         ".github/workflows/python-ci.yaml",
         "docs/explanation/fips-mechanism.md",
@@ -4177,6 +4179,25 @@ def check_publish_scope_gate_self_test() -> None:
 PYTHON_STIG_PROFILE = "xccdf_org.nwarila.content_profile_ubi9_base_python_stig"
 PYTHON_STIG_TAILORING = "images/python/stig/rhel9-base-python-tailoring.xml"
 PYTHON_STIG_JUSTIFICATIONS = "images/python/stig/tailoring-justifications.json"
+PYTHON_SSG_VERSION = "0.1.81"
+PYTHON_SSG_TARBALL_SHA512 = (
+    "11e26cfa96a6f1bd98b3a131837e2f86c9a9851239337d86d624b01627faf10f"
+    "7a03c395a5839ddab018e0fa47719ade05a9946f90d5ca96b1261776a9164379"
+)
+PYTHON_STIG_FAIL_ON = "low"
+PYTHON_EVIDENCE_STEP_ORDER = (
+    "Install OpenSCAP STIG tooling",
+    "Build RHEL9 STIG datastream",
+    "Run tailored STIG ARF gate",
+    "Install Syft for SBOM generation",
+    "Generate and gate rpmdb SBOMs",
+    "Assert scanner content canary and ignore scope",
+    "Run fixable vulnerability gates",
+    "Run OpenVEX default-deny gate",
+    "Run rootfs secret gate",
+    "Generate and validate NIST SP 800-190 predicate",
+    "Upload evidence artifacts",
+)
 PYTHON_EVIDENCE_SHARED_DEPENDENCIES = (
     "^tools/build-stig-datastream\\.sh$",
     "^tools/install-(openscap|syft|trivy|grype|crane)\\.sh$",
@@ -4194,6 +4215,17 @@ PYTHON_EVIDENCE_FORBIDDEN = (
     "docker push",
     "crane push",
 )
+
+
+def _workflow_job_block(workflow: str, job: str) -> str:
+    match = re.search(
+        rf"^  {re.escape(job)}:\n(?P<body>.*?)(?=^  [a-z0-9_-]+:\n|\Z)", workflow, re.MULTILINE | re.DOTALL
+    )
+    return match.group(0) if match is not None else ""
+
+
+def _workflow_step_names(job_block: str) -> list[str]:
+    return re.findall(r"^      - name: (.+)$", job_block, re.MULTILINE)
 
 
 def python_evidence_errors(workflow: str, tailoring: str, ledger: str, gitignore: str, codeowners: str) -> list[str]:
@@ -4220,6 +4252,39 @@ def python_evidence_errors(workflow: str, tailoring: str, ledger: str, gitignore
         "python tailoring must select exactly micro's rule set; "
         f"only-micro={sorted(micro_selects - python_selects)} only-python={sorted(python_selects - micro_selects)}",
     )
+
+    expected_env = {
+        "SSG_VERSION": PYTHON_SSG_VERSION,
+        "SSG_TARBALL_SHA512": PYTHON_SSG_TARBALL_SHA512,
+        "STIG_PROFILE": PYTHON_STIG_PROFILE,
+        "STIG_FAIL_ON": PYTHON_STIG_FAIL_ON,
+    }
+    for name, value in expected_env.items():
+        expect(
+            re.search(rf'^  {re.escape(name)}: "{re.escape(value)}"$', workflow, re.MULTILINE) is not None,
+            f"python CI must pin {name} exactly to {value}",
+        )
+
+    build_block = _workflow_job_block(workflow, "build")
+    expect(bool(build_block), "python CI must retain the build job")
+    build_steps = _workflow_step_names(build_block)
+    positions: list[int] = []
+    for step_name in PYTHON_EVIDENCE_STEP_ORDER:
+        expect(build_steps.count(step_name) == 1, f"python CI build job must contain evidence step once: {step_name}")
+        if step_name in build_steps:
+            positions.append(build_steps.index(step_name))
+    expect(
+        len(positions) == len(PYTHON_EVIDENCE_STEP_ORDER) and positions == sorted(positions),
+        "python CI evidence steps must retain the complete STIG -> SBOM -> scanners -> VEX -> secret -> NIST order",
+    )
+    expect(
+        build_steps.index("Run rootfs secret gate")
+        < build_steps.index("Generate and validate NIST SP 800-190 predicate")
+        if "Run rootfs secret gate" in build_steps and "Generate and validate NIST SP 800-190 predicate" in build_steps
+        else False,
+        "python CI secret gate must run before NIST predicate generation",
+    )
+    expect("continue-on-error" not in workflow, "python CI evidence chain must not use continue-on-error")
 
     for marker in (
         "images/python/tools/run-stig-arf.sh",
@@ -4312,7 +4377,53 @@ def check_python_evidence_self_test() -> None:
     baseline = python_evidence_errors(workflow, tailoring, ledger, gitignore, codeowners)
     require(not baseline, "python evidence self-test baseline failed: " + "; ".join(baseline))
 
+    def swap_adjacent_steps(source: str, first: str, second: str) -> str:
+        first_marker = f"      - name: {first}\n"
+        second_marker = f"      - name: {second}\n"
+        first_start = source.find(first_marker)
+        second_start = source.find(second_marker)
+        require(first_start >= 0 and second_start >= 0, "python evidence step-swap mutation anchors missing")
+        require(first_start < second_start, "python evidence step-swap mutation order changed")
+        next_step = source.find("      - name: ", second_start + len(second_marker))
+        second_end = len(source) if next_step < 0 else next_step
+        require(
+            source.find("      - name: ", first_start + len(first_marker)) == second_start,
+            "python evidence secret/NIST mutation expects adjacent steps",
+        )
+        return (
+            source[:first_start]
+            + source[second_start:second_end]
+            + source[first_start:second_start]
+            + source[second_end:]
+        )
+
+    without_ssg_pins = workflow.replace(f'  SSG_VERSION: "{PYTHON_SSG_VERSION}"\n', "").replace(
+        f'  SSG_TARBALL_SHA512: "{PYTHON_SSG_TARBALL_SHA512}"\n',
+        "",
+    )
+    swapped_secret_nist = swap_adjacent_steps(
+        workflow,
+        "Run rootfs secret gate",
+        "Generate and validate NIST SP 800-190 predicate",
+    )
+    continue_on_error = workflow.replace(
+        "      - name: Run rootfs secret gate\n",
+        "      - name: Run rootfs secret gate\n        continue-on-error: true\n",
+        1,
+    )
     mutations: list[tuple[str, tuple[str, str, str, str, str]]] = [
+        (
+            "both SSG pins removed",
+            (without_ssg_pins, tailoring, ledger, gitignore, codeowners),
+        ),
+        (
+            "secret and NIST steps swapped",
+            (swapped_secret_nist, tailoring, ledger, gitignore, codeowners),
+        ),
+        (
+            "continue-on-error inserted",
+            (continue_on_error, tailoring, ledger, gitignore, codeowners),
+        ),
         (
             "micro profile restored",
             (
@@ -4382,6 +4493,10 @@ def check_python_evidence_self_test() -> None:
     ]
     rejected = 0
     for label, args in mutations:
+        require(
+            args != (workflow, tailoring, ledger, gitignore, codeowners),
+            f"python evidence mutation is a no-op: {label}",
+        )
         if python_evidence_errors(*args):
             rejected += 1
         else:
@@ -4519,125 +4634,473 @@ def check_python_contract_schema_self_test() -> None:
     print(f"python contract schema mutation probes: {rejected}/5 rejected")
 
 
-PYTHON_NIST_FORBIDDEN_CLAIMS = (
-    "published image",
-    "images are signed",
-    "publish-image.yaml",
-    "publish paths",
-    "publish-time",
-    "post-publish",
-    "Verify Cosign signature",
-    "Verify Rekor roll-up",
-    "slsa-provenance",
-    "containers/Dockerfile",
-    "tests/hardening.sh",
-    "tests/fips.sh",
-    "docs/fips.md",
+PYTHON_NIST_SECRET_POSTURE = (
+    "The exported rootfs is scanned during pull-request CI for inherited high-confidence token patterns and "
+    "credential-named assignments whose values match the inherited textual assignment pattern. Exact reviewed "
+    "CPython false positives are exempted by path, statement span, normalized AST hash, and expected AST kind. "
+    "A finding stops NIST predicate generation."
 )
-PYTHON_NIST_REQUIRED_POINTERS = (
-    "images/python/Dockerfile#runtime",
-    "images/python/Dockerfile#python-rootfs",
-    "images/python/tools/assert-sbom-rpms.py",
-    "images/python/tools/assert-no-rootfs-secrets.py",
-    "images/python/tools/run-python-gates.sh",
-    "docs/compliance/fips.md",
-    ".github/workflows/python-ci.yaml#Run fixable vulnerability gates",
-    ".github/workflows/python-ci.yaml#Run OpenVEX default-deny gate",
-    ".github/workflows/python-ci.yaml#Generate and gate rpmdb SBOMs",
-    ".github/workflows/python-ci.yaml#Run rootfs secret gate",
+PYTHON_NIST_TRUST_POSTURE = (
+    "The runtime base is UBI micro pinned by sha256 digest and covered by Renovate metadata. "
+    "This control presently relies on source-level base-image identity and the local build gates."
 )
-PYTHON_NIST_FLIP_MARKER = "# piece-3: reword to published-digest"
+PYTHON_NIST_SECRET_LIMITATION = (
+    "The clear-text-secret entry does not claim detection of encoded, composed, or indirect values, including "
+    "str(), bytes().decode(), .join(), .format(), % formatting, dict or tuple indexing, walrus expressions, "
+    "conditionals, annotated class attributes, comprehensions, lambda values, star-args, +=, and alias chains."
+)
+PYTHON_NIST_FUTURE_LIMITATION = (
+    "The image contract records a future publish-workflow identity template, but publication, signing, "
+    "attestation, Rekor, and SLSA L3 evidence are not present in this predicate."
+)
+PYTHON_NIST_SECRET_EVIDENCE = {
+    (
+        "script",
+        "images/python/tools/assert-no-rootfs-secrets.py",
+        "narrow textual-pattern scanner with exact CPython exemptions and coverage-limit self-test",
+    ),
+    (
+        "workflow",
+        ".github/workflows/python-ci.yaml#Run rootfs secret gate",
+        "PR-time rootfs secret gate",
+    ),
+    (
+        "workflow",
+        ".github/workflows/python-ci.yaml#Run rootfs secret gate",
+        "per-architecture rootfs secret gates in CI",
+    ),
+}
+PYTHON_NIST_TRUST_EVIDENCE = {
+    (
+        "dockerfile",
+        "images/python/Dockerfile#ARG BASE_MICRO_IMAGE",
+        "UBI micro base image is digest-pinned and Renovate-tracked",
+    )
+}
 
 
-def python_nist_errors(nist: str, workflow: str) -> list[str]:
-    """The predicate may claim only what this repository state proves."""
+def _generate_python_nist_predicate(source: str) -> tuple[dict[str, Any] | None, str | None]:
+    with tempfile.TemporaryDirectory(prefix="verify-python-nist-") as raw_tmp:
+        tmp = Path(raw_tmp)
+        tool = tmp / "generate-nist-800-190-predicate.py"
+        report = tmp / "secret-report.json"
+        output = tmp / "predicate.json"
+        tool.write_text(source, encoding="utf-8")
+        report.write_text(
+            json.dumps(
+                {
+                    "result": "passed",
+                    "filesScanned": 3,
+                    "skippedBinaryFiles": 0,
+                    "skippedLargeTextFiles": 0,
+                    "skippedSymlinks": 0,
+                    "sampleScanBytes": 65536,
+                    "sampledPatterns": ["private-key"],
+                    "findings": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(tool),
+                "--image-ref",
+                "local/ubi9-base-python:ci-amd64",
+                "--platform",
+                "linux/amd64",
+                "--arch",
+                "amd64",
+                "--base-image",
+                "registry.access.redhat.com/ubi9/ubi-micro@sha256:" + ("a" * 64),
+                "--source-uri",
+                "github.com/NWarila/ubi9-base-micro",
+                "--revision",
+                "verify",
+                "--secret-scan-report",
+                str(report),
+                "--output",
+                str(output),
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None, f"generator execution failed: {result.stderr.strip() or result.stdout.strip()}"
+        try:
+            loaded = json.loads(output.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return None, f"generator output is not readable JSON: {exc}"
+        if not isinstance(loaded, dict):
+            return None, "generator output must be a JSON object"
+        return cast(dict[str, Any], loaded), None
+
+
+def _nist_evidence_tuples(control: dict[str, Any]) -> list[tuple[str, str, str]]:
+    evidence_items = control.get("evidence")
+    if not isinstance(evidence_items, list):
+        return []
+    return [
+        (str(item.get("kind")), str(item.get("pointer")), str(item.get("description")))
+        for item in evidence_items
+        if isinstance(item, dict)
+    ]
+
+
+def python_nist_errors(source: str, workflow: str) -> list[str]:
+    """Generate the live predicate and inspect its claims by control id."""
+    predicate, generation_error = _generate_python_nist_predicate(source)
+    if generation_error is not None or predicate is None:
+        return [generation_error or "predicate generation failed"]
+
     errors: list[str] = []
+    controls = predicate.get("controls")
+    if not isinstance(controls, list):
+        return ["generated NIST predicate controls must be a list"]
+    by_id = {str(control.get("id")): cast(dict[str, Any], control) for control in controls if isinstance(control, dict)}
+    if set(by_id) != {"4.1.1", "4.1.2", "4.1.3", "4.1.4", "4.1.5"} or len(controls) != 5:
+        errors.append("generated NIST predicate must contain exactly controls 4.1.1 through 4.1.5")
+        return errors
+
+    secret_control = by_id["4.1.4"]
+    trust_control = by_id["4.1.5"]
+    if secret_control.get("status") != "addressed":
+        errors.append("generated NIST 4.1.4 status must be addressed")
+    if secret_control.get("posture") != PYTHON_NIST_SECRET_POSTURE:
+        errors.append("generated NIST 4.1.4 posture must state the exact narrow textual-pattern coverage")
+    if trust_control.get("status") != "addressed":
+        errors.append("generated NIST 4.1.5 status must be addressed")
+    if trust_control.get("posture") != PYTHON_NIST_TRUST_POSTURE:
+        errors.append("generated NIST 4.1.5 posture must remain local and source-level")
+
+    secret_evidence = _nist_evidence_tuples(secret_control)
+    report_pointer = str(predicate.get("secretScan", {}).get("report", ""))
+    expected_secret_evidence = PYTHON_NIST_SECRET_EVIDENCE | {
+        ("report", report_pointer, "secret-scan JSON report for this predicate")
+    }
+    if set(secret_evidence) != expected_secret_evidence or len(secret_evidence) != 4:
+        errors.append("generated NIST 4.1.4 evidence set drifted")
+    trust_evidence = _nist_evidence_tuples(trust_control)
+    if set(trust_evidence) != PYTHON_NIST_TRUST_EVIDENCE or len(trust_evidence) != 1:
+        errors.append("generated NIST 4.1.5 must retain only the present digest-pinned Dockerfile evidence")
+
+    limitations = predicate.get("limitations")
+    if not isinstance(limitations, list):
+        errors.append("generated NIST limitations must be a list")
+    else:
+        if PYTHON_NIST_SECRET_LIMITATION not in limitations:
+            errors.append("generated NIST predicate must disclose every inherited secret-scan coverage limit")
+        if PYTHON_NIST_FUTURE_LIMITATION not in limitations:
+            errors.append("generated NIST predicate must mark future identity/signing evidence as absent")
+
+    for kind, pointer, _description in secret_evidence + trust_evidence:
+        if kind == "report":
+            continue
+        relative, _, anchor = pointer.partition("#")
+        if relative.startswith(".github/workflows/"):
+            if anchor and f"name: {anchor}" not in workflow:
+                errors.append(f"generated NIST predicate cites a workflow step that does not exist: {anchor}")
+        elif not (ROOT / relative).exists():
+            errors.append(f"generated NIST predicate cites a missing file: {relative}")
+
+    serialized = json.dumps(predicate, sort_keys=True).lower()
     errors.extend(
-        f"python NIST fork asserts something this piece does not prove: {claim}"
-        for claim in PYTHON_NIST_FORBIDDEN_CLAIMS
-        if claim in nist
+        f"generated NIST predicate asserts absent current evidence: {live_claim}"
+        for live_claim in (
+            "image is currently published",
+            "image is currently signed",
+            "rekor entry currently exists",
+            "slsa l3 provenance is currently present",
+        )
+        if live_claim in serialized
     )
-    errors.extend(
-        f"python NIST fork missing evidence pointer: {pointer}"
-        for pointer in PYTHON_NIST_REQUIRED_POINTERS
-        if pointer not in nist
-    )
-    # every workflow anchor must name a step or job that exists
-    errors.extend(
-        f"python NIST fork cites a workflow step that does not exist: {anchor}"
-        for anchor in re.findall(r"\.github/workflows/python-ci\.yaml#([^\"]+)", nist)
-        if f"name: {anchor}" not in workflow
-    )
-    # every file pointer must exist on disk
-    errors.extend(
-        f"python NIST fork cites a missing file: {relative}"
-        for relative in re.findall(r'evidence\(\s*"(?:script|test|doc|config|workflow)",\s*"([^"#]+)', nist)
-        if not (ROOT / relative).exists()
-    )
-    marker_count = nist.count(PYTHON_NIST_FLIP_MARKER)
-    if marker_count < 5:
-        errors.append(f"python NIST fork must mark every publication-dependent string; found {marker_count}")
     return errors
 
 
 def check_python_nist() -> None:
-    nist = read("images/python/tools/generate-nist-800-190-predicate.py")
+    source = read("images/python/tools/generate-nist-800-190-predicate.py")
     workflow = read(".github/workflows/python-ci.yaml")
-    errors = python_nist_errors(nist, workflow)
+    errors = python_nist_errors(source, workflow)
     require(not errors, "python NIST predicate contract failed: " + "; ".join(errors))
 
-    rejected = 0
-    for label, mutated in [
-        ("published claim restored", nist.replace("locally built image package", "published image package", 1)),
-        ("signing claim restored", nist + "\n# images are signed with the workflow identity\n"),
-        ("nonexistent step", nist.replace("#Run rootfs secret gate", "#Run imaginary secret gate")),
+    local_posture = "This control presently relies on source-level base-image identity and the local build gates."
+    mutations = [
         (
-            "missing file pointer",
-            nist.replace("images/python/tools/assert-sbom-rpms.py", "images/python/tools/gone.py"),
+            "live publication claim",
+            source.replace(local_posture, "The image is currently published.", 1),
         ),
-        ("markers stripped", nist.replace(PYTHON_NIST_FLIP_MARKER, "")),
-    ]:
+        (
+            "live signing claim",
+            source.replace(local_posture, "The image is currently signed.", 1),
+        ),
+        (
+            "live Rekor claim",
+            source.replace(local_posture, "A Rekor entry currently exists.", 1),
+        ),
+        (
+            "live SLSA-L3 claim",
+            source.replace(local_posture, "SLSA L3 provenance is currently present.", 1),
+        ),
+    ]
+    rejected = 0
+    for label, mutated in mutations:
+        require(mutated != source, f"python NIST mutation is a no-op: {label}")
         if python_nist_errors(mutated, workflow):
             rejected += 1
         else:
             raise VerifyError(f"python NIST mutation unexpectedly passed: {label}")
-    print(f"python NIST claim probes: {rejected}/5 rejected")
+    print(f"python NIST live-output claim probes: {rejected}/{len(mutations)} rejected")
 
 
-PYTHON_SECRET_REQUIRED = (
-    "MIN_SECRET_CONSTANT_LENGTH",
+PYTHON_SECRET_EXEMPTION_MANIFEST = (
+    (
+        "usr/lib64/python3.12/ftplib.py",
+        943,
+        943,
+        "cb8194107c08d9c2bdc617a2b9dace5519a52e13b2dad6db4dc4359a5ca317d6",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/getpass.py",
+        62,
+        62,
+        "771073b30ca7c10870b083b35f86949019cbc84d090562526d242a9c4d115072",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/getpass.py",
+        91,
+        91,
+        "771073b30ca7c10870b083b35f86949019cbc84d090562526d242a9c4d115072",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/imaplib.py",
+        1565,
+        1565,
+        "ac45565227fdd07d427d4c029a91e7bc5bb2e42397a21b343e3c383540cd09db",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/netrc.py",
+        138,
+        138,
+        "b96895a5a21507fde1ea2e1651baf80509423c0fa9c39772fd20794ca556a59c",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/urllib/parse.py",
+        198,
+        198,
+        "f97cb77ecd5ecc4f585ca175d5d665801f008ab835110811ce0ef2493ec97af9",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/urllib/parse.py",
+        228,
+        228,
+        "a7b6aa6aa9a059419352aa5658794e1659da2802b711bb0b837ac3ee479bda15",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/urllib/parse.py",
+        1157,
+        1157,
+        "3583ce5ff4cd6ef189bf3a2997374d5f7646d2afe1aba5c73975e65601b68c20",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/urllib/request.py",
+        1,
+        68,
+        "bbe2ec8b9a6ab52c1ed04b97a657c8e362890cdaa94cb0bdff77f48eb98d1b8c",
+        "module-docstring",
+    ),
+    (
+        "usr/lib64/python3.12/urllib/request.py",
+        782,
+        782,
+        "3e6eb2f5d600551a85470b99efb8fa902ec5bd9e88b7b792296794b0d6e95b59",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/urllib/request.py",
+        897,
+        898,
+        "6e07a0d837833fbec393598d38683249e2ac178869fd432acaa5ba1a711d5075",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/urllib/request.py",
+        959,
+        959,
+        "8ad7fb3d088dcc793035b9c8a66b4d84548a0617e30dcd5fbe86272671b6e569",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/urllib/request.py",
+        1026,
+        1026,
+        "27ce53ce8467932203fa48cf4210597d2f961bf860915295516e6e499a3cb844",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/urllib/request.py",
+        1089,
+        1089,
+        "286ba1f2afed78804f965b70bb8efa43832f78d691dc13b7a17ed3367111cf66",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/urllib/request.py",
+        1548,
+        1548,
+        "7af5901a10d55f76db49025f4c4aa32ba37d8a9a31e833f57ab60274521935da",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/urllib/request.py",
+        2074,
+        2074,
+        "7af5901a10d55f76db49025f4c4aa32ba37d8a9a31e833f57ab60274521935da",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/urllib/request.py",
+        2304,
+        2304,
+        "dfd155a710256dc8f338832497d70a288a8d9893465af49190bc023c15cd2945",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/urllib/request.py",
+        2322,
+        2322,
+        "dfd155a710256dc8f338832497d70a288a8d9893465af49190bc023c15cd2945",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/urllib/request.py",
+        2336,
+        2336,
+        "ff2554b4ec291817c441a5d94c24036eef9505d43be9346313f9a28aa7a42d4b",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/urllib/request.py",
+        2350,
+        2350,
+        "ff2554b4ec291817c441a5d94c24036eef9505d43be9346313f9a28aa7a42d4b",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/urllib/request.py",
+        2367,
+        2367,
+        "4cc19560e297c8c835dd39e1d44c0cfb1b2ef31b194926114c40d91de84ed1f5",
+        "credential-assignment",
+    ),
+    (
+        "usr/lib64/python3.12/urllib/request.py",
+        2368,
+        2368,
+        "9f6d815cd1e039f74457748c96232043779b2a26d03d7416a8545d874ae00ad0",
+        "conditional-test-artifact",
+    ),
+    (
+        "usr/lib64/python3.12/urllib/request.py",
+        2376,
+        2377,
+        "761da6d80a8c89a32eb73e99104da67dcd0c8038fad4566507918174184b8797",
+        "credential-assignment",
+    ),
+)
+PYTHON_SECRET_FORBIDDEN_ROLE_INFERENCE = (
+    "_resolved_getpass_modules",
+    "_constant_role",
+    "_module_bindings",
     "PROMPT_CALLEE_NAMES",
     "PROMPT_CALLEE_MODULES",
-    "DOCSTRING_EXEMPTIONS",
-    "def _constant_role",
-    "def classify_python_match",
-    "return False  # unresolved alias: fail closed",
-    "REAL_WORLD_BENIGN_FIXTURES",
-    "REAL_WORLD_FINDING_FIXTURES",
+    "KEY_CALLEE_NAMES",
 )
 
 
+def _extract_python_secret_manifest(tree: ast.Module) -> tuple[tuple[Any, ...], ...] | None:
+    for node in tree.body:
+        if (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "CPYTHON_STATEMENT_EXEMPTIONS"
+            and isinstance(node.value, ast.Tuple)
+        ):
+            records: list[tuple[Any, ...]] = []
+            for entry in node.value.elts:
+                if (
+                    not isinstance(entry, ast.Call)
+                    or not isinstance(entry.func, ast.Name)
+                    or entry.func.id != "StatementExemption"
+                ):
+                    return None
+                try:
+                    records.append(tuple(ast.literal_eval(argument) for argument in entry.args))
+                except (ValueError, TypeError):
+                    return None
+            return tuple(records)
+    return None
+
+
+def _run_python_tool_self_test(source: str, prefix: str) -> str | None:
+    with tempfile.TemporaryDirectory(prefix=prefix) as raw_tmp:
+        tool = Path(raw_tmp) / "tool.py"
+        tool.write_text(source, encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(tool), "--self-test"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    if result.returncode == 0:
+        return None
+    return result.stderr.strip() or result.stdout.strip() or f"self-test exited {result.returncode}"
+
+
 def python_secret_classifier_errors(source: str) -> list[str]:
-    """The classifier may only ever narrow a match with a proven-benign shape."""
+    """Execute the scanner contract and inspect its exact exemption manifest and claim."""
     errors: list[str] = []
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return [f"python secret classifier source does not parse: {exc}"]
+
+    module_docstring = ast.get_docstring(tree, clean=False) or ""
     errors.extend(
-        f"python secret classifier missing load-bearing element: {marker}"
-        for marker in PYTHON_SECRET_REQUIRED
-        if marker not in source
+        f"python secret classifier docstring missing narrow-claim language: {required_claim}"
+        for required_claim in (
+            "does not claim general hard-coded-secret coverage",
+            "inherited textual pattern",
+            "alias chains",
+        )
+        if required_claim not in module_docstring
     )
-    if "except (SyntaxError, ValueError, RecursionError)" not in source:
-        errors.append("python secret classifier must fail closed on parse errors")
-    if "tree = None  # fail closed" not in source:
-        errors.append("python secret classifier must keep matches when a file cannot be parsed")
-    # a value-role constant must always remain a finding
-    if 'if role == "value":\n            return False' not in source:
-        errors.append("python secret classifier must reject value-role constants")
-    # the docstring exemption must be content-keyed, never path-only
-    if "hashlib.sha256(docstring.encode" not in source:
-        errors.append("python secret docstring exemption must be keyed by content hash")
-    findings = source.count('("') if "REAL_WORLD_FINDING_FIXTURES" in source else 0
-    if findings < 10:
-        errors.append("python secret classifier self-test must plant a broad rejection set")
+    if "Hard-coded credential material remains a finding wherever it appears" in module_docstring:
+        errors.append("python secret classifier must not restore an absolute hard-coded-secret coverage claim")
+
+    errors.extend(
+        f"python secret classifier must not infer general prompt/lookup/alias roles: {forbidden}"
+        for forbidden in PYTHON_SECRET_FORBIDDEN_ROLE_INFERENCE
+        if forbidden in source
+    )
+
+    manifest = _extract_python_secret_manifest(tree)
+    if manifest != PYTHON_SECRET_EXEMPTION_MANIFEST:
+        errors.append("python secret classifier exact 23-statement CPython exemption manifest drifted")
+
+    self_test_error = _run_python_tool_self_test(source, "verify-python-secret-")
+    if self_test_error is not None:
+        errors.append(f"python secret classifier executable self-test failed: {self_test_error}")
     return errors
 
 
@@ -4646,24 +5109,247 @@ def check_python_secret_classifier() -> None:
     errors = python_secret_classifier_errors(source)
     require(not errors, "python secret classifier contract failed: " + "; ".join(errors))
 
-    rejected = 0
-    for label, mutated in [
-        ("fail-open parse", source.replace("except (SyntaxError, ValueError, RecursionError)", "except OSError")),
+    broad_lines = source.replace(
+        "record.start_line == statement.lineno\n            and record.end_line == statement.end_lineno",
+        "True\n            and True",
+        1,
+    )
+    mutations = [
+        ("path exemption broadened", source.replace("record.path == rel", "True", 1)),
+        ("line exemption broadened", broad_lines),
+        ("hash exemption broadened", source.replace("record.statement_hash == statement_hash", "True", 1)),
         (
-            "value role accepted",
+            "parse fallback opened",
             source.replace(
-                'if role == "value":\n            return False', 'if role == "value":\n            return True'
+                "tree = None  # fail closed: every surfaced match stays a finding",
+                "continue  # fail open mutation",
+                1,
             ),
         ),
-        ("alias fail-open", source.replace("return False  # unresolved alias: fail closed", "return True")),
-        ("docstring path-only", source.replace("hashlib.sha256(docstring.encode", "str((docstring or '').encode")),
-        ("prompt allowlist removed", source.replace("PROMPT_CALLEE_NAMES", "REMOVED_NAMES")),
-    ]:
+        (
+            "absolute coverage claim restored",
+            source.replace(
+                "This gate does not claim general hard-coded-secret coverage.",
+                "Hard-coded credential material remains a finding wherever it appears.",
+                1,
+            ),
+        ),
+        ("B2 limitation removed", source.replace('("str()",', '("removed-str()",', 1)),
+        (
+            "exact exemption changed",
+            source.replace(
+                "cb8194107c08d9c2bdc617a2b9dace5519a52e13b2dad6db4dc4359a5ca317d6",
+                "0b8194107c08d9c2bdc617a2b9dace5519a52e13b2dad6db4dc4359a5ca317d6",
+                1,
+            ),
+        ),
+    ]
+    rejected = 0
+    for label, mutated in mutations:
+        require(mutated != source, f"python secret classifier mutation is a no-op: {label}")
         if python_secret_classifier_errors(mutated):
             rejected += 1
         else:
             raise VerifyError(f"python secret classifier mutation unexpectedly passed: {label}")
-    print(f"python secret classifier probes: {rejected}/5 rejected")
+    print(f"python secret classifier executable probes: {rejected}/{len(mutations)} rejected")
+
+
+PYTHON_SQLITE_VEX_PATH = "images/python/vex/sqlite-3.41-not-affected.openvex.json"
+PYTHON_SQLITE_CVES = (
+    "CVE-2026-51296",
+    "CVE-2026-51297",
+    "CVE-2026-51302",
+    "CVE-2026-51303",
+    "CVE-2026-51304",
+)
+PYTHON_SQLITE_VEX_PRODUCTS = (
+    "local/ubi9-base-python:ci-amd64",
+    "local/ubi9-base-python:ci-arm64",
+    "pkg:oci/ubi9-base-python",
+)
+PYTHON_SQLITE_SUBCOMPONENT = "pkg:rpm/redhat/sqlite-libs@3.34.1-10.el9_8"
+PYTHON_SQLITE_IMPACT = (
+    "The image ships sqlite-libs 3.34.1-10.el9_8. This vulnerability applies to code introduced in upstream "
+    "SQLite 3.41, so the vulnerable code is not present in the shipped 3.34.1 package."
+)
+
+
+def _expected_python_sqlite_products() -> list[dict[str, Any]]:
+    return [
+        {
+            "@id": "local/ubi9-base-python:ci-amd64",
+            "subcomponents": [{"@id": PYTHON_SQLITE_SUBCOMPONENT}],
+        },
+        {
+            "@id": "local/ubi9-base-python:ci-arm64",
+            "subcomponents": [{"@id": PYTHON_SQLITE_SUBCOMPONENT}],
+        },
+        {
+            "@id": "pkg:oci/ubi9-base-python",
+            "identifiers": {"purl": "pkg:oci/ubi9-base-python"},
+            "subcomponents": [{"@id": PYTHON_SQLITE_SUBCOMPONENT}],
+        },
+    ]
+
+
+def python_sqlite_vex_errors(document: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    if document.get("@context") != "https://openvex.dev/ns/v0.2.0":
+        errors.append("python SQLite VEX must use the OpenVEX 0.2 context")
+    statements = document.get("statements")
+    if not isinstance(statements, list):
+        return [*errors, "python SQLite VEX statements must be a list"]
+    if len(statements) != len(PYTHON_SQLITE_CVES):
+        errors.append("python SQLite VEX must contain exactly five distinct statements")
+        return errors
+
+    found_cves: list[str] = []
+    expected_products = _expected_python_sqlite_products()
+    expected_keys = {"vulnerability", "products", "status", "justification", "impact_statement"}
+    for index, raw_statement in enumerate(statements):
+        if not isinstance(raw_statement, dict):
+            errors.append(f"python SQLite VEX statement {index} must be an object")
+            continue
+        vulnerability = raw_statement.get("vulnerability")
+        cve = str(vulnerability.get("name", "")) if isinstance(vulnerability, dict) else ""
+        found_cves.append(cve)
+        if set(raw_statement) != expected_keys:
+            errors.append(f"python SQLite VEX statement {cve or index} has unexpected or missing fields")
+        if vulnerability != {"name": cve}:
+            errors.append(f"python SQLite VEX statement {cve or index} vulnerability must contain only its name")
+        if raw_statement.get("status") != "not_affected":
+            errors.append(f"python SQLite VEX statement {cve or index} status must be not_affected")
+        if raw_statement.get("justification") != "vulnerable_code_not_present":
+            errors.append(
+                f"python SQLite VEX statement {cve or index} justification must be vulnerable_code_not_present"
+            )
+        if raw_statement.get("impact_statement") != PYTHON_SQLITE_IMPACT:
+            errors.append(f"python SQLite VEX statement {cve or index} must record the 3.41-vs-3.34.1 basis")
+        if raw_statement.get("products") != expected_products:
+            errors.append(
+                f"python SQLite VEX statement {cve or index} must bind both CI products, the family id, "
+                "and the exact sqlite-libs subcomponent"
+            )
+    if tuple(found_cves) != PYTHON_SQLITE_CVES or len(set(found_cves)) != len(PYTHON_SQLITE_CVES):
+        errors.append("python SQLite VEX vulnerability set or statement order drifted")
+    return errors
+
+
+def _python_sqlite_vex_replay(document: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="verify-python-vex-") as raw_tmp:
+        tmp = Path(raw_tmp)
+        vex_dir = tmp / "vex"
+        vex_dir.mkdir()
+        (vex_dir / "sqlite.openvex.json").write_text(
+            json.dumps(document, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        trivy = tmp / "trivy.json"
+        grype = tmp / "grype.json"
+        trivy.write_text(
+            json.dumps(
+                {
+                    "Results": [
+                        {
+                            "Vulnerabilities": [
+                                {
+                                    "VulnerabilityID": cve,
+                                    "PkgName": "sqlite-libs",
+                                    "InstalledVersion": "3.34.1-10.el9_8",
+                                    "Severity": "HIGH",
+                                }
+                                for cve in PYTHON_SQLITE_CVES
+                            ]
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        grype.write_text('{"matches": []}\n', encoding="utf-8")
+        for product in PYTHON_SQLITE_VEX_PRODUCTS[:2]:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "tools/assert-vex.py"),
+                    "--product",
+                    product,
+                    "--trivy-json",
+                    str(trivy),
+                    "--grype-json",
+                    str(grype),
+                    "--vex-dir",
+                    str(vex_dir),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                errors.append(
+                    f"python SQLite VEX synthetic replay failed for {product}: "
+                    f"{result.stderr.strip() or result.stdout.strip()}"
+                )
+    return errors
+
+
+def check_python_sqlite_vex() -> None:
+    document = json.loads(read(PYTHON_SQLITE_VEX_PATH))
+    require(isinstance(document, dict), "python SQLite VEX document must be a JSON object")
+    typed_document = cast(dict[str, Any], document)
+    errors = python_sqlite_vex_errors(typed_document)
+    errors.extend(_python_sqlite_vex_replay(typed_document))
+    require(not errors, "python SQLite VEX contract failed: " + "; ".join(errors))
+
+
+def check_python_sqlite_vex_self_test() -> None:
+    document = json.loads(read(PYTHON_SQLITE_VEX_PATH))
+    require(isinstance(document, dict), "python SQLite VEX self-test baseline must be an object")
+    baseline = cast(dict[str, Any], document)
+    require(not python_sqlite_vex_errors(baseline), "python SQLite VEX self-test baseline failed")
+
+    def mutated_document(apply: Any) -> dict[str, Any]:
+        clone: dict[str, Any] = copy.deepcopy(baseline)
+        apply(clone)
+        return clone
+
+    mutations = [
+        (
+            "CVE altered",
+            mutated_document(lambda clone: clone["statements"][0]["vulnerability"].update(name="CVE-2099-0000")),
+        ),
+        (
+            "sqlite version altered",
+            mutated_document(
+                lambda clone: clone["statements"][0]["products"][0]["subcomponents"][0].update(
+                    {"@id": "pkg:rpm/redhat/sqlite-libs@3.41.0"}
+                )
+            ),
+        ),
+        (
+            "status altered",
+            mutated_document(lambda clone: clone["statements"][0].update(status="affected")),
+        ),
+        (
+            "justification altered",
+            mutated_document(lambda clone: clone["statements"][0].update(justification="component_not_present")),
+        ),
+        (
+            "product altered",
+            mutated_document(
+                lambda clone: clone["statements"][0]["products"][0].update({"@id": "local/ubi9-base-python:ci-other"})
+            ),
+        ),
+    ]
+    rejected = 0
+    for label, mutated in mutations:
+        if python_sqlite_vex_errors(mutated):
+            rejected += 1
+        else:
+            raise VerifyError(f"python SQLite VEX mutation unexpectedly passed: {label}")
+    print(f"python SQLite VEX mutation probes: {rejected}/{len(mutations)} rejected; both CI product replays passed")
 
 
 def check_build_script() -> None:
@@ -7285,6 +7971,8 @@ def main() -> int:
         check_publish_scope_gate_self_test,
         check_python_evidence,
         check_python_evidence_self_test,
+        check_python_sqlite_vex,
+        check_python_sqlite_vex_self_test,
         check_python_contract_schema,
         check_python_contract_schema_self_test,
         check_build_script,

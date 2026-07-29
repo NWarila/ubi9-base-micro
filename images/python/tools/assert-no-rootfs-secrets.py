@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
-# Purpose: Fail if a container rootfs contains high-confidence clear-text secrets, with role-aware
-#          classification of credential-named assignments in shipped Python source
+# Purpose: Fail if a container rootfs contains high-confidence clear-text secrets, with exact
+#          content-addressed exemptions for reviewed CPython regex false positives
 # Role: gate
 # Micro-container candidate: yes - pure-stdlib, rootfs-in/exit-out, has --self-test
 
 """Rootfs secret gate for images that ship a Python standard library.
 
-Fork of the root scanner. Every pattern, threshold, and traversal rule is
-inherited unchanged; the single addition is a classifier for
-``generic-secret-assignment`` matches inside ``*.py`` files, because the shipped
-CPython standard library assigns credential-named variables from dynamic
-expressions (``password = lexer.get_token()``) and passes long prompt strings to
-``getpass``. Those are not secrets. Hard-coded credential material remains a
-finding wherever it appears, including inside such expressions.
+This is a deliberately narrow fork of the root scanner. It detects the inherited
+high-confidence token patterns and credential-named assignments only when the
+assignment value matches the inherited textual pattern. Exact reviewed CPython
+false positives are exempted by rootfs-relative path, statement span, normalized
+enclosing-statement hash, and an AST proof of the expected statement kind.
 
-Classification is fail-closed: any parse failure, any unresolved alias, and any
-credential-named match that does not map to a recognized shape stays a finding.
+This gate does not claim general hard-coded-secret coverage. Encoded, composed,
+or indirect values are outside the generic assignment pattern, including
+``str()``, ``bytes().decode()``, ``.join()``, ``.format()``, ``%`` formatting,
+dict or tuple indexing, walrus expressions, conditionals, annotated class
+attributes, comprehensions, lambda values, star-args, ``+=``, and alias chains.
+Those inherited coverage limits are explicit self-test fixtures below.
 
-Inherited limitation, unchanged by this fork: the generic assignment pattern does
-not match an f-string right-hand side, because ``f"`` falls outside its value
-character class. Such a literal is therefore never surfaced to the classifier by
-either the root scanner or this one. Constants reached through concatenation,
-call arguments, and aliases are covered.
+Classification is fail-closed for surfaced matches: parse failures, exemption
+drift, moved statements, new statements, and unreviewed paths remain findings.
 """
 
 from __future__ import annotations
@@ -33,35 +32,13 @@ import json
 import re
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 MAX_TEXT_BYTES = 8 * 1024 * 1024
 SAMPLE_SCAN_BYTES = 64 * 1024
 WINDOWS_DRIVE_PATH = re.compile(r"^[A-Za-z]:[\\/]")
-MIN_SECRET_CONSTANT_LENGTH = 12
-CREDENTIAL_NAME_HINTS: Final = frozenset(
-    {
-        "aws_secret_access_key",
-        "secret_access_key",
-        "client_secret",
-        "api_key",
-        "apikey",
-        "access_token",
-        "auth_token",
-        "password",
-        "passwd",
-        "private_key",
-    }
-)
-
-# Closed prompt-source rule: only these callees may carry a long literal that is not credential
-# material, and only in argument 0 or the `prompt=` keyword. Any other callee is a VALUE role.
-PROMPT_CALLEE_NAMES = frozenset({"getpass", "getuser", "unix_getpass", "win_getpass", "fallback_getpass"})
-PROMPT_CALLEE_MODULES = frozenset({"getpass"})
-# Lookup-key roles: a long literal naming a variable to read is not credential material.
-KEY_CALLEE_NAMES = frozenset({"get", "getenv", "environ"})
 
 
 @dataclass(frozen=True)
@@ -101,36 +78,212 @@ HIGH_CONFIDENCE_SAMPLE_PATTERNS = [
     pattern for pattern in SECRET_PATTERNS if pattern.name in HIGH_CONFIDENCE_SAMPLE_PATTERN_NAMES
 ]
 
-# Semantic docstring exemptions: an illustrative credential literal inside a module/class/function
-# docstring. Keyed by rootfs-relative path plus the sha256 of the COMPLETE docstring text, so an RPM
-# update that merely moves the docstring does not churn the entry, and identical text in executable
-# code cannot inherit the exemption. Reviewed individually; additions require re-review.
-DOCSTRING_EXEMPTIONS: dict[str, frozenset[str]] = {
-    # urllib/request.py module docstring: the ProxyHandler usage example carries passwd='geheim$parole'.
-    "usr/lib64/python3.12/urllib/request.py": frozenset(
-        {"dc98f56bac25b2064f7873b73e84c7fd062fe4c39de85323b3501f528cc1d8b1"}
+
+@dataclass(frozen=True)
+class StatementExemption:
+    """One measured CPython statement, bound to content, location, and AST shape."""
+
+    path: str
+    start_line: int
+    end_line: int
+    statement_hash: str
+    expected_kind: str
+
+
+# These are the 23 generic-assignment matches measured in the pinned CPython 3.12.13 rootfs.
+# The hash is sha256(ast.dump(statement, include_attributes=False)). A package update, source
+# relocation, or statement edit intentionally loses the exemption and requires fresh review.
+CPYTHON_STATEMENT_EXEMPTIONS: Final[tuple[StatementExemption, ...]] = (
+    StatementExemption(
+        "usr/lib64/python3.12/ftplib.py",
+        943,
+        943,
+        "cb8194107c08d9c2bdc617a2b9dace5519a52e13b2dad6db4dc4359a5ca317d6",
+        "credential-assignment",
     ),
-}
+    StatementExemption(
+        "usr/lib64/python3.12/getpass.py",
+        62,
+        62,
+        "771073b30ca7c10870b083b35f86949019cbc84d090562526d242a9c4d115072",
+        "credential-assignment",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/getpass.py",
+        91,
+        91,
+        "771073b30ca7c10870b083b35f86949019cbc84d090562526d242a9c4d115072",
+        "credential-assignment",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/imaplib.py",
+        1565,
+        1565,
+        "ac45565227fdd07d427d4c029a91e7bc5bb2e42397a21b343e3c383540cd09db",
+        "credential-assignment",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/netrc.py",
+        138,
+        138,
+        "b96895a5a21507fde1ea2e1651baf80509423c0fa9c39772fd20794ca556a59c",
+        "credential-assignment",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/urllib/parse.py",
+        198,
+        198,
+        "f97cb77ecd5ecc4f585ca175d5d665801f008ab835110811ce0ef2493ec97af9",
+        "credential-assignment",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/urllib/parse.py",
+        228,
+        228,
+        "a7b6aa6aa9a059419352aa5658794e1659da2802b711bb0b837ac3ee479bda15",
+        "credential-assignment",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/urllib/parse.py",
+        1157,
+        1157,
+        "3583ce5ff4cd6ef189bf3a2997374d5f7646d2afe1aba5c73975e65601b68c20",
+        "credential-assignment",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/urllib/request.py",
+        1,
+        68,
+        "bbe2ec8b9a6ab52c1ed04b97a657c8e362890cdaa94cb0bdff77f48eb98d1b8c",
+        "module-docstring",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/urllib/request.py",
+        782,
+        782,
+        "3e6eb2f5d600551a85470b99efb8fa902ec5bd9e88b7b792296794b0d6e95b59",
+        "credential-assignment",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/urllib/request.py",
+        897,
+        898,
+        "6e07a0d837833fbec393598d38683249e2ac178869fd432acaa5ba1a711d5075",
+        "credential-assignment",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/urllib/request.py",
+        959,
+        959,
+        "8ad7fb3d088dcc793035b9c8a66b4d84548a0617e30dcd5fbe86272671b6e569",
+        "credential-assignment",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/urllib/request.py",
+        1026,
+        1026,
+        "27ce53ce8467932203fa48cf4210597d2f961bf860915295516e6e499a3cb844",
+        "credential-assignment",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/urllib/request.py",
+        1089,
+        1089,
+        "286ba1f2afed78804f965b70bb8efa43832f78d691dc13b7a17ed3367111cf66",
+        "credential-assignment",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/urllib/request.py",
+        1548,
+        1548,
+        "7af5901a10d55f76db49025f4c4aa32ba37d8a9a31e833f57ab60274521935da",
+        "credential-assignment",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/urllib/request.py",
+        2074,
+        2074,
+        "7af5901a10d55f76db49025f4c4aa32ba37d8a9a31e833f57ab60274521935da",
+        "credential-assignment",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/urllib/request.py",
+        2304,
+        2304,
+        "dfd155a710256dc8f338832497d70a288a8d9893465af49190bc023c15cd2945",
+        "credential-assignment",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/urllib/request.py",
+        2322,
+        2322,
+        "dfd155a710256dc8f338832497d70a288a8d9893465af49190bc023c15cd2945",
+        "credential-assignment",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/urllib/request.py",
+        2336,
+        2336,
+        "ff2554b4ec291817c441a5d94c24036eef9505d43be9346313f9a28aa7a42d4b",
+        "credential-assignment",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/urllib/request.py",
+        2350,
+        2350,
+        "ff2554b4ec291817c441a5d94c24036eef9505d43be9346313f9a28aa7a42d4b",
+        "credential-assignment",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/urllib/request.py",
+        2367,
+        2367,
+        "4cc19560e297c8c835dd39e1d44c0cfb1b2ef31b194926114c40d91de84ed1f5",
+        "credential-assignment",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/urllib/request.py",
+        2368,
+        2368,
+        "9f6d815cd1e039f74457748c96232043779b2a26d03d7416a8545d874ae00ad0",
+        "conditional-test-artifact",
+    ),
+    StatementExemption(
+        "usr/lib64/python3.12/urllib/request.py",
+        2376,
+        2377,
+        "761da6d80a8c89a32eb73e99104da67dcd0c8038fad4566507918174184b8797",
+        "credential-assignment",
+    ),
+)
+
+KNOWN_COVERAGE_LIMIT_FIXTURES: Final[tuple[tuple[str, str], ...]] = (
+    ("str()", 'password = str("correcthorsebatterystaple")\n'),
+    ("bytes().decode()", 'password = bytes("correcthorsebatterystaple", "utf-8").decode()\n'),
+    (".join()", 'password = "".join(["correcthorsebatterystaple", suffix])\n'),
+    (".format()", 'password = "{}{}".format("correcthorsebatterystaple", suffix)\n'),
+    ("% formatting", 'password = "%s" % "correcthorsebatterystaple"\n'),
+    ("dict indexing", 'd = {"secret": "correcthorsebatterystaple"}\npassword = d["secret"]\n'),
+    ("tuple indexing", 't = ("correcthorsebatterystaple",)\npassword = t[0]\n'),
+    ("walrus", 'if (password := "correcthorsebatterystaple"):\n    use(password)\n'),
+    ("conditional", 'password = source if ready else "correcthorsebatterystaple"\n'),
+    ("annotated class attribute", 'class Config:\n    password: str = "correcthorsebatterystaple"\n'),
+    ("comprehension", 'password = [value for value in ["correcthorsebatterystaple"]]\n'),
+    ("lambda value", 'password = lambda: "correcthorsebatterystaple"\n'),
+    ("star-args", 'password, *rest = ["correcthorsebatterystaple", "unused"]\n'),
+    ("+=", 'password = ""\npassword += "correcthorsebatterystaple"\n'),
+    ("short alias chain", 'a = "correcthorsebatterystaple"; b = a; password = b\n'),
+)
 
 
 class ClassifierCounters:
-    """Per-scan branch hit counts; asserted by the self-test so no branch can go untested."""
+    """Per-scan exemption count, exposed in the JSON report for auditability."""
 
     def __init__(self) -> None:
-        self.dynamic_assignment = 0
-        self.prompt_argument = 0
-        self.lookup_key = 0
-        self.non_assignment_artifact = 0
-        self.docstring_exemption = 0
+        self.content_addressed_exemption = 0
 
     def as_dict(self) -> dict[str, int]:
-        return {
-            "dynamicAssignment": self.dynamic_assignment,
-            "promptArgument": self.prompt_argument,
-            "lookupKey": self.lookup_key,
-            "nonAssignmentArtifact": self.non_assignment_artifact,
-            "docstringExemption": self.docstring_exemption,
-        }
+        return {"contentAddressedExemption": self.content_addressed_exemption}
 
 
 def is_probably_binary(sample: bytes) -> bool:
@@ -171,268 +324,89 @@ def _node_contains(node: ast.AST, line: int, column: int) -> bool:
     return not (line == end_line and column > getattr(node, "end_col_offset", 0))
 
 
-def _resolved_getpass_modules(tree: ast.AST) -> frozenset[str]:
-    """Local names that provably bind the stdlib getpass module via `import getpass[ as x]`.
-
-    A call through any other name — including an import aliased to a prompt-sounding name — is a
-    plain call, so a literal argument to it keeps its VALUE role.
-    """
+def _target_names(node: ast.AST) -> set[str]:
     names: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name == "getpass":
-                    names.add(alias.asname or "getpass")
-    return frozenset(names)
-
-
-def _build_parents(tree: ast.AST) -> dict[ast.AST, ast.AST]:
-    parents: dict[ast.AST, ast.AST] = {}
-    for parent in ast.walk(tree):
-        for child in ast.iter_child_nodes(parent):
-            parents[child] = parent
-    return parents
-
-
-def _target_names(node: ast.AST) -> list[str]:
-    names: list[str] = []
-    for sub in ast.walk(node):
-        if isinstance(sub, ast.Name):
-            names.append(sub.id.lower())
-        elif isinstance(sub, ast.Attribute):
-            names.append(sub.attr.lower())
+    for subnode in ast.walk(node):
+        if isinstance(subnode, ast.Name):
+            names.add(subnode.id.lower())
+        elif isinstance(subnode, ast.Attribute):
+            names.add(subnode.attr.lower())
     return names
 
 
-def _callee_labels(call: ast.Call) -> tuple[str, str]:
-    func = call.func
-    if isinstance(func, ast.Attribute):
-        module = func.value.id.lower() if isinstance(func.value, ast.Name) else ""
-        return module, func.attr.lower()
-    if isinstance(func, ast.Name):
-        return "", func.id.lower()
-    return "", ""
+def _enclosing_statement(tree: ast.AST, line: int, column: int) -> ast.stmt | None:
+    statements = [node for node in ast.walk(tree) if isinstance(node, ast.stmt) and _node_contains(node, line, column)]
+    if not statements:
+        return None
+    return min(
+        statements,
+        key=lambda node: (
+            (node.end_lineno or node.lineno) - node.lineno,
+            (node.end_col_offset or node.col_offset) - node.col_offset,
+        ),
+    )
 
 
-def _constant_role(constant: ast.AST, parents: dict[ast.AST, ast.AST], prompt_modules: frozenset[str]) -> str:
-    """Classify a string constant by the role it plays in the enclosing expression."""
-    parent = parents.get(constant)
-    child: ast.AST = constant
-    # A constant inside a format expression belongs to the same role as that expression.
-    while isinstance(parent, ast.BinOp | ast.JoinedStr | ast.FormattedValue | ast.Tuple):
-        child, parent = parent, parents.get(parent)
-    if isinstance(parent, ast.Subscript):
-        # d["password"] reads a key; "secret"[:] slices a literal secret. Only the index is a key.
-        return "lookup-key" if child is parent.slice else "value"
-    if isinstance(parent, ast.keyword):
-        keyword_parent = parents.get(parent)
-        if parent.arg == "prompt" and isinstance(keyword_parent, ast.Call):
-            module, name = _callee_labels(keyword_parent)
-            if name in PROMPT_CALLEE_NAMES and module in prompt_modules:
-                return "prompt"
-        return "value"
-    if isinstance(parent, ast.Call):
-        module, name = _callee_labels(parent)
-        position = parent.args.index(child) if child in parent.args else -1
-        if position == 0:
-            if name in PROMPT_CALLEE_NAMES and module in prompt_modules:
-                return "prompt"
-            if name in KEY_CALLEE_NAMES:
-                return "lookup-key"
-        return "value"
-    return "value"
+def _normalized_statement_hash(statement: ast.stmt) -> str:
+    normalized = ast.dump(statement, annotate_fields=True, include_attributes=False)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
-def _expression_is_benign(
-    expression: ast.AST,
-    parents: dict[ast.AST, ast.AST],
-    module_bindings: dict[str, ast.AST],
-    counters: ClassifierCounters,
-    prompt_modules: frozenset[str],
-    depth: int = 0,
-    seen: frozenset[str] = frozenset(),
+def _statement_proves_expected_kind(
+    statement: ast.stmt,
+    tree: ast.AST,
+    expected_kind: str,
+    key: str,
+    line: int,
+    column: int,
 ) -> bool:
-    """True when no constant reachable from the expression plays a credential-VALUE role.
-
-    Alias chains are followed at every hop, not just the first: a name is resolved to its binding
-    and that binding is classified by the same rules. A name that cannot be resolved, a chain that
-    revisits a name, and a chain deeper than the limit all fail closed.
-    """
-    if depth > 8:
-        return False
-    if isinstance(expression, ast.Name):
-        if expression.id in seen:
-            return False
-        bound = module_bindings.get(expression.id)
-        if bound is None:
-            return False  # unresolved alias: fail closed
-        benign = _expression_is_benign(
-            bound, parents, module_bindings, counters, prompt_modules, depth + 1, seen | {expression.id}
+    if expected_kind == "credential-assignment":
+        return isinstance(statement, ast.Assign) and any(key in _target_names(target) for target in statement.targets)
+    if expected_kind == "conditional-test-artifact":
+        return isinstance(statement, ast.If) and _node_contains(statement.test, line, column)
+    if expected_kind == "module-docstring":
+        return (
+            isinstance(tree, ast.Module)
+            and bool(tree.body)
+            and tree.body[0] is statement
+            and isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Constant)
+            and isinstance(statement.value.value, str)
+            and _node_contains(statement.value, line, column)
         )
-        if benign and depth == 0:
-            counters.dynamic_assignment += 1
-        return benign
-    saw_prompt = False
-    saw_key = False
-    for node in ast.walk(expression):
-        if isinstance(node, ast.Name) and node is not expression:
-            if node.id in seen:
-                return False
-            bound = module_bindings.get(node.id)
-            if bound is not None and not _expression_is_benign(
-                bound, parents, module_bindings, counters, prompt_modules, depth + 1, seen | {node.id}
-            ):
-                return False
-        if not isinstance(node, ast.Constant):
-            continue
-        value = node.value
-        if not isinstance(value, str | bytes) or len(value) < MIN_SECRET_CONSTANT_LENGTH:
-            continue
-        role = _constant_role(node, parents, prompt_modules)
-        if role == "value":
-            return False
-        saw_prompt = saw_prompt or role == "prompt"
-        saw_key = saw_key or role == "lookup-key"
-    if depth == 0:
-        if saw_prompt:
-            counters.prompt_argument += 1
-        elif saw_key:
-            counters.lookup_key += 1
-        else:
-            counters.dynamic_assignment += 1
-    return True
+    return False
 
 
-def _is_artifact_match(node: ast.AST, parents: dict[ast.AST, ast.AST], key: str) -> bool:
-    """The measured regex artifact: a credential Name inside an `if` test, where the regex ran on
-    past the suite colon into an unrelated one-line assignment target."""
-    if not isinstance(node, ast.Name) or node.id.lower() != key:
-        return False
-    parent = parents.get(node)
-    while parent is not None and not isinstance(parent, ast.If | ast.While):
-        if isinstance(parent, ast.stmt):
-            return False
-        parent = parents.get(parent)
-    if not isinstance(parent, ast.If | ast.While):
-        return False
-    return _node_contains(parent.test, node.lineno, node.col_offset)
-
-
-def _docstring_text(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> str | None:
-    parent = parents.get(node)
-    grandparent = parents.get(parent) if parent is not None else None
-    if not isinstance(parent, ast.Expr) or not isinstance(node, ast.Constant) or not isinstance(node.value, str):
-        return None
-    if not isinstance(grandparent, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
-        return None
-    body = getattr(grandparent, "body", [])
-    if not body or body[0] is not parent:
-        return None
-    return node.value
-
-
-def classify_python_match(
+def _is_reviewed_cpython_statement(
     rel: str,
     text: str,
     match: re.Match[str],
     tree: ast.AST,
-    parents: dict[ast.AST, ast.AST],
-    module_bindings: dict[str, ast.AST],
-    counters: ClassifierCounters,
-    prompt_modules: frozenset[str],
+    exemptions: tuple[StatementExemption, ...],
 ) -> bool:
-    """True when a credential-named match in Python source is provably not credential material."""
-    key = (match.groupdict().get("key") or "").lower()
     line, column = _offset_to_position(text, match.start("key"))
-
-    innermost: ast.AST | None = None
-    for node in ast.walk(tree):
+    statement = _enclosing_statement(tree, line, column)
+    if statement is None:
+        return False
+    key = (match.groupdict().get("key") or "").lower()
+    statement_hash = _normalized_statement_hash(statement)
+    for record in exemptions:
         if (
-            isinstance(node, ast.Name | ast.Attribute | ast.keyword | ast.arg | ast.Constant)
-            and _node_contains(node, line, column)
-            and (innermost is None or getattr(node, "col_offset", -1) >= getattr(innermost, "col_offset", -1))
+            record.path == rel
+            and record.start_line == statement.lineno
+            and record.end_line == statement.end_lineno
+            and record.statement_hash == statement_hash
+            and _statement_proves_expected_kind(
+                statement,
+                tree,
+                record.expected_kind,
+                key,
+                line,
+                column,
+            )
         ):
-            innermost = node
-
-    if innermost is None:
-        return False
-
-    docstring = _docstring_text(innermost, parents)
-    if docstring is not None:
-        digest = hashlib.sha256(docstring.encode("utf-8")).hexdigest()
-        if digest in DOCSTRING_EXEMPTIONS.get(rel, frozenset()):
-            counters.docstring_exemption += 1
             return True
-        return False
-
-    # Walk up to the credential-binding statement, if any.
-    current: ast.AST | None = innermost
-    while current is not None:
-        parent = parents.get(current)
-        if isinstance(parent, ast.Assign) and any(key in _target_names(target) for target in parent.targets):
-            return _expression_is_benign(parent.value, parents, module_bindings, counters, prompt_modules)
-        if isinstance(parent, ast.AnnAssign | ast.AugAssign) and key in _target_names(parent.target):
-            return parent.value is not None and _expression_is_benign(parent.value, parents, module_bindings, counters)
-        if isinstance(parent, ast.keyword) and (parent.arg or "").lower() == key:
-            return _expression_is_benign(parent.value, parents, module_bindings, counters, prompt_modules)
-        if isinstance(parent, ast.arguments):
-            for arg, default in _parameter_defaults(parent):
-                if arg.arg.lower() == key and default is not None:
-                    return _expression_is_benign(default, parents, module_bindings, counters, prompt_modules)
-        if isinstance(parent, ast.stmt):
-            break
-        current = parent
-
-    if _is_artifact_match(innermost, parents, key):
-        # The regex consumed an `if`-test name and ran past the suite colon. Suppressing the match
-        # must not shield a credential assignment sharing the statement, so re-examine the whole
-        # statement: any credential-named assignment in it must itself classify benign.
-        statement: ast.AST | None = innermost
-        while statement is not None and not isinstance(statement, ast.stmt):
-            statement = parents.get(statement)
-        if statement is not None:
-            for node in ast.walk(statement):
-                targets: list[ast.expr] = []
-                value: ast.expr | None = None
-                if isinstance(node, ast.Assign):
-                    targets, value = list(node.targets), node.value
-                elif isinstance(node, ast.AnnAssign | ast.AugAssign):
-                    targets, value = [node.target], node.value
-                if value is None:
-                    continue
-                if not any(
-                    any(hint in name for name in _target_names(target) for hint in CREDENTIAL_NAME_HINTS)
-                    for target in targets
-                ):
-                    continue
-                if not _expression_is_benign(value, parents, module_bindings, counters, prompt_modules):
-                    return False
-        counters.non_assignment_artifact += 1
-        return True
     return False
-
-
-def _parameter_defaults(arguments: ast.arguments) -> list[tuple[ast.arg, ast.expr | None]]:
-    positional = list(arguments.posonlyargs) + list(arguments.args)
-    padded: list[ast.expr | None] = [None] * (len(positional) - len(arguments.defaults))
-    pairs = list(zip(positional, padded + list(arguments.defaults), strict=True))
-    pairs.extend(zip(arguments.kwonlyargs, arguments.kw_defaults, strict=True))
-    return pairs
-
-
-def _module_bindings(tree: ast.AST) -> dict[str, ast.AST]:
-    bindings: dict[str, ast.AST] = {}
-    duplicates: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    if target.id in bindings:
-                        duplicates.add(target.id)
-                    bindings[target.id] = node.value
-    for name in duplicates:  # ambiguous rebinding: refuse to resolve
-        bindings.pop(name, None)
-    return bindings
 
 
 def append_findings(
@@ -441,12 +415,10 @@ def append_findings(
     text: str,
     patterns: list[SecretPattern],
     counters: ClassifierCounters,
+    exemptions: tuple[StatementExemption, ...],
 ) -> None:
     python_source = rel.endswith(".py")
     tree: ast.AST | None = None
-    parents: dict[ast.AST, ast.AST] = {}
-    bindings: dict[str, ast.AST] = {}
-    prompt_modules: frozenset[str] = frozenset()
     parsed = False
 
     for pattern in patterns:
@@ -460,20 +432,24 @@ def append_findings(
                         try:
                             tree = ast.parse(text)
                         except (SyntaxError, ValueError, RecursionError):
-                            tree = None  # fail closed: every match in this file stays a finding
-                        if tree is not None:
-                            parents = _build_parents(tree)
-                            bindings = _module_bindings(tree)
-                            prompt_modules = _resolved_getpass_modules(tree)
-                    if tree is not None and classify_python_match(
-                        rel, text, match, tree, parents, bindings, counters, prompt_modules
+                            tree = None  # fail closed: every surfaced match stays a finding
+                    if tree is not None and _is_reviewed_cpython_statement(
+                        rel,
+                        text,
+                        match,
+                        tree,
+                        exemptions,
                     ):
+                        counters.content_addressed_exemption += 1
                         continue
             line = text.count("\n", 0, match.start()) + 1
             findings.append({"path": rel, "line": line, "pattern": pattern.name})
 
 
-def scan(rootfs: Path) -> dict[str, Any]:
+def scan(
+    rootfs: Path,
+    exemptions: tuple[StatementExemption, ...] = CPYTHON_STATEMENT_EXEMPTIONS,
+) -> dict[str, Any]:
     if not rootfs.is_dir():
         raise SystemExit(f"rootfs directory does not exist: {rootfs}")
 
@@ -497,11 +473,25 @@ def scan(rootfs: Path) -> dict[str, Any]:
                 sample = handle.read(SAMPLE_SCAN_BYTES)
                 sample_text = sample.decode("utf-8", errors="ignore")
                 if is_probably_binary(sample):
-                    append_findings(findings, rel, sample_text, HIGH_CONFIDENCE_SAMPLE_PATTERNS, counters)
+                    append_findings(
+                        findings,
+                        rel,
+                        sample_text,
+                        HIGH_CONFIDENCE_SAMPLE_PATTERNS,
+                        counters,
+                        exemptions,
+                    )
                     skipped_binary += 1
                     continue
                 if size > MAX_TEXT_BYTES:
-                    append_findings(findings, rel, sample_text, HIGH_CONFIDENCE_SAMPLE_PATTERNS, counters)
+                    append_findings(
+                        findings,
+                        rel,
+                        sample_text,
+                        HIGH_CONFIDENCE_SAMPLE_PATTERNS,
+                        counters,
+                        exemptions,
+                    )
                     skipped_large += 1
                     continue
                 remainder = handle.read()
@@ -510,7 +500,7 @@ def scan(rootfs: Path) -> dict[str, Any]:
 
         text = (sample + remainder).decode("utf-8", errors="ignore")
         files_scanned += 1
-        append_findings(findings, rel, text, SECRET_PATTERNS, counters)
+        append_findings(findings, rel, text, SECRET_PATTERNS, counters, exemptions)
 
     return {
         "result": "failed" if findings else "passed",
@@ -534,148 +524,140 @@ def write_report(report: dict[str, Any], path: Path | None) -> None:
     path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-REAL_WORLD_BENIGN_FIXTURES: list[tuple[str, str]] = [
-    ("dynamic call", "password = lexer.get_token()\n"),
-    (
-        "dynamic attribute from bound parameter",
-        "def __init__(self, password_mgr=None):\n"
-        "    if password_mgr is None:\n"
-        "        password_mgr = HTTPPasswordMgr()\n"
-        "    self.passwd = password_mgr\n",
-    ),
-    ("tuple unpack from call", "username, have_password, password = userinfo.partition(':')\n"),
-    ("prompt argument", 'import getpass\nPASSWD = getpass.getpass("IMAP password for %s on %s: " % (u, h))\n'),
-    ("prompt keyword", 'import getpass\npassword = getpass.getpass(prompt="Enter the account password: ")\n'),
-    ("environ key", 'import os\npassword = os.environ.get("DATABASE_PASSWORD_VARIABLE")\n'),
-    ("alias to environ key", 'import os\nsource = os.environ.get("DATABASE_PASSWORD_VARIABLE")\npassword = source\n'),
-    ("non-assignment artifact", "if user or passwd: self.auth_cache[key] = (user, passwd)\n"),
-]
+CLAIMED_DETECTION_FIXTURES: Final[tuple[tuple[str, str], ...]] = (
+    ("direct credential assignment", 'password = "correcthorsebatterystaple"\n'),
+    ("unreviewed dynamic assignment", "password = lexer.get_token()\n"),
+    ("private key token", "-----BEGIN PRIVATE KEY-----\n"),
+    ("non-Python text assignment", "password=correcthorsebatterystaple\n"),
+)
 
-REAL_WORLD_FINDING_FIXTURES: list[tuple[str, str]] = [
-    ("direct literal", 'password = "correcthorsebatterystaple"\n'),
-    ("key-equal literal", 'client_secret = "client_secret_value_x"\n'),
-    ("literal plus suffix", 'password = "correcthorsebattery" + suffix\n'),
-    ("environ default literal", 'import os\npassword = os.environ.get("PW", "correcthorsebatterystaple")\n'),
-    ("aliased literal", 'hardcoded_value = "correcthorsebatterystaple"\npassword = hardcoded_value\n'),
-    (
-        "aliased through call",
-        'hardcoded_value = identity_value("correcthorsebatterystaple")\npassword = hardcoded_value\n',
-    ),
-    ("non-getpass call literal", 'password = identity_value("correcthorsebatterystaple")\n'),
-    ("parameter default", 'def connect(password="correcthorsebatterystaple"):\n    return password\n'),
-    ("keyword argument", 'connect(password="correcthorsebatterystaple")\n'),
-    ("unresolved alias", "password = mystery_value\n"),
-    ("different artifact shape", "if user: passwd = fetch_from_disk_constant_name\n"),
-    ("parse error file", 'password = "correcthorsebatterystaple"\ndef broken(:\n'),
-    # Bypasses proven against an earlier revision of this classifier; each must stay closed.
-    ("sliced literal", 'password = "correcthorsebatterystaple"[:]\n'),
-    ("reversed sliced literal", 'password = "elpatsyrettabesrohtcerroc"[::-1]\n'),
-    ("sliced literal in default", 'def connect(password="correcthorsebatterystaple"[:]):\n    return password\n'),
-    ("sliced literal in environ default", 'import os\npassword = os.environ.get("PW", "correcthorsebatterystaple"[:])\n'),
-    (
-        "multi-hop alias",
-        'first_hop_constant = "correcthorsebatterystaple"\n'
-        "second_hop_alias_x = first_hop_constant\n"
-        "password = second_hop_alias_x\n",
-    ),
-    (
-        "import aliased to a prompt name",
-        "from evil_module import exfiltrate as unix_getpass\n"
-        'password = unix_getpass("correcthorsebatterystaple")\n',
-    ),
-    ("artifact shielding an assignment", 'if passwd: self.password_cache = "correcthorsebatterystaple"\n'),
-    ("non-python file keeps text scan", "password=correcthorsebatterystaple\n"),
-]
+
+def _assert_scan_result(
+    root: Path,
+    label: str,
+    source: str,
+    expected: str,
+    *,
+    suffix: str = ".py",
+    exemptions: tuple[StatementExemption, ...] = CPYTHON_STATEMENT_EXEMPTIONS,
+) -> dict[str, Any]:
+    case_root = root / re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
+    case_root.mkdir()
+    (case_root / f"case{suffix}").write_text(source, encoding="utf-8")
+    report = scan(case_root, exemptions)
+    if report["result"] != expected:
+        raise SystemExit(f"self-test: {label} expected {expected}, got {report['result']}: {report['findings']}")
+    return report
 
 
 def run_self_test() -> None:
+    if len(CPYTHON_STATEMENT_EXEMPTIONS) != 23:
+        raise SystemExit("self-test: the reviewed CPython exemption set must contain exactly 23 statements")
+    if len({(record.path, record.start_line) for record in CPYTHON_STATEMENT_EXEMPTIONS}) != 23:
+        raise SystemExit("self-test: each reviewed CPython exemption must have a unique path and start line")
+
+    expected_limit_labels = {
+        "str()",
+        "bytes().decode()",
+        ".join()",
+        ".format()",
+        "% formatting",
+        "dict indexing",
+        "tuple indexing",
+        "walrus",
+        "conditional",
+        "annotated class attribute",
+        "comprehension",
+        "lambda value",
+        "star-args",
+        "+=",
+        "short alias chain",
+    }
+    if {label for label, _source in KNOWN_COVERAGE_LIMIT_FIXTURES} != expected_limit_labels:
+        raise SystemExit("self-test: the explicit B2 known-coverage-limit set drifted")
+    short_chain = dict(KNOWN_COVERAGE_LIMIT_FIXTURES)["short alias chain"]
+    if short_chain != 'a = "correcthorsebatterystaple"; b = a; password = b\n':
+        raise SystemExit("self-test: the short-name alias fixture must remain the adjudicated a -> b chain")
+
+    required_doc_terms = (
+        "does not claim general hard-coded-secret coverage",
+        "inherited textual pattern",
+        "alias chains",
+    )
+    docstring = __doc__ or ""
+    if any(term not in docstring for term in required_doc_terms):
+        raise SystemExit("self-test: scanner coverage claim is no longer precise")
+    if "Hard-coded credential material remains a finding wherever it appears" in docstring:
+        raise SystemExit("self-test: scanner docstring restored an absolute coverage claim")
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
+        for label, source in CLAIMED_DETECTION_FIXTURES:
+            suffix = ".conf" if label == "non-Python text assignment" else ".py"
+            _assert_scan_result(root, f"detected-{label}", source, "failed", suffix=suffix)
 
-        benign_root = root / "benign"
-        (benign_root / "usr/lib64/python3.12").mkdir(parents=True)
-        for index, (label, source) in enumerate(REAL_WORLD_BENIGN_FIXTURES):
-            (benign_root / f"usr/lib64/python3.12/case{index}.py").write_text(source, encoding="utf-8")
-            assert label
-        report = scan(benign_root)
-        if report["result"] != "passed":
-            raise SystemExit(f"self-test: measured-benign shapes produced findings: {report['findings']}")
-        counters = report["pythonClassifier"]
-        if counters["promptArgument"] < 2:
-            raise SystemExit(f"self-test: prompt branch not exercised: {counters}")
-        if counters["nonAssignmentArtifact"] < 1:
-            raise SystemExit(f"self-test: artifact branch not exercised: {counters}")
-        if counters["dynamicAssignment"] < 2:
-            raise SystemExit(f"self-test: dynamic branch not exercised: {counters}")
-        if counters["lookupKey"] < 1:
-            raise SystemExit(f"self-test: lookup-key branch not exercised: {counters}")
-
-        rejected = 0
-        for label, source in REAL_WORLD_FINDING_FIXTURES:
-            case_root = root / f"finding-{rejected}"
-            (case_root / "usr/lib64/python3.12").mkdir(parents=True)
-            name = "case.py" if label != "non-python file keeps text scan" else "case.conf"
-            (case_root / "usr/lib64/python3.12" / name).write_text(source, encoding="utf-8")
-            case_report = scan(case_root)
-            if case_report["result"] != "failed" or not case_report["findings"]:
-                raise SystemExit(f"self-test: hard-coded secret shape was not detected: {label}")
-            rejected += 1
-
-        docstring_root = root / "docstring"
-        (docstring_root / "usr/lib64/python3.12/urllib").mkdir(parents=True)
-        (docstring_root / "usr/lib64/python3.12/urllib/request.py").write_text(
-            '"""Example usage.\n\n    ProxyHandler(passwd=\'geheim$parole_value\')\n"""\n',
-            encoding="utf-8",
+        _assert_scan_result(
+            root,
+            "parse fallback",
+            'password = "correcthorsebatterystaple"\ndef broken(:\n',
+            "failed",
         )
-        unlisted = scan(docstring_root)
-        if unlisted["result"] != "failed":
-            raise SystemExit("self-test: an unlisted docstring literal must remain a finding")
 
-        # Positive branch: the committed exemption must actually fire for the exact docstring it
-        # names, and must not fire once that docstring changes.
-        listed_root = root / "docstring-listed"
-        listed_dir = listed_root / "usr/lib64/python3.12/urllib"
-        listed_dir.mkdir(parents=True)
-        exempt_path = "usr/lib64/python3.12/urllib/request.py"
-        digests = DOCSTRING_EXEMPTIONS.get(exempt_path, frozenset())
-        if not digests:
-            raise SystemExit("self-test: no committed docstring exemption to exercise")
-        docstring_body = "Example usage.\n\n    ProxyHandler(passwd='geheim$parole_value')\n"
-        (listed_root / exempt_path).write_text(f'"""{docstring_body}"""\n', encoding="utf-8")
-        recomputed = hashlib.sha256(docstring_body.encode("utf-8")).hexdigest()
-        patched = dict(DOCSTRING_EXEMPTIONS)
-        patched[exempt_path] = frozenset({recomputed})
-        original = dict(DOCSTRING_EXEMPTIONS)
-        DOCSTRING_EXEMPTIONS.clear()
-        DOCSTRING_EXEMPTIONS.update(patched)
-        try:
-            listed = scan(listed_root)
-            if listed["result"] != "passed":
-                raise SystemExit("self-test: a listed docstring literal must be exempt")
-            if listed["pythonClassifier"]["docstringExemption"] != 1:
-                raise SystemExit("self-test: the docstring exemption branch did not fire")
-            (listed_root / exempt_path).write_text(
-                f'"""{docstring_body}Extra sentence changes the hash.\n"""\n', encoding="utf-8"
-            )
-            drifted = scan(listed_root)
+        for label, source in KNOWN_COVERAGE_LIMIT_FIXTURES:
+            _assert_scan_result(root, f"known-limit-{label}", source, "passed")
+
+        reviewed_source = "password = lexer.get_token()\n"
+        reviewed_tree = ast.parse(reviewed_source)
+        reviewed_statement = reviewed_tree.body[0]
+        if not isinstance(reviewed_statement, ast.stmt):
+            raise SystemExit("self-test: synthetic reviewed statement is not an AST statement")
+        reviewed_path = "usr/lib64/python3.12/reviewed.py"
+        reviewed = StatementExemption(
+            reviewed_path,
+            1,
+            1,
+            _normalized_statement_hash(reviewed_statement),
+            "credential-assignment",
+        )
+
+        exact_root = root / "exact-reviewed"
+        exact_file = exact_root / reviewed_path
+        exact_file.parent.mkdir(parents=True)
+        exact_file.write_text(reviewed_source, encoding="utf-8")
+        exact_report = scan(exact_root, (reviewed,))
+        if exact_report["result"] != "passed":
+            raise SystemExit("self-test: exact content-addressed exemption did not pass")
+        if exact_report["pythonClassifier"]["contentAddressedExemption"] != 1:
+            raise SystemExit("self-test: exact content-addressed exemption branch did not execute")
+
+        drift_cases = (
+            ("changed statement", "password = other_source.get_token()\n", reviewed),
+            ("moved statement", "\npassword = lexer.get_token()\n", reviewed),
+            ("wrong path", reviewed_source, replace(reviewed, path="usr/lib64/python3.12/other.py")),
+            ("wrong AST kind", reviewed_source, replace(reviewed, expected_kind="module-docstring")),
+        )
+        for label, source, record in drift_cases:
+            exact_file.write_text(source, encoding="utf-8")
+            drifted = scan(exact_root, (record,))
             if drifted["result"] != "failed":
-                raise SystemExit("self-test: a changed docstring must lose its exemption")
-        finally:
-            DOCSTRING_EXEMPTIONS.clear()
-            DOCSTRING_EXEMPTIONS.update(original)
+                raise SystemExit(f"self-test: exemption drift unexpectedly passed: {label}")
 
         legacy_root = root / "legacy"
         legacy_root.mkdir()
-        (legacy_root / "openssl.cnf").write_text("private_key = /etc/pki/tls/private/x.key\n", encoding="utf-8")
+        (legacy_root / "openssl.cnf").write_text(
+            "private_key = /etc/pki/tls/private/x.key\n",
+            encoding="utf-8",
+        )
         (legacy_root / "key.bin").write_bytes(b"\x00-----BEGIN PRIVATE KEY-----\n")
         legacy = scan(legacy_root)
         if legacy["result"] != "failed" or legacy["skippedBinaryFiles"] != 1:
             raise SystemExit("self-test: inherited binary/high-confidence behavior regressed")
 
     print(
-        f"python rootfs secret scanner self-test passed: {len(REAL_WORLD_BENIGN_FIXTURES)} measured-benign "
-        f"shapes accepted, {rejected}/{len(REAL_WORLD_FINDING_FIXTURES)} hard-coded shapes rejected, "
-        "unlisted docstring literal rejected, inherited behavior intact"
+        "python rootfs secret scanner self-test passed: "
+        f"{len(CLAIMED_DETECTION_FIXTURES)} claimed detections found, "
+        "exact exemption accepted with four drift forms rejected, parse fallback failed closed, "
+        f"{len(KNOWN_COVERAGE_LIMIT_FIXTURES)} inherited coverage limits confirmed"
     )
 
 

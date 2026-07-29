@@ -19,3 +19,11 @@ packages are affected and gives downstream consumers mitigation guidance. This
 statement is documentary: it does not suppress the finding or satisfy the
 default-deny gate. The exact, expiring scanner suppression is maintained
 separately under `security/` and tracked as TD-6 in `docs/TECH-DEBT.md`.
+
+`sqlite-3.41-not-affected.openvex.json` records five distinct `not_affected`
+dispositions for CVE-2026-51296, CVE-2026-51297, CVE-2026-51302,
+CVE-2026-51303, and CVE-2026-51304. The image ships `sqlite-libs`
+3.34.1-10.el9_8, while the reported vulnerable code was introduced in upstream
+SQLite 3.41, so `vulnerable_code_not_present` is the applicable standard
+justification. The statements bind both CI product references and the stable
+base-python family identifier.
