@@ -3357,7 +3357,6 @@ def check_workflow() -> None:
         "--format json",
         '--file "${grype_json}"',
         "tools/assert-vex.py",
-        "--package-floor contracts/image-manifest.json",
         "tools/assert-no-rootfs-secrets.py",
         "tools/generate-nist-800-190-predicate.py",
         '--validate "${predicate}"',
@@ -3387,11 +3386,15 @@ def check_workflow() -> None:
 
     report_start = gate_runner.find('trivy_json="dist/vuln/base-micro.${arch}.trivy.all.json"')
     vex_start = gate_runner.find("python tools/assert-vex.py")
+    vex_end = gate_runner.find("\n\n", vex_start)
     require(
-        report_start >= 0 and vex_start > report_start, "test gate runner must keep an identifiable VEX report pass"
+        report_start >= 0 and vex_start > report_start and vex_end > vex_start,
+        "test gate runner must keep an identifiable bounded VEX report pass",
     )
     gate_pass = gate_runner[:report_start]
-    report_pass = gate_runner[report_start:vex_start]
+    report_pass = gate_runner[report_start:vex_end]
+    scanner_report_pass = gate_runner[report_start:vex_start]
+    vex_assert = gate_runner[vex_start:vex_end]
     require(
         "--ignorefile security/cve-ignore.trivyignore.yaml" in gate_pass
         and "-c security/cve-ignore.grype.yaml" in gate_pass,
@@ -3401,8 +3404,18 @@ def check_workflow() -> None:
         "--ignorefile" not in report_pass and "-c security/cve-ignore.grype.yaml" not in report_pass,
         "VEX report pass must remain unfiltered",
     )
-    require("--severity HIGH,CRITICAL" in report_pass, "Trivy VEX report severity scope must remain HIGH,CRITICAL")
-    require("--list-all-pkgs" in report_pass, "Trivy VEX report pass must enumerate the full package inventory")
+    require(
+        "--severity HIGH,CRITICAL" in scanner_report_pass,
+        "Trivy VEX report severity scope must remain HIGH,CRITICAL",
+    )
+    require(
+        "--list-all-pkgs" in scanner_report_pass,
+        "Trivy VEX report pass must enumerate the full package inventory",
+    )
+    require(
+        "--package-floor contracts/image-manifest.json" in vex_assert,
+        "test gate runner assert-vex invocation must use the root image package-floor contract",
+    )
 
     forbidden = [
         "NWarila/.github/.github/workflows/",

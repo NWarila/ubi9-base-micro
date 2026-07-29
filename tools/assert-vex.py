@@ -32,12 +32,14 @@ OPENVEX_NOT_AFFECTED_JUSTIFICATIONS = {
     "inline_mitigations_already_exist",
 }
 CONTENT_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
-DIGEST_IMAGE_REFERENCE = re.compile(r".+@sha256:[0-9a-f]{64}\Z")
+DIGEST_IMAGE_REFERENCE = re.compile(r"[^\s@]+@sha256:[0-9a-f]{64}\Z")
 RHEL_9_RELEASE = re.compile(r"9(?:\.[0-9]+)*\Z")
+SUPPORTED_ARCHITECTURES = {"amd64", "arm64"}
 TRIVY_FIX_STATUSES = {
     "affected",
     "end_of_life",
     "fixed",
+    "fix_deferred",
     "not_affected",
     "under_investigation",
     "unknown",
@@ -49,6 +51,15 @@ Mutation = Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], Any]
 
 class VexError(Exception):
     pass
+
+
+def reject_duplicate_members(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    document: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in document:
+            raise VexError(f"duplicate JSON object member {key!r}")
+        document[key] = value
+    return document
 
 
 @dataclass
@@ -96,7 +107,10 @@ class GrypeEvidence:
 
 def load_json(path: Path) -> Any:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicate_members,
+        )
     except FileNotFoundError as exc:
         raise VexError(f"missing JSON input: {path}") from exc
     except json.JSONDecodeError as exc:
@@ -118,9 +132,16 @@ def non_empty_string(value: Any, label: str) -> str:
 
 def content_digest(value: Any, label: str) -> str:
     digest = non_empty_string(value, label)
-    if CONTENT_DIGEST.fullmatch(digest) is None:
+    if digest != value or CONTENT_DIGEST.fullmatch(digest) is None:
         raise VexError(f"{label} must be a sha256 content digest")
     return digest
+
+
+def supported_architecture(value: Any, label: str) -> str:
+    architecture = non_empty_string(value, label)
+    if architecture != value or architecture not in SUPPORTED_ARCHITECTURES:
+        raise VexError(f"{label} must be amd64 or arm64")
+    return architecture
 
 
 def finding_severity(value: Any, label: str) -> str:
@@ -130,13 +151,20 @@ def finding_severity(value: Any, label: str) -> str:
     return normalized
 
 
-def optional_references(value: dict[str, Any], key: str, label: str) -> tuple[str, ...]:
+def repository_digest(value: Any, label: str) -> str:
+    reference = non_empty_string(value, label)
+    if reference != value or DIGEST_IMAGE_REFERENCE.fullmatch(reference) is None:
+        raise VexError(f"{label} must be a digest-qualified image reference")
+    return reference
+
+
+def optional_repo_digests(value: dict[str, Any], key: str, label: str) -> tuple[str, ...]:
     if key not in value:
         return ()
     raw_references = value[key]
     if not isinstance(raw_references, list):
         raise VexError(f"{label} must be a list when present")
-    return tuple(non_empty_string(reference, f"{label}[{index}]") for index, reference in enumerate(raw_references))
+    return tuple(repository_digest(reference, f"{label}[{index}]") for index, reference in enumerate(raw_references))
 
 
 def validate_trivy_report(document: dict[str, Any]) -> TrivyEvidence:
@@ -166,11 +194,11 @@ def validate_trivy_report(document: dict[str, Any]) -> TrivyEvidence:
     image_config = metadata.get("ImageConfig")
     if not isinstance(image_config, dict):
         raise VexError("Trivy Metadata.ImageConfig must be an object")
-    architecture = non_empty_string(
+    architecture = supported_architecture(
         image_config.get("architecture"),
         "Trivy Metadata.ImageConfig.architecture",
     )
-    repo_digests = optional_references(metadata, "RepoDigests", "Trivy Metadata.RepoDigests")
+    repo_digests = optional_repo_digests(metadata, "RepoDigests", "Trivy Metadata.RepoDigests")
 
     results = document.get("Results")
     if not isinstance(results, list):
@@ -238,8 +266,8 @@ def validate_grype_report(document: dict[str, Any]) -> GrypeEvidence:
             raise VexError("Grype image source.target must be an object")
         user_input = non_empty_string(target.get("userInput"), "Grype source.target.userInput")
         image_id = content_digest(target.get("imageID"), "Grype source.target.imageID")
-        architecture = non_empty_string(target.get("architecture"), "Grype source.target.architecture")
-        repo_digests = optional_references(target, "repoDigests", "Grype source.target.repoDigests")
+        architecture = supported_architecture(target.get("architecture"), "Grype source.target.architecture")
+        repo_digests = optional_repo_digests(target, "repoDigests", "Grype source.target.repoDigests")
     elif source_type == "directory":
         non_empty_string(target, "Grype directory source.target")
         user_input = None
@@ -290,10 +318,12 @@ def validate_report_binding(
         raise VexError("Trivy Metadata.RepoDigests is required for a digest-addressed --product")
     if digest_addressed and not grype.repo_digests:
         raise VexError("Grype source.target.repoDigests is required for a digest-addressed --product")
-    if trivy.repo_digests and expected_product not in trivy.repo_digests:
+    if digest_addressed and expected_product not in trivy.repo_digests:
         raise VexError("Trivy Metadata.RepoDigests does not contain --product")
-    if grype.repo_digests and expected_product not in grype.repo_digests:
+    if digest_addressed and expected_product not in grype.repo_digests:
         raise VexError("Grype source.target.repoDigests does not contain --product")
+    if frozenset(trivy.repo_digests) != frozenset(grype.repo_digests):
+        raise VexError("Trivy and Grype repository digest evidence does not match")
 
 
 def package_floor_names(path: Path, architecture: str) -> frozenset[str]:
@@ -342,11 +372,12 @@ def trivy_has_fix(vulnerability: dict[str, Any]) -> bool:
     if not fixed_version_valid:
         return False
     fixed_version = (raw_fixed_version or "").strip()
-    raw_status = vulnerability.get("Status")
-    status_valid = isinstance(raw_status, str) and raw_status.strip().lower() in TRIVY_FIX_STATUSES
-    if not status_valid:
-        return False
-    status = str(raw_status).strip().lower()
+    status: str | None = None
+    if "Status" in vulnerability:
+        raw_status = vulnerability["Status"]
+        if not isinstance(raw_status, str) or raw_status.strip().lower() not in TRIVY_FIX_STATUSES:
+            return False
+        status = raw_status.strip().lower()
     return bool(fixed_version) or status == "fixed"
 
 
@@ -719,6 +750,16 @@ def self_test() -> int:
             return 1
         print("assert-vex self-test: local-mode empty/absent repo digests passed")
 
+        tag_trivy = copy.deepcopy(clean_trivy)
+        tag_grype = copy.deepcopy(clean_grype)
+        tag_product = "example.invalid/base-micro:self-test"
+        tag_trivy["ArtifactName"] = tag_product
+        tag_grype["source"]["target"]["userInput"] = tag_product
+        if run_fixture(tag_trivy, tag_grype, clean_floor, expected_product=tag_product) != 0:
+            print("self-test failed: tag-mode digest repository evidence did not pass", file=sys.stderr)
+            return 1
+        print("assert-vex self-test: tag-mode digest repository evidence passed")
+
         inherited_floor = {
             "parent": {
                 "floor": {
@@ -830,6 +871,14 @@ def self_test() -> int:
             lambda trivy, _grype, _floor: trivy["Metadata"].__setitem__("ImageID", "opaque"),
         )
         add_probe(
+            "Padded image IDs",
+            "Trivy Metadata.ImageID must be a sha256 content digest",
+            lambda trivy, grype, _floor: (
+                trivy["Metadata"].__setitem__("ImageID", f" {image_id}"),
+                grype["source"]["target"].__setitem__("imageID", f" {image_id}"),
+            ),
+        )
+        add_probe(
             "Trivy image config object",
             "Trivy Metadata.ImageConfig must be an object",
             lambda trivy, _grype, _floor: trivy["Metadata"].__setitem__("ImageConfig", []),
@@ -840,6 +889,14 @@ def self_test() -> int:
             lambda trivy, _grype, _floor: trivy["Metadata"]["ImageConfig"].__setitem__("architecture", ""),
         )
         add_probe(
+            "Trivy architecture domain",
+            "Trivy Metadata.ImageConfig.architecture must be amd64 or arm64",
+            lambda trivy, _grype, _floor: trivy["Metadata"]["ImageConfig"].__setitem__(
+                "architecture",
+                "opaque",
+            ),
+        )
+        add_probe(
             "Trivy repo digest container",
             "Trivy Metadata.RepoDigests must be a list when present",
             lambda trivy, _grype, _floor: trivy["Metadata"].__setitem__("RepoDigests", product),
@@ -848,6 +905,11 @@ def self_test() -> int:
             "Trivy repo digest entry",
             "Trivy Metadata.RepoDigests[0] must be a non-empty string",
             lambda trivy, _grype, _floor: trivy["Metadata"].__setitem__("RepoDigests", [""]),
+        )
+        add_probe(
+            "Trivy repo digest shape",
+            "Trivy Metadata.RepoDigests[0] must be a digest-qualified image reference",
+            lambda trivy, _grype, _floor: trivy["Metadata"].__setitem__("RepoDigests", ["opaque"]),
         )
         add_probe(
             "Trivy results container",
@@ -1025,6 +1087,19 @@ def self_test() -> int:
             lambda _trivy, grype, _floor: grype["source"]["target"].__setitem__("architecture", ""),
         )
         add_probe(
+            "Grype architecture domain",
+            "Grype source.target.architecture must be amd64 or arm64",
+            lambda _trivy, grype, _floor: grype["source"]["target"].__setitem__("architecture", "opaque"),
+        )
+        add_probe(
+            "Shared opaque architecture",
+            "Trivy Metadata.ImageConfig.architecture must be amd64 or arm64",
+            lambda trivy, grype, _floor: (
+                trivy["Metadata"]["ImageConfig"].__setitem__("architecture", "opaque"),
+                grype["source"]["target"].__setitem__("architecture", "opaque"),
+            ),
+        )
+        add_probe(
             "Grype repo digest container",
             "Grype source.target.repoDigests must be a list when present",
             lambda _trivy, grype, _floor: grype["source"]["target"].__setitem__("repoDigests", product),
@@ -1033,6 +1108,11 @@ def self_test() -> int:
             "Grype repo digest entry",
             "Grype source.target.repoDigests[0] must be a non-empty string",
             lambda _trivy, grype, _floor: grype["source"]["target"].__setitem__("repoDigests", [""]),
+        )
+        add_probe(
+            "Grype repo digest shape",
+            "Grype source.target.repoDigests[0] must be a digest-qualified image reference",
+            lambda _trivy, grype, _floor: grype["source"]["target"].__setitem__("repoDigests", ["opaque"]),
         )
         add_probe(
             "Grype directory target pair",
@@ -1196,6 +1276,15 @@ def self_test() -> int:
                 ["example.invalid/wrong@sha256:" + ("d" * 64)],
             ),
         )
+        additional_digest = "example.invalid/base-micro@sha256:" + ("d" * 64)
+        add_probe(
+            "Cross-scanner repo digest evidence",
+            "Trivy and Grype repository digest evidence does not match",
+            lambda _trivy, grype, _floor: grype["source"]["target"].__setitem__(
+                "repoDigests",
+                [product, additional_digest],
+            ),
+        )
         probes.append(
             (
                 "Package floor non-object",
@@ -1279,6 +1368,30 @@ def self_test() -> int:
                 return 1
             print(f"assert-vex self-test: {label} rejected at its expected discriminator")
 
+        duplicate_documents = [
+            (
+                "duplicate fix keys malicious-last order",
+                '{"fix":{"versions":[{}],"versions":["1.2.3"],"state":[],"state":"fixed"}}',
+            ),
+            (
+                "duplicate fix keys malformed-last order",
+                '{"fix":{"versions":["1.2.3"],"versions":[{}],"state":"fixed","state":[]}}',
+            ),
+        ]
+        for label, raw_document in duplicate_documents:
+            duplicate_json = tmp / f"{label.replace(' ', '-')}.json"
+            duplicate_json.write_text(raw_document, encoding="utf-8")
+            try:
+                load_json(duplicate_json)
+            except VexError as exc:
+                if "duplicate JSON object member" not in str(exc):
+                    print(f"self-test failed: {label} rejected for wrong reason: {exc}", file=sys.stderr)
+                    return 1
+            else:
+                print(f"self-test failed: {label} unexpectedly passed", file=sys.stderr)
+                return 1
+            print(f"assert-vex self-test: {label} rejected at its expected discriminator")
+
         def trivy_fix_fixture(fix: Any) -> dict[str, Any]:
             trivy = copy.deepcopy(clean_trivy)
             trivy["Results"][0]["Vulnerabilities"] = [{**valid_trivy_finding, **fix}]
@@ -1307,12 +1420,6 @@ def self_test() -> int:
             (
                 "Trivy fixed version with malformed Status type",
                 trivy_fix_fixture({"FixedVersion": "1.2.3", "Status": []}),
-                clean_grype,
-                "CVE-2099-0001 severity=HIGH scanners=trivy",
-            ),
-            (
-                "Trivy fixed version with missing Status",
-                trivy_fix_fixture({"FixedVersion": "1.2.3"}),
                 clean_grype,
                 "CVE-2099-0001 severity=HIGH scanners=trivy",
             ),
@@ -1385,11 +1492,21 @@ def self_test() -> int:
         if run_fixture(valid_fixed_trivy, clean_grype, clean_floor) != 0:
             print("self-test failed: complete Trivy fix evidence was not honoured", file=sys.stderr)
             return 1
+        valid_fixed_trivy_without_status = trivy_fix_fixture({"FixedVersion": "1.2.3"})
+        if run_fixture(valid_fixed_trivy_without_status, clean_grype, clean_floor) != 0:
+            print("self-test failed: Trivy FixedVersion without Status was not honoured", file=sys.stderr)
+            return 1
+        valid_deferred_trivy = trivy_fix_fixture({"FixedVersion": "1.2.3", "Status": "fix_deferred"})
+        if run_fixture(valid_deferred_trivy, clean_grype, clean_floor) != 0:
+            print("self-test failed: Trivy fix_deferred status was not honoured", file=sys.stderr)
+            return 1
         valid_fixed_grype = grype_fix_fixture({"versions": ["1.2.3"], "state": "fixed"})
         if run_fixture(clean_trivy, valid_fixed_grype, clean_floor) != 0:
             print("self-test failed: complete Grype fix evidence was not honoured", file=sys.stderr)
             return 1
         print("assert-vex self-test: complete Trivy and Grype fix evidence honoured")
+        print("assert-vex self-test: Trivy FixedVersion without Status honoured")
+        print("assert-vex self-test: Trivy fix_deferred status honoured")
 
         critical_trivy = copy.deepcopy(clean_trivy)
         critical_trivy["Results"][0]["Vulnerabilities"] = [
