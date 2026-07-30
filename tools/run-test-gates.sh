@@ -137,6 +137,7 @@ grype_json="dist/vuln/base-micro.${arch}.grype.all.json"
 
 dist/tools/trivy image \
   --vuln-type os,library \
+  --list-all-pkgs \
   --severity HIGH,CRITICAL \
   --format json \
   --output "${trivy_json}" \
@@ -147,7 +148,8 @@ dist/tools/grype "${runtime_image}" -o json --file "${grype_json}"
 python tools/assert-vex.py \
   --product "${runtime_image}" \
   --trivy-json "${trivy_json}" \
-  --grype-json "${grype_json}"
+  --grype-json "${grype_json}" \
+  --package-floor contracts/image-manifest.json
 
 rootfs_dir="dist/rootfs-secret-scan/rootfs.${arch}"
 report="dist/rootfs-secret-scan/base-micro.${arch}.secret-scan.json"

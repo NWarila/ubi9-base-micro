@@ -3344,6 +3344,7 @@ def check_workflow() -> None:
         "--expect-absent alternatives",
         "tools/assert-ignore-scope.py",
         "dist/tools/trivy image",
+        "--list-all-pkgs",
         "--ignore-unfixed",
         "--severity MEDIUM,HIGH,CRITICAL",
         "--ignorefile security/cve-ignore.trivyignore.yaml",
@@ -3385,11 +3386,15 @@ def check_workflow() -> None:
 
     report_start = gate_runner.find('trivy_json="dist/vuln/base-micro.${arch}.trivy.all.json"')
     vex_start = gate_runner.find("python tools/assert-vex.py")
+    vex_end = gate_runner.find("\n\n", vex_start)
     require(
-        report_start >= 0 and vex_start > report_start, "test gate runner must keep an identifiable VEX report pass"
+        report_start >= 0 and vex_start > report_start and vex_end > vex_start,
+        "test gate runner must keep an identifiable bounded VEX report pass",
     )
     gate_pass = gate_runner[:report_start]
-    report_pass = gate_runner[report_start:vex_start]
+    report_pass = gate_runner[report_start:vex_end]
+    scanner_report_pass = gate_runner[report_start:vex_start]
+    vex_assert = gate_runner[vex_start:vex_end]
     require(
         "--ignorefile security/cve-ignore.trivyignore.yaml" in gate_pass
         and "-c security/cve-ignore.grype.yaml" in gate_pass,
@@ -3399,7 +3404,18 @@ def check_workflow() -> None:
         "--ignorefile" not in report_pass and "-c security/cve-ignore.grype.yaml" not in report_pass,
         "VEX report pass must remain unfiltered",
     )
-    require("--severity HIGH,CRITICAL" in report_pass, "Trivy VEX report severity scope must remain HIGH,CRITICAL")
+    require(
+        "--severity HIGH,CRITICAL" in scanner_report_pass,
+        "Trivy VEX report severity scope must remain HIGH,CRITICAL",
+    )
+    require(
+        "--list-all-pkgs" in scanner_report_pass,
+        "Trivy VEX report pass must enumerate the full package inventory",
+    )
+    require(
+        "--package-floor contracts/image-manifest.json" in vex_assert,
+        "test gate runner assert-vex invocation must use the root image package-floor contract",
+    )
 
     forbidden = [
         "NWarila/.github/.github/workflows/",
@@ -3720,6 +3736,7 @@ def check_publish_workflow() -> None:
         '--source "dist/sbom/base-micro.${arch}.syft.json"',
         "Run Trivy fixable vulnerability gates",
         "dist/tools/trivy image",
+        "--list-all-pkgs",
         "--ignore-unfixed",
         "--severity MEDIUM,HIGH,CRITICAL",
         "--ignorefile security/cve-ignore.trivyignore.yaml",
@@ -3734,6 +3751,7 @@ def check_publish_workflow() -> None:
         "--format json",
         '--file "${grype_json}"',
         "tools/assert-vex.py",
+        "--package-floor contracts/image-manifest.json",
         f"cosign attest --type {predicate_type('spdx')}",
         f"cosign attest --type {predicate_type('cyclonedx')}",
         f"cosign verify-attestation --type {predicate_type('spdx')}",
@@ -3851,7 +3869,19 @@ def check_publish_workflow() -> None:
     vex_report_index = text.find("Run OpenVEX default-deny gates")
     require(vex_report_index > first_grype_scan_index, "publish workflow must keep an identifiable VEX report pass")
     grype_gate = text[first_grype_scan_index:vex_report_index]
-    report_pass = text[vex_report_index:]
+    vex_report_end = text.find("\n      - name:", vex_report_index + 1)
+    require(vex_report_end > vex_report_index, "publish workflow must keep a bounded VEX report step")
+    report_pass = text[vex_report_index:vex_report_end]
+    trivy_report_index = report_pass.find("dist/tools/trivy image")
+    grype_report_index = report_pass.find('dist/tools/grype "${image_ref}"')
+    vex_assert_index = report_pass.find("python tools/assert-vex.py")
+    require(
+        0 <= trivy_report_index < grype_report_index < vex_assert_index,
+        "publish VEX report step must keep its Trivy -> Grype -> assert-vex command order",
+    )
+    trivy_report = report_pass[trivy_report_index:grype_report_index]
+    grype_report = report_pass[grype_report_index:vex_assert_index]
+    vex_assert = report_pass[vex_assert_index:]
     require(
         "--ignorefile security/cve-ignore.trivyignore.yaml" in trivy_gate,
         "publish Trivy fixable gate must use the explicit non-default ignore file",
@@ -3864,7 +3894,19 @@ def check_publish_workflow() -> None:
         "--ignorefile" not in report_pass and "-c security/cve-ignore.grype.yaml" not in report_pass,
         "publish VEX report pass must remain unfiltered",
     )
-    require("--severity HIGH,CRITICAL" in report_pass, "publish Trivy VEX report scope must remain HIGH,CRITICAL")
+    require("--severity HIGH,CRITICAL" in trivy_report, "publish Trivy VEX report scope must remain HIGH,CRITICAL")
+    require(
+        "--list-all-pkgs" in trivy_report,
+        "publish Trivy VEX report pass must enumerate the full package inventory",
+    )
+    require(
+        'dist/tools/grype "${image_ref}" \\\n              --platform "linux/${arch}" \\\n' in grype_report,
+        "publish Grype VEX report invocation must bind --platform linux/${arch}",
+    )
+    require(
+        "--package-floor contracts/image-manifest.json" in vex_assert,
+        "publish assert-vex invocation must use the root image package-floor contract",
+    )
 
     forbidden = [
         "-regexp",
@@ -4334,8 +4376,10 @@ def python_evidence_errors(workflow: str, tailoring: str, ledger: str, gitignore
         "--vex-dir images/python/vex",
         "tools/assert-scanner-canary.py",
         "tools/assert-ignore-scope.py",
+        "--list-all-pkgs",
         "--severity MEDIUM,HIGH,CRITICAL",
         "--fail-on medium",
+        "--package-floor images/python/rpm-lock/micro-floor.json",
         "--validate",
         "timeout-minutes: 120",
     ):
@@ -4505,6 +4549,7 @@ def check_python_evidence_self_test() -> None:
         '            --product "${image}" \\\n'
         '            --trivy-json "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json" \\\n'
         '            --grype-json "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json" \\\n'
+        "            --package-floor images/python/rpm-lock/micro-floor.json \\\n"
         "            --vex-dir images/python/vex\n"
     )
     raw_scanner_after_vex = workflow.replace(
@@ -5546,28 +5591,66 @@ def _python_sqlite_vex_replay(document: dict[str, Any]) -> list[str]:
         )
         trivy = tmp / "trivy.json"
         grype = tmp / "grype.json"
-        trivy.write_text(
-            json.dumps(
-                {
-                    "Results": [
-                        {
-                            "Vulnerabilities": [
-                                {
-                                    "VulnerabilityID": cve,
-                                    "PkgName": "sqlite-libs",
-                                    "InstalledVersion": "3.34.1-10.el9_8",
-                                    "Severity": "HIGH",
-                                }
-                                for cve in PYTHON_SQLITE_CVES
-                            ]
-                        }
-                    ]
-                }
-            ),
+        package_floor = tmp / "package-floor.json"
+        package_floor.write_text(
+            json.dumps({"runtime": {"package_floor": ["glibc"]}}),
             encoding="utf-8",
         )
-        grype.write_text('{"matches": []}\n', encoding="utf-8")
         for product in PYTHON_SQLITE_VEX_PRODUCTS[:2]:
+            architecture = "amd64" if product.endswith("amd64") else "arm64"
+            image_id = "sha256:" + (("a" if architecture == "amd64" else "b") * 64)
+            trivy.write_text(
+                json.dumps(
+                    {
+                        "SchemaVersion": 2,
+                        "Trivy": {"Version": "0.71.0"},
+                        "ArtifactName": product,
+                        "ArtifactType": "container_image",
+                        "Metadata": {
+                            "OS": {"Family": "redhat", "Name": "9.8"},
+                            "ImageID": image_id,
+                            "ImageConfig": {"architecture": architecture},
+                        },
+                        "Results": [
+                            {
+                                "Target": f"{product} (redhat 9.8)",
+                                "Class": "os-pkgs",
+                                "Type": "redhat",
+                                "Packages": [{"Name": "glibc", "Version": "2.34"}],
+                                "Vulnerabilities": [
+                                    {
+                                        "VulnerabilityID": cve,
+                                        "PkgName": "sqlite-libs",
+                                        "InstalledVersion": "3.34.1-10.el9_8",
+                                        "Severity": "HIGH",
+                                    }
+                                    for cve in PYTHON_SQLITE_CVES
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            grype.write_text(
+                json.dumps(
+                    {
+                        "descriptor": {"name": "grype", "version": "0.115.0"},
+                        "distro": {"name": "redhat", "version": "9.8"},
+                        "source": {
+                            "type": "image",
+                            "target": {
+                                "userInput": product,
+                                "imageID": image_id,
+                                "architecture": architecture,
+                                "repoDigests": [],
+                            },
+                        },
+                        "matches": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
             result = subprocess.run(
                 [
                     sys.executable,
@@ -5578,6 +5661,8 @@ def _python_sqlite_vex_replay(document: dict[str, Any]) -> list[str]:
                     str(trivy),
                     "--grype-json",
                     str(grype),
+                    "--package-floor",
+                    str(package_floor),
                     "--vex-dir",
                     str(vex_dir),
                 ],
@@ -6687,6 +6772,11 @@ def check_vex() -> None:
     for marker in [
         "parse_trivy",
         "parse_grype",
+        "validate_trivy_report",
+        "validate_grype_report",
+        "validate_report_binding",
+        "validate_contract_floor",
+        "--package-floor",
         "--self-test",
         "synthetic-unvexed-critical",
         "not_affected",
@@ -6712,18 +6802,72 @@ def check_vex() -> None:
         tmp = Path(raw_tmp)
         trivy_json = tmp / "trivy.json"
         grype_json = tmp / "grype.json"
-        trivy_json.write_text('{"Results": []}\n', encoding="utf-8")
-        grype_json.write_text('{"matches": []}\n', encoding="utf-8")
+        package_floor = tmp / "package-floor.json"
+        product_ref = "ghcr.io/nwarila/ubi9-base-micro@sha256:" + ("0" * 64)
+        image_id = "sha256:" + ("1" * 64)
+        trivy_json.write_text(
+            json.dumps(
+                {
+                    "SchemaVersion": 2,
+                    "Trivy": {"Version": "0.71.0"},
+                    "ArtifactName": product_ref,
+                    "ArtifactType": "container_image",
+                    "Metadata": {
+                        "OS": {"Family": "redhat", "Name": "9.8"},
+                        "ImageID": image_id,
+                        "ImageConfig": {"architecture": "amd64"},
+                        "RepoDigests": [product_ref],
+                    },
+                    "Results": [
+                        {
+                            "Target": f"{product_ref} (redhat 9.8)",
+                            "Class": "os-pkgs",
+                            "Type": "redhat",
+                            "Packages": [{"Name": "glibc", "Version": "2.34"}],
+                            "Vulnerabilities": [],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        grype_json.write_text(
+            json.dumps(
+                {
+                    "descriptor": {"name": "grype", "version": "0.115.0"},
+                    "distro": {"name": "redhat", "version": "9.8"},
+                    "source": {
+                        "type": "image",
+                        "target": {
+                            "userInput": product_ref,
+                            "imageID": image_id,
+                            "architecture": "amd64",
+                            "repoDigests": [product_ref],
+                        },
+                    },
+                    "matches": [],
+                    "ignoredMatches": [],
+                    "alertsByPackage": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        package_floor.write_text(
+            json.dumps({"runtime": {"package_floor": ["glibc"]}}),
+            encoding="utf-8",
+        )
         result = subprocess.run(
             [
                 sys.executable,
                 str(ROOT / "tools/assert-vex.py"),
                 "--product",
-                "ghcr.io/nwarila/ubi9-base-micro@sha256:" + ("0" * 64),
+                product_ref,
                 "--trivy-json",
                 str(trivy_json),
                 "--grype-json",
                 str(grype_json),
+                "--package-floor",
+                str(package_floor),
             ],
             cwd=ROOT,
             text=True,
@@ -6732,7 +6876,7 @@ def check_vex() -> None:
         )
     require(
         result.returncode == 0 and "unfixed HIGH/CRITICAL findings requiring VEX: 0" in result.stdout,
-        f"committed OpenVEX document failed assert-vex.py:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
+        f"valid zero-finding evidence failed assert-vex.py:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
     )
 
 
@@ -6818,6 +6962,7 @@ def check_helper_self_tests() -> None:
         "tools/assert-ignore-scope.py",
         "tools/assert-scanner-db-freshness.py",
         "tools/assert-scanner-canary.py",
+        "tools/assert-vex.py",
         "tools/assert-cosign-rekor.py",
         "tools/assert-slsa-builder-id.py",
         "tools/assert-stig-tailoring.py",

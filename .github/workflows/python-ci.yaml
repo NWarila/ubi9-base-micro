@@ -426,7 +426,7 @@ jobs:
 
           image="local/ubi9-base-python:ci-${ARCH}"
           dist/tools/trivy image --platform "linux/${ARCH}" --vuln-type os,library \
-            --severity HIGH,CRITICAL --format json \
+            --list-all-pkgs --severity HIGH,CRITICAL --format json \
             --output "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json" "${image}"
           dist/tools/grype "${image}" -o json \
             --file "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json"
@@ -437,6 +437,7 @@ jobs:
             --product "${image}" \
             --trivy-json "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json" \
             --grype-json "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json" \
+            --package-floor images/python/rpm-lock/micro-floor.json \
             --vex-dir images/python/vex
 
       - name: Run rootfs secret gate
