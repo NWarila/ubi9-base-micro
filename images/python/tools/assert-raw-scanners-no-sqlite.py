@@ -11,12 +11,15 @@ import argparse
 import copy
 import json
 import sys
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Final, cast
 
 SQLITE_PACKAGE: Final = "sqlite-libs"
 RUNTIME_PACKAGE_MARKER: Final = "python3.12-libs"
+RPM_ARCHITECTURES: Final = {"amd64": "x86_64", "arm64": "aarch64"}
 SQLITE_CVES: Final = frozenset(
     {
         "CVE-2026-51296",
@@ -32,13 +35,25 @@ class RawScannerError(RuntimeError):
     """Raised when raw scanner evidence contains SQLite or has an unknown shape."""
 
 
-def _load(path: Path) -> dict[str, Any]:
+@dataclass(frozen=True)
+class RuntimeMarker:
+    """Contract-derived identity for the policy-selected runtime package."""
+
+    workflow_arch: str
+    name: str
+    epoch: str
+    version: str
+    release: str
+    rpm_arch: str
+
+
+def _load(path: Path, label: str) -> dict[str, Any]:
     try:
         loaded = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise RawScannerError(f"could not load scanner report {path}: {exc}") from exc
+        raise RawScannerError(f"could not load {label} {path}: {exc}") from exc
     if not isinstance(loaded, dict):
-        raise RawScannerError(f"{path}: scanner report must be a JSON object")
+        raise RawScannerError(f"{path}: {label} must be a JSON object")
     return cast(dict[str, Any], loaded)
 
 
@@ -58,20 +73,93 @@ def _is_sqlite_package_reference(value: str) -> bool:
     return lowered == SQLITE_PACKAGE or (lowered.startswith("pkg:rpm/") and f"/{SQLITE_PACKAGE}@" in lowered)
 
 
+def _parse_runtime_marker_nevra(value: str, arch: str) -> RuntimeMarker:
+    try:
+        name, epoch_version, release_arch = value.rsplit("-", 2)
+        release, rpm_arch = release_arch.rsplit(".", 1)
+    except ValueError as exc:
+        raise RawScannerError(f"contract runtime marker NEVRA is malformed: {value!r}") from exc
+
+    if ":" in epoch_version:
+        epoch, version = epoch_version.split(":", 1)
+        if not epoch.isdigit():
+            raise RawScannerError(f"contract runtime marker NEVRA has an invalid epoch: {value!r}")
+    else:
+        epoch = "0"
+        version = epoch_version
+    fields = (name, version, release, rpm_arch)
+    if any(not field or any(character.isspace() for character in field) for field in fields):
+        raise RawScannerError(f"contract runtime marker NEVRA is malformed: {value!r}")
+    return RuntimeMarker(
+        workflow_arch=arch,
+        name=name,
+        epoch=epoch,
+        version=version,
+        release=release,
+        rpm_arch=rpm_arch,
+    )
+
+
+def runtime_marker_from_contract(document: Any, arch: str) -> RuntimeMarker:
+    """Return the exactly-one policy marker identity from runtime.shipped[arch]."""
+    if arch not in RPM_ARCHITECTURES:
+        raise RawScannerError("--arch must be one of: amd64, arm64")
+    if not isinstance(document, dict):
+        raise RawScannerError("contract must be a JSON object")
+    runtime = document.get("runtime")
+    if not isinstance(runtime, dict):
+        raise RawScannerError("contract runtime must be an object")
+    shipped = runtime.get("shipped")
+    if not isinstance(shipped, dict):
+        raise RawScannerError("contract runtime.shipped must be an object")
+    if arch not in shipped:
+        raise RawScannerError(f"contract runtime.shipped[{arch}] is required")
+    entries = shipped[arch]
+    if not isinstance(entries, list):
+        raise RawScannerError(f"contract runtime.shipped[{arch}] must be a list")
+    if not entries:
+        raise RawScannerError(f"contract runtime.shipped[{arch}] must be non-empty")
+
+    selected: list[RuntimeMarker] = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, str) or not entry.strip():
+            raise RawScannerError(f"contract runtime.shipped[{arch}][{index}] must be a non-empty NEVRA string")
+        try:
+            identity = _parse_runtime_marker_nevra(entry, arch)
+        except RawScannerError:
+            if entry.startswith(f"{RUNTIME_PACKAGE_MARKER}-"):
+                raise
+            continue
+        if identity.name == RUNTIME_PACKAGE_MARKER:
+            selected.append(identity)
+
+    if len(selected) != 1:
+        raise RawScannerError(
+            f"contract runtime.shipped[{arch}] must contain exactly one {RUNTIME_PACKAGE_MARKER} NEVRA; "
+            f"found {len(selected)}"
+        )
+    marker = selected[0]
+    expected_rpm_arch = RPM_ARCHITECTURES[arch]
+    if marker.rpm_arch != expected_rpm_arch:
+        raise RawScannerError(
+            f"contract runtime marker architecture for --arch {arch} must be {expected_rpm_arch}, got {marker.rpm_arch}"
+        )
+    return marker
+
+
 def _grype_source_identity(source: dict[str, Any]) -> str:
     source_type = source.get("type")
-    if not isinstance(source_type, str) or not source_type.strip():
-        raise RawScannerError("Grype source.type must be a non-empty string")
-
     target = source.get("target")
-    if isinstance(target, str):
+    if source_type == "directory":
+        if not isinstance(target, str):
+            raise RawScannerError("Grype directory source.target must be a non-empty path string")
         identity = target.strip()
         if not identity:
             raise RawScannerError("Grype directory source.target must be a non-empty path string")
         return identity
-    if isinstance(target, dict):
-        if source_type != "image":
-            raise RawScannerError("Grype object source.target requires source.type image")
+    if source_type == "image":
+        if not isinstance(target, dict):
+            raise RawScannerError("Grype image source.target must be an object")
         identities = [
             value.strip()
             for field in ("userInput", "imageID")
@@ -80,12 +168,46 @@ def _grype_source_identity(source: dict[str, Any]) -> str:
         if not identities:
             raise RawScannerError("Grype image source.target must contain a non-empty userInput or imageID identity")
         return identities[0]
-    raise RawScannerError("Grype source.target must be a directory path string or image identity object")
+    raise RawScannerError("Grype source.type must be image or directory")
 
 
-def assert_raw_report(document: dict[str, Any], scanner: str) -> None:
+def _trivy_epoch(value: Any, location: str) -> str:
+    if value is None:
+        return "0"
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return str(value)
+    raise RawScannerError(f"{location} must be null, absent, or a non-negative integer")
+
+
+def _assert_runtime_marker_package(
+    package: dict[str, Any],
+    location: str,
+    expected: RuntimeMarker,
+) -> None:
+    comparisons = (
+        ("Epoch", _trivy_epoch(package.get("Epoch"), f"{location}.Epoch"), expected.epoch),
+        ("Version", package.get("Version"), expected.version),
+        ("Release", package.get("Release"), expected.release),
+        ("Arch", package.get("Arch"), expected.rpm_arch),
+    )
+    for field, actual, wanted in comparisons:
+        if actual != wanted:
+            qualifier = f"--arch {expected.workflow_arch} contract" if field == "Arch" else "contract"
+            raise RawScannerError(
+                f"Trivy runtime package {expected.name} {field} does not match {qualifier}: "
+                f"expected {wanted}, got {actual!r}"
+            )
+
+
+def assert_raw_report(
+    document: dict[str, Any],
+    scanner: str,
+    expected_runtime: RuntimeMarker | None = None,
+) -> None:
     """Assert a recognized raw report has no SQLite package reference or target CVE."""
     if scanner == "trivy":
+        if expected_runtime is None:
+            raise RawScannerError("Trivy validation requires a contract-derived runtime marker")
         trivy = document.get("Trivy")
         if not isinstance(trivy, dict) or not isinstance(trivy.get("Version"), str) or not trivy["Version"].strip():
             raise RawScannerError("Trivy report must contain a Trivy version identity")
@@ -133,7 +255,13 @@ def assert_raw_report(document: dict[str, Any], scanner: str) -> None:
                             f"Trivy Results[{result_index}].Packages[{package_index}].Version "
                             "must be a non-empty string"
                         )
-                    runtime_marker_seen |= name == RUNTIME_PACKAGE_MARKER
+                    if name == expected_runtime.name:
+                        _assert_runtime_marker_package(
+                            package,
+                            f"Trivy Results[{result_index}].Packages[{package_index}]",
+                            expected_runtime,
+                        )
+                        runtime_marker_seen = True
             vulnerabilities = result.get("Vulnerabilities")
             if vulnerabilities is not None:
                 if not isinstance(vulnerabilities, list):
@@ -151,16 +279,16 @@ def assert_raw_report(document: dict[str, Any], scanner: str) -> None:
                                 "must be a non-empty string"
                             )
         if not runtime_marker_seen:
-            raise RawScannerError(f"Trivy report did not enumerate runtime package {RUNTIME_PACKAGE_MARKER}")
+            raise RawScannerError(f"Trivy report did not enumerate runtime package {expected_runtime.name}")
     elif scanner == "grype":
         descriptor = document.get("descriptor")
-        if (
-            not isinstance(descriptor, dict)
-            or descriptor.get("name") != "grype"
-            or not isinstance(descriptor.get("version"), str)
-            or not descriptor["version"].strip()
-        ):
-            raise RawScannerError("Grype report must contain a versioned grype descriptor")
+        if not isinstance(descriptor, dict):
+            raise RawScannerError("Grype descriptor must be an object")
+        if descriptor.get("name") != "grype":
+            raise RawScannerError("Grype descriptor.name must be grype")
+        descriptor_version = descriptor.get("version")
+        if not isinstance(descriptor_version, str) or not descriptor_version.strip():
+            raise RawScannerError("Grype descriptor.version must be a non-empty string")
         source = document.get("source")
         if not isinstance(source, dict):
             raise RawScannerError("Grype report must contain a source object")
@@ -174,9 +302,8 @@ def assert_raw_report(document: dict[str, Any], scanner: str) -> None:
         if not isinstance(distro_version, str) or not distro_version.strip():
             raise RawScannerError("Grype distro.version must be a non-empty string")
         matches = document.get("matches")
-        if not isinstance(matches, list) or not matches:
-            raise RawScannerError("Grype report must contain a non-empty matches list")
-        runtime_marker_seen = False
+        if not isinstance(matches, list):
+            raise RawScannerError("Grype matches must be a list")
         for match_index, match in enumerate(matches):
             if not isinstance(match, dict):
                 raise RawScannerError(f"Grype matches[{match_index}] must be an object")
@@ -188,15 +315,12 @@ def assert_raw_report(document: dict[str, Any], scanner: str) -> None:
                 raise RawScannerError(f"Grype matches[{match_index}].artifact.name must be a non-empty string")
             if artifact.get("type") != "rpm":
                 raise RawScannerError(f"Grype matches[{match_index}].artifact.type must be rpm")
-            runtime_marker_seen |= artifact["name"] == RUNTIME_PACKAGE_MARKER
             vulnerability = match.get("vulnerability")
             if not isinstance(vulnerability, dict):
                 raise RawScannerError(f"Grype matches[{match_index}].vulnerability must be an object")
             vulnerability_id = vulnerability.get("id")
             if not isinstance(vulnerability_id, str) or not vulnerability_id.strip():
                 raise RawScannerError(f"Grype matches[{match_index}].vulnerability.id must be a non-empty string")
-        if not runtime_marker_seen:
-            raise RawScannerError(f"Grype report did not enumerate runtime package {RUNTIME_PACKAGE_MARKER}")
     else:
         raise RawScannerError(f"unsupported scanner: {scanner}")
 
@@ -212,7 +336,30 @@ def assert_raw_report(document: dict[str, Any], scanner: str) -> None:
         raise RawScannerError(f"{scanner} raw report contains " + "; ".join(problems))
 
 
+def _expect_rejection(label: str, action: Callable[[], object], expected_reason: str) -> None:
+    try:
+        action()
+    except RawScannerError as exc:
+        if expected_reason not in str(exc):
+            raise RawScannerError(
+                f"self-test probe rejected for the wrong reason: {label}: expected {expected_reason!r}, got {exc}"
+            ) from exc
+    else:
+        raise RawScannerError(f"self-test probe unexpectedly passed: {label}")
+
+
 def self_test() -> None:
+    clean_contract: dict[str, Any] = {
+        "runtime": {
+            "shipped": {
+                "amd64": ["python3.12-libs-3.12.13-3.el9_8.1.x86_64"],
+                "arm64": ["python3.12-libs-3.12.13-3.el9_8.1.aarch64"],
+            }
+        }
+    }
+    amd64_marker = runtime_marker_from_contract(clean_contract, "amd64")
+    arm64_marker = runtime_marker_from_contract(clean_contract, "arm64")
+
     clean_trivy: dict[str, Any] = {
         "SchemaVersion": 2,
         "Trivy": {"Version": "0.71.0"},
@@ -224,8 +371,15 @@ def self_test() -> None:
                 "Target": "rootfs (redhat 9.8)",
                 "Class": "os-pkgs",
                 "Type": "redhat",
-                "Packages": [{"Name": "python3.12-libs", "Version": "3.12.13-3.el9_8.1"}],
-                "Vulnerabilities": [{"VulnerabilityID": "CVE-2025-0001", "PkgName": "python3.12-libs"}],
+                "Packages": [
+                    {
+                        "Name": RUNTIME_PACKAGE_MARKER,
+                        "Version": "3.12.13",
+                        "Release": "3.el9_8.1",
+                        "Arch": "x86_64",
+                    }
+                ],
+                "Vulnerabilities": [{"VulnerabilityID": "CVE-2025-0001", "PkgName": RUNTIME_PACKAGE_MARKER}],
             }
         ],
     }
@@ -234,6 +388,8 @@ def self_test() -> None:
     clean_trivy_image["ArtifactType"] = "container_image"
     clean_trivy_image["Metadata"] = {"ImageID": "sha256:self-test"}
     clean_trivy_image["Results"][0]["Target"] = "local/ubi9-base-python:self-test (redhat 9.8)"
+    zero_finding_trivy = copy.deepcopy(clean_trivy_image)
+    zero_finding_trivy["Results"][0].pop("Vulnerabilities")
 
     clean_grype_directory: dict[str, Any] = {
         "descriptor": {"name": "grype", "version": "0.115.0"},
@@ -241,7 +397,7 @@ def self_test() -> None:
         "matches": [
             {
                 "vulnerability": {"id": "CVE-2025-0001"},
-                "artifact": {"name": "python3.12-libs", "type": "rpm"},
+                "artifact": {"name": RUNTIME_PACKAGE_MARKER, "type": "rpm"},
             }
         ],
         "source": {"type": "directory", "target": "/rootfs"},
@@ -256,179 +412,599 @@ def self_test() -> None:
     }
     clean_grype_image_id_only = copy.deepcopy(clean_grype_image)
     clean_grype_image_id_only["source"]["target"]["userInput"] = ""
+    zero_finding_grype_directory = copy.deepcopy(clean_grype_directory)
+    zero_finding_grype_directory["matches"] = []
+    zero_finding_grype_image = copy.deepcopy(clean_grype_image)
+    zero_finding_grype_image["matches"] = []
+    grype_without_runtime_marker = copy.deepcopy(clean_grype_directory)
+    grype_without_runtime_marker["matches"][0]["artifact"]["name"] = "other-libs"
 
-    assert_raw_report(clean_trivy, "trivy")
-    assert_raw_report(clean_trivy_image, "trivy")
+    assert_raw_report(clean_trivy, "trivy", amd64_marker)
+    assert_raw_report(clean_trivy_image, "trivy", amd64_marker)
+    assert_raw_report(zero_finding_trivy, "trivy", amd64_marker)
     assert_raw_report(clean_grype_directory, "grype")
     assert_raw_report(clean_grype_image, "grype")
     assert_raw_report(clean_grype_image_id_only, "grype")
+    assert_raw_report(zero_finding_grype_directory, "grype")
+    assert_raw_report(zero_finding_grype_image, "grype")
+    assert_raw_report(grype_without_runtime_marker, "grype")
 
-    trivy_package = copy.deepcopy(clean_trivy)
-    trivy_package["Results"][0]["Packages"].append({"Name": SQLITE_PACKAGE, "Version": "3.34.1-8.el9_3"})
-    trivy_cve = copy.deepcopy(clean_trivy)
-    trivy_cve["Results"][0]["Vulnerabilities"][0]["VulnerabilityID"] = "CVE-2026-51296"
-    trivy_no_marker = copy.deepcopy(clean_trivy)
-    trivy_no_marker["Results"][0]["Packages"][0]["Name"] = "other-libs"
-    trivy_empty = copy.deepcopy(clean_trivy)
-    trivy_empty["Results"] = []
-    trivy_hollow = copy.deepcopy(clean_trivy)
-    trivy_hollow["Results"] = [{}]
-    trivy_malformed_packages = copy.deepcopy(clean_trivy)
-    trivy_malformed_packages["Results"][0]["Packages"] = {}
-    trivy_malformed_package = copy.deepcopy(clean_trivy)
-    trivy_malformed_package["Results"][0]["Packages"] = [{"Name": {"nested": RUNTIME_PACKAGE_MARKER}}]
-    trivy_malformed_finding = copy.deepcopy(clean_trivy)
-    trivy_malformed_finding["Results"][0]["Vulnerabilities"] = [{"VulnerabilityID": ["CVE-2025-0001"]}]
+    report_probes: list[tuple[str, dict[str, Any], str, RuntimeMarker | None, str]] = []
+
+    trivy_wrong_identity = copy.deepcopy(clean_trivy)
+    trivy_wrong_identity["Trivy"]["Version"] = ""
+    report_probes.append(("Trivy identity", trivy_wrong_identity, "trivy", amd64_marker, "Trivy version identity"))
+    trivy_wrong_schema = copy.deepcopy(clean_trivy)
+    trivy_wrong_schema["SchemaVersion"] = 1
+    report_probes.append(("Trivy schema", trivy_wrong_schema, "trivy", amd64_marker, "SchemaVersion 2"))
     trivy_missing_artifact_identity = copy.deepcopy(clean_trivy)
     trivy_missing_artifact_identity["ArtifactName"] = ""
+    report_probes.append(
+        (
+            "Trivy artifact identity",
+            trivy_missing_artifact_identity,
+            "trivy",
+            amd64_marker,
+            "ArtifactName must be a non-empty string",
+        )
+    )
     trivy_unknown_artifact_type = copy.deepcopy(clean_trivy)
     trivy_unknown_artifact_type["ArtifactType"] = "unknown"
+    report_probes.append(
+        (
+            "Trivy artifact type",
+            trivy_unknown_artifact_type,
+            "trivy",
+            amd64_marker,
+            "ArtifactType must be container_image or filesystem",
+        )
+    )
     trivy_malformed_metadata = copy.deepcopy(clean_trivy)
     trivy_malformed_metadata["Metadata"] = []
-    trivy_wrong_class = copy.deepcopy(clean_trivy)
-    trivy_wrong_class["Results"][0]["Class"] = "unknown"
-    trivy_wrong_type = copy.deepcopy(clean_trivy)
-    trivy_wrong_type["Results"][0]["Type"] = "unknown"
-    trivy_missing_package_version = copy.deepcopy(clean_trivy)
-    del trivy_missing_package_version["Results"][0]["Packages"][0]["Version"]
-    trivy_image_wrong_class = copy.deepcopy(clean_trivy_image)
-    trivy_image_wrong_class["Results"][0]["Class"] = "unknown"
-    trivy_image_wrong_type = copy.deepcopy(clean_trivy_image)
-    trivy_image_wrong_type["Results"][0]["Type"] = "unknown"
-    trivy_image_missing_package_version = copy.deepcopy(clean_trivy_image)
-    del trivy_image_missing_package_version["Results"][0]["Packages"][0]["Version"]
-    trivy_directory_reviewer_hollow = copy.deepcopy(clean_trivy)
-    trivy_directory_reviewer_hollow["Metadata"] = {}
-    trivy_directory_reviewer_hollow["Results"][0]["Class"] = "bogus"
-    trivy_directory_reviewer_hollow["Results"][0]["Type"] = "bogus"
-    trivy_directory_reviewer_hollow["Results"][0]["Packages"] = [{"Name": RUNTIME_PACKAGE_MARKER}]
-    trivy_image_reviewer_hollow = copy.deepcopy(trivy_directory_reviewer_hollow)
-    trivy_image_reviewer_hollow["ArtifactName"] = "local/ubi9-base-python:self-test"
-    trivy_image_reviewer_hollow["ArtifactType"] = "container_image"
-    trivy_image_reviewer_hollow["Results"][0]["Target"] = "local/ubi9-base-python:self-test"
+    report_probes.append(
+        ("Trivy metadata", trivy_malformed_metadata, "trivy", amd64_marker, "Metadata must be an object")
+    )
+    trivy_results_type = copy.deepcopy(clean_trivy)
+    trivy_results_type["Results"] = {}
+    report_probes.append(
+        (
+            "Trivy Results type",
+            trivy_results_type,
+            "trivy",
+            amd64_marker,
+            "non-empty Results list",
+        )
+    )
+    trivy_empty_results = copy.deepcopy(clean_trivy)
+    trivy_empty_results["Results"] = []
+    report_probes.append(
+        (
+            "Trivy empty Results",
+            trivy_empty_results,
+            "trivy",
+            amd64_marker,
+            "non-empty Results list",
+        )
+    )
+    trivy_result_type = copy.deepcopy(clean_trivy)
+    trivy_result_type["Results"] = [[]]
+    report_probes.append(
+        ("Trivy result object", trivy_result_type, "trivy", amd64_marker, "Results[0] must be an object")
+    )
+    trivy_target = copy.deepcopy(clean_trivy)
+    trivy_target["Results"][0]["Target"] = ""
+    report_probes.append(("Trivy target", trivy_target, "trivy", amd64_marker, "Target must be a non-empty string"))
+    trivy_class = copy.deepcopy(clean_trivy)
+    trivy_class["Results"][0]["Class"] = "unknown"
+    report_probes.append(("Trivy result class", trivy_class, "trivy", amd64_marker, "Class must be os-pkgs"))
+    trivy_type = copy.deepcopy(clean_trivy)
+    trivy_type["Results"][0]["Type"] = "unknown"
+    report_probes.append(("Trivy result type", trivy_type, "trivy", amd64_marker, "Type must be redhat"))
+    trivy_packages_type = copy.deepcopy(clean_trivy)
+    trivy_packages_type["Results"][0]["Packages"] = {}
+    report_probes.append(("Trivy Packages type", trivy_packages_type, "trivy", amd64_marker, "Packages must be a list"))
+    trivy_package_type = copy.deepcopy(clean_trivy)
+    trivy_package_type["Results"][0]["Packages"] = [[]]
+    report_probes.append(
+        (
+            "Trivy package object",
+            trivy_package_type,
+            "trivy",
+            amd64_marker,
+            "Packages[0] must be an object",
+        )
+    )
+    trivy_package_name = copy.deepcopy(clean_trivy)
+    trivy_package_name["Results"][0]["Packages"][0]["Name"] = {}
+    report_probes.append(
+        (
+            "Trivy package name",
+            trivy_package_name,
+            "trivy",
+            amd64_marker,
+            "Packages[0].Name must be a non-empty string",
+        )
+    )
+    trivy_package_version = copy.deepcopy(clean_trivy)
+    trivy_package_version["Results"][0]["Packages"][0]["Version"] = ""
+    report_probes.append(
+        (
+            "Trivy package version shape",
+            trivy_package_version,
+            "trivy",
+            amd64_marker,
+            "Packages[0].Version must be a non-empty string",
+        )
+    )
+    trivy_vulnerabilities_type = copy.deepcopy(clean_trivy)
+    trivy_vulnerabilities_type["Results"][0]["Vulnerabilities"] = {}
+    report_probes.append(
+        (
+            "Trivy Vulnerabilities type",
+            trivy_vulnerabilities_type,
+            "trivy",
+            amd64_marker,
+            "Vulnerabilities must be a list or null",
+        )
+    )
+    trivy_finding_type = copy.deepcopy(clean_trivy)
+    trivy_finding_type["Results"][0]["Vulnerabilities"] = [[]]
+    report_probes.append(
+        (
+            "Trivy finding object",
+            trivy_finding_type,
+            "trivy",
+            amd64_marker,
+            "Vulnerabilities[0] must be an object",
+        )
+    )
+    trivy_finding_id = copy.deepcopy(clean_trivy)
+    trivy_finding_id["Results"][0]["Vulnerabilities"][0]["VulnerabilityID"] = []
+    report_probes.append(
+        (
+            "Trivy finding id",
+            trivy_finding_id,
+            "trivy",
+            amd64_marker,
+            "Vulnerabilities[0].VulnerabilityID must be a non-empty string",
+        )
+    )
+    trivy_finding_package = copy.deepcopy(clean_trivy)
+    trivy_finding_package["Results"][0]["Vulnerabilities"][0]["PkgName"] = ""
+    report_probes.append(
+        (
+            "Trivy finding package",
+            trivy_finding_package,
+            "trivy",
+            amd64_marker,
+            "Vulnerabilities[0].PkgName must be a non-empty string",
+        )
+    )
+    trivy_marker_name = copy.deepcopy(clean_trivy)
+    trivy_marker_name["Results"][0]["Packages"][0]["Name"] = "other-libs"
+    report_probes.append(
+        (
+            "Trivy runtime marker name",
+            trivy_marker_name,
+            "trivy",
+            amd64_marker,
+            f"did not enumerate runtime package {RUNTIME_PACKAGE_MARKER}",
+        )
+    )
+    trivy_marker_epoch = copy.deepcopy(clean_trivy)
+    trivy_marker_epoch["Results"][0]["Packages"][0]["Epoch"] = 1
+    report_probes.append(
+        (
+            "Trivy runtime marker epoch",
+            trivy_marker_epoch,
+            "trivy",
+            amd64_marker,
+            f"{RUNTIME_PACKAGE_MARKER} Epoch does not match contract",
+        )
+    )
+    trivy_marker_epoch_type = copy.deepcopy(clean_trivy)
+    trivy_marker_epoch_type["Results"][0]["Packages"][0]["Epoch"] = "0"
+    report_probes.append(
+        (
+            "Trivy runtime marker epoch type",
+            trivy_marker_epoch_type,
+            "trivy",
+            amd64_marker,
+            "Epoch must be null, absent, or a non-negative integer",
+        )
+    )
+    trivy_marker_version = copy.deepcopy(clean_trivy)
+    trivy_marker_version["Results"][0]["Packages"][0]["Version"] = "3.12.12"
+    report_probes.append(
+        (
+            "Trivy runtime marker version",
+            trivy_marker_version,
+            "trivy",
+            amd64_marker,
+            f"{RUNTIME_PACKAGE_MARKER} Version does not match contract",
+        )
+    )
+    trivy_marker_release = copy.deepcopy(clean_trivy)
+    trivy_marker_release["Results"][0]["Packages"][0]["Release"] = "2.el9"
+    report_probes.append(
+        (
+            "Trivy runtime marker release",
+            trivy_marker_release,
+            "trivy",
+            amd64_marker,
+            f"{RUNTIME_PACKAGE_MARKER} Release does not match contract",
+        )
+    )
+    trivy_marker_arch = copy.deepcopy(clean_trivy)
+    trivy_marker_arch["Results"][0]["Packages"][0]["Arch"] = "aarch64"
+    report_probes.append(
+        (
+            "Trivy runtime marker architecture",
+            trivy_marker_arch,
+            "trivy",
+            amd64_marker,
+            f"{RUNTIME_PACKAGE_MARKER} Arch does not match --arch amd64 contract",
+        )
+    )
+    report_probes.append(
+        (
+            "workflow architecture versus report architecture",
+            clean_trivy,
+            "trivy",
+            arm64_marker,
+            f"{RUNTIME_PACKAGE_MARKER} Arch does not match --arch arm64 contract",
+        )
+    )
 
-    grype_package = copy.deepcopy(clean_grype_directory)
-    grype_package["matches"].append(
+    grype_descriptor_type = copy.deepcopy(clean_grype_directory)
+    grype_descriptor_type["descriptor"] = []
+    report_probes.append(
+        (
+            "Grype descriptor object",
+            grype_descriptor_type,
+            "grype",
+            None,
+            "descriptor must be an object",
+        )
+    )
+    grype_descriptor_name = copy.deepcopy(clean_grype_directory)
+    grype_descriptor_name["descriptor"]["name"] = "other"
+    report_probes.append(
+        ("Grype descriptor name", grype_descriptor_name, "grype", None, "descriptor.name must be grype")
+    )
+    grype_descriptor_version = copy.deepcopy(clean_grype_directory)
+    grype_descriptor_version["descriptor"]["version"] = ""
+    report_probes.append(
+        (
+            "Grype descriptor version",
+            grype_descriptor_version,
+            "grype",
+            None,
+            "descriptor.version must be a non-empty string",
+        )
+    )
+    grype_source_type = copy.deepcopy(clean_grype_directory)
+    grype_source_type["source"] = []
+    report_probes.append(("Grype source object", grype_source_type, "grype", None, "must contain a source object"))
+    grype_unknown_source = copy.deepcopy(clean_grype_directory)
+    grype_unknown_source["source"]["type"] = "unknown"
+    report_probes.append(
+        (
+            "Grype source discriminator",
+            grype_unknown_source,
+            "grype",
+            None,
+            "source.type must be image or directory",
+        )
+    )
+    grype_image_string_target = copy.deepcopy(clean_grype_image)
+    grype_image_string_target["source"]["target"] = "/rootfs"
+    report_probes.append(
+        (
+            "Grype image plus string target",
+            grype_image_string_target,
+            "grype",
+            None,
+            "image source.target must be an object",
+        )
+    )
+    grype_directory_object_target = copy.deepcopy(clean_grype_directory)
+    grype_directory_object_target["source"]["target"] = {"userInput": "/rootfs"}
+    report_probes.append(
+        (
+            "Grype directory plus object target",
+            grype_directory_object_target,
+            "grype",
+            None,
+            "directory source.target must be a non-empty path string",
+        )
+    )
+    grype_empty_directory_target = copy.deepcopy(clean_grype_directory)
+    grype_empty_directory_target["source"]["target"] = " "
+    report_probes.append(
+        (
+            "Grype empty directory target",
+            grype_empty_directory_target,
+            "grype",
+            None,
+            "directory source.target must be a non-empty path string",
+        )
+    )
+    grype_empty_image_identity = copy.deepcopy(clean_grype_image)
+    grype_empty_image_identity["source"]["target"] = {"userInput": " ", "imageID": ""}
+    report_probes.append(
+        (
+            "Grype empty image identity",
+            grype_empty_image_identity,
+            "grype",
+            None,
+            "image source.target must contain a non-empty userInput or imageID identity",
+        )
+    )
+    grype_distro_type = copy.deepcopy(clean_grype_directory)
+    grype_distro_type["distro"] = []
+    report_probes.append(("Grype distro object", grype_distro_type, "grype", None, "must contain a distro object"))
+    grype_distro_name = copy.deepcopy(clean_grype_directory)
+    grype_distro_name["distro"]["name"] = "other"
+    report_probes.append(("Grype distro name", grype_distro_name, "grype", None, "distro.name must be redhat"))
+    grype_distro_version = copy.deepcopy(clean_grype_directory)
+    grype_distro_version["distro"]["version"] = ""
+    report_probes.append(
+        (
+            "Grype distro version",
+            grype_distro_version,
+            "grype",
+            None,
+            "distro.version must be a non-empty string",
+        )
+    )
+    grype_missing_matches = copy.deepcopy(clean_grype_directory)
+    grype_missing_matches.pop("matches")
+    report_probes.append(("Grype missing matches", grype_missing_matches, "grype", None, "matches must be a list"))
+    grype_matches_type = copy.deepcopy(clean_grype_directory)
+    grype_matches_type["matches"] = {}
+    report_probes.append(("Grype matches type", grype_matches_type, "grype", None, "matches must be a list"))
+    grype_match_type = copy.deepcopy(clean_grype_directory)
+    grype_match_type["matches"] = [[]]
+    report_probes.append(("Grype match object", grype_match_type, "grype", None, "matches[0] must be an object"))
+    grype_artifact_type = copy.deepcopy(clean_grype_directory)
+    grype_artifact_type["matches"][0]["artifact"] = []
+    report_probes.append(
+        (
+            "Grype artifact object",
+            grype_artifact_type,
+            "grype",
+            None,
+            "matches[0].artifact must be an object",
+        )
+    )
+    grype_artifact_name = copy.deepcopy(clean_grype_directory)
+    grype_artifact_name["matches"][0]["artifact"]["name"] = ""
+    report_probes.append(
+        (
+            "Grype artifact name",
+            grype_artifact_name,
+            "grype",
+            None,
+            "matches[0].artifact.name must be a non-empty string",
+        )
+    )
+    grype_artifact_kind = copy.deepcopy(clean_grype_directory)
+    grype_artifact_kind["matches"][0]["artifact"]["type"] = "deb"
+    report_probes.append(
+        (
+            "Grype artifact type",
+            grype_artifact_kind,
+            "grype",
+            None,
+            "matches[0].artifact.type must be rpm",
+        )
+    )
+    grype_vulnerability_type = copy.deepcopy(clean_grype_directory)
+    grype_vulnerability_type["matches"][0]["vulnerability"] = []
+    report_probes.append(
+        (
+            "Grype vulnerability object",
+            grype_vulnerability_type,
+            "grype",
+            None,
+            "matches[0].vulnerability must be an object",
+        )
+    )
+    grype_vulnerability_id = copy.deepcopy(clean_grype_directory)
+    grype_vulnerability_id["matches"][0]["vulnerability"]["id"] = ""
+    report_probes.append(
+        (
+            "Grype vulnerability id",
+            grype_vulnerability_id,
+            "grype",
+            None,
+            "matches[0].vulnerability.id must be a non-empty string",
+        )
+    )
+
+    trivy_sqlite_package = copy.deepcopy(clean_trivy)
+    trivy_sqlite_package["Results"][0]["Packages"].append({"Name": SQLITE_PACKAGE, "Version": "3.34.1"})
+    report_probes.append(
+        (
+            "Trivy SQLite package detector",
+            trivy_sqlite_package,
+            "trivy",
+            amd64_marker,
+            f"SQLite package reference(s): {SQLITE_PACKAGE}",
+        )
+    )
+    grype_sqlite_package = copy.deepcopy(clean_grype_directory)
+    grype_sqlite_package["matches"].append(
         {
             "vulnerability": {"id": "CVE-2025-0002"},
             "artifact": {"name": SQLITE_PACKAGE, "type": "rpm"},
         }
     )
-    grype_cve = copy.deepcopy(clean_grype_directory)
-    grype_cve["matches"][0]["vulnerability"]["id"] = "CVE-2026-51304"
-    grype_no_marker = copy.deepcopy(clean_grype_directory)
-    grype_no_marker["matches"][0]["artifact"]["name"] = "other-libs"
-    grype_malformed_match = copy.deepcopy(clean_grype_directory)
-    grype_malformed_match["matches"] = [{"artifact": [], "vulnerability": {"id": "CVE-2025-0001"}}]
-    grype_empty_image_identity = copy.deepcopy(clean_grype_image)
-    grype_empty_image_identity["source"]["target"] = {"userInput": " ", "imageID": ""}
-    grype_malformed_target = copy.deepcopy(clean_grype_image)
-    grype_malformed_target["source"]["target"] = []
-    grype_object_directory_target = copy.deepcopy(clean_grype_directory)
-    grype_object_directory_target["source"]["target"] = {"userInput": "/rootfs"}
-    grype_wrong_distro = copy.deepcopy(clean_grype_directory)
-    grype_wrong_distro["distro"]["name"] = "bogus"
-    grype_non_rpm_artifact = copy.deepcopy(clean_grype_directory)
-    grype_non_rpm_artifact["matches"][0]["artifact"]["type"] = "not-rpm"
-    grype_image_wrong_distro = copy.deepcopy(clean_grype_image)
-    grype_image_wrong_distro["distro"]["name"] = "bogus"
-    grype_image_non_rpm_artifact = copy.deepcopy(clean_grype_image)
-    grype_image_non_rpm_artifact["matches"][0]["artifact"]["type"] = "not-rpm"
-    grype_directory_reviewer_hollow = copy.deepcopy(clean_grype_directory)
-    grype_directory_reviewer_hollow["source"]["type"] = "unknown"
-    grype_directory_reviewer_hollow["distro"]["name"] = "bogus"
-    grype_directory_reviewer_hollow["matches"][0]["artifact"]["type"] = "not-rpm"
-    grype_directory_reviewer_hollow["matches"][0]["vulnerability"]["id"] = "not-a-vulnerability"
-    grype_image_reviewer_hollow = copy.deepcopy(clean_grype_image)
-    grype_image_reviewer_hollow["distro"]["name"] = "bogus"
-    grype_image_reviewer_hollow["matches"][0]["artifact"]["type"] = "not-rpm"
-    grype_image_reviewer_hollow["matches"][0]["vulnerability"]["id"] = "not-a-vulnerability"
+    report_probes.append(
+        (
+            "Grype SQLite package detector",
+            grype_sqlite_package,
+            "grype",
+            None,
+            f"SQLite package reference(s): {SQLITE_PACKAGE}",
+        )
+    )
+    for cve in sorted(SQLITE_CVES):
+        trivy_cve = copy.deepcopy(clean_trivy)
+        trivy_cve["Results"][0]["Vulnerabilities"][0]["VulnerabilityID"] = cve
+        report_probes.append(
+            (
+                f"Trivy {cve} detector",
+                trivy_cve,
+                "trivy",
+                amd64_marker,
+                f"SQLite finding(s): {cve}",
+            )
+        )
+        grype_cve = copy.deepcopy(clean_grype_directory)
+        grype_cve["matches"][0]["vulnerability"]["id"] = cve
+        report_probes.append(
+            (
+                f"Grype {cve} detector",
+                grype_cve,
+                "grype",
+                None,
+                f"SQLite finding(s): {cve}",
+            )
+        )
 
-    mutations: list[tuple[str, dict[str, Any], str]] = [
-        ("Trivy package", trivy_package, "trivy"),
-        ("Trivy CVE", trivy_cve, "trivy"),
-        ("Trivy empty Results", {"Results": []}, "trivy"),
-        ("Trivy hollow result", {"Results": [{}]}, "trivy"),
-        ("Trivy identified empty Results", trivy_empty, "trivy"),
-        ("Trivy identified hollow result", trivy_hollow, "trivy"),
-        ("Trivy missing runtime marker", trivy_no_marker, "trivy"),
-        ("Trivy malformed Packages object", trivy_malformed_packages, "trivy"),
-        ("Trivy malformed package name", trivy_malformed_package, "trivy"),
-        ("Trivy malformed finding", trivy_malformed_finding, "trivy"),
-        ("Trivy missing artifact identity", trivy_missing_artifact_identity, "trivy"),
-        ("Trivy unknown artifact type", trivy_unknown_artifact_type, "trivy"),
-        ("Trivy malformed metadata", trivy_malformed_metadata, "trivy"),
-        ("Trivy directory unexpected Class", trivy_wrong_class, "trivy"),
-        ("Trivy directory unexpected Type", trivy_wrong_type, "trivy"),
-        ("Trivy directory package missing Version", trivy_missing_package_version, "trivy"),
-        ("Trivy image unexpected Class", trivy_image_wrong_class, "trivy"),
-        ("Trivy image unexpected Type", trivy_image_wrong_type, "trivy"),
-        ("Trivy image package missing Version", trivy_image_missing_package_version, "trivy"),
-        ("Trivy directory reviewer hollow", trivy_directory_reviewer_hollow, "trivy"),
-        ("Trivy image reviewer hollow", trivy_image_reviewer_hollow, "trivy"),
-        ("Grype package", grype_package, "grype"),
-        ("Grype CVE", grype_cve, "grype"),
+    for label, document, scanner, expected_runtime, expected_reason in report_probes:
+        _expect_rejection(
+            label,
+            partial(assert_raw_report, document, scanner, expected_runtime),
+            expected_reason,
+        )
+
+    contract_probes: list[tuple[str, Any, str]] = [
+        ("contract object", [], "contract must be a JSON object"),
+        ("contract runtime", {}, "contract runtime must be an object"),
         (
-            "Grype hollow report",
+            "contract runtime type",
+            {"runtime": []},
+            "contract runtime must be an object",
+        ),
+        (
+            "contract runtime.shipped",
+            {"runtime": {}},
+            "contract runtime.shipped must be an object",
+        ),
+        (
+            "contract runtime.shipped type",
+            {"runtime": {"shipped": []}},
+            "contract runtime.shipped must be an object",
+        ),
+        (
+            "contract missing runtime.shipped[amd64]",
+            {"runtime": {"shipped": {"arm64": clean_contract["runtime"]["shipped"]["arm64"]}}},
+            "contract runtime.shipped[amd64] is required",
+        ),
+        (
+            "contract runtime.shipped[amd64] type",
+            {"runtime": {"shipped": {"amd64": {}}}},
+            "contract runtime.shipped[amd64] must be a list",
+        ),
+        (
+            "contract empty runtime.shipped[amd64]",
+            {"runtime": {"shipped": {"amd64": []}}},
+            "contract runtime.shipped[amd64] must be non-empty",
+        ),
+        (
+            "contract non-string shipped entry",
+            {"runtime": {"shipped": {"amd64": [1, "python3.12-libs-3.12.13-3.el9_8.1.x86_64"]}}},
+            "runtime.shipped[amd64][0] must be a non-empty NEVRA string",
+        ),
+        (
+            "contract malformed marker NEVRA",
+            {"runtime": {"shipped": {"amd64": ["python3.12-libs-not-a-nevra"]}}},
+            "contract runtime marker NEVRA is malformed",
+        ),
+        (
+            "contract zero marker matches",
+            {"runtime": {"shipped": {"amd64": ["python3.12-3.12.13-3.el9_8.1.x86_64"]}}},
+            f"must contain exactly one {RUNTIME_PACKAGE_MARKER} NEVRA; found 0",
+        ),
+        (
+            "contract duplicate marker matches",
             {
-                "descriptor": {"name": "grype"},
-                "distro": {},
-                "matches": [],
-                "source": {},
+                "runtime": {
+                    "shipped": {
+                        "amd64": [
+                            "python3.12-libs-3.12.13-3.el9_8.1.x86_64",
+                            "python3.12-libs-3.12.13-3.el9_8.1.x86_64",
+                        ]
+                    }
+                }
             },
-            "grype",
-        ),
-        ("Grype empty matches", {**clean_grype_directory, "matches": []}, "grype"),
-        ("Grype missing runtime marker", grype_no_marker, "grype"),
-        ("Grype malformed nested artifact", grype_malformed_match, "grype"),
-        (
-            "Grype missing matches",
-            {key: value for key, value in clean_grype_directory.items() if key != "matches"},
-            "grype",
-        ),
-        ("Grype wrong descriptor", {**clean_grype_directory, "descriptor": {"name": "other"}}, "grype"),
-        (
-            "Grype missing source",
-            {key: value for key, value in clean_grype_directory.items() if key != "source"},
-            "grype",
+            f"must contain exactly one {RUNTIME_PACKAGE_MARKER} NEVRA; found 2",
         ),
         (
-            "Grype missing distro",
-            {key: value for key, value in clean_grype_directory.items() if key != "distro"},
-            "grype",
+            "contract marker architecture",
+            {"runtime": {"shipped": {"amd64": ["python3.12-libs-3.12.13-3.el9_8.1.aarch64"]}}},
+            "runtime marker architecture for --arch amd64 must be x86_64",
         ),
-        ("Grype empty image identity", grype_empty_image_identity, "grype"),
-        ("Grype malformed target", grype_malformed_target, "grype"),
-        ("Grype object directory target", grype_object_directory_target, "grype"),
-        ("Grype directory non-RHEL distro", grype_wrong_distro, "grype"),
-        ("Grype directory non-RPM artifact", grype_non_rpm_artifact, "grype"),
-        ("Grype image non-RHEL distro", grype_image_wrong_distro, "grype"),
-        ("Grype image non-RPM artifact", grype_image_non_rpm_artifact, "grype"),
-        ("Grype directory reviewer hollow", grype_directory_reviewer_hollow, "grype"),
-        ("Grype image reviewer hollow", grype_image_reviewer_hollow, "grype"),
     ]
-    expected_detector_failures = {
-        "Trivy package": "SQLite package reference(s)",
-        "Trivy CVE": "SQLite finding(s)",
-        "Grype package": "SQLite package reference(s)",
-        "Grype CVE": "SQLite finding(s)",
-    }
-    rejected = 0
-    unexpected_passes: list[str] = []
-    for label, document, scanner in mutations:
-        try:
-            assert_raw_report(document, scanner)
-        except RawScannerError as exc:
-            expected_failure = expected_detector_failures.get(label)
-            if expected_failure is not None and expected_failure not in str(exc):
-                raise RawScannerError(f"self-test mutation rejected for the wrong reason: {label}: {exc}") from exc
-            rejected += 1
-        else:
-            unexpected_passes.append(label)
-    if unexpected_passes:
-        raise RawScannerError("self-test mutation(s) unexpectedly passed: " + ", ".join(unexpected_passes))
+    for label, document, expected_reason in contract_probes:
+        _expect_rejection(
+            label,
+            partial(runtime_marker_from_contract, document, "amd64"),
+            expected_reason,
+        )
+
+    shifted_contract = copy.deepcopy(clean_contract)
+    shifted_contract["runtime"]["shipped"]["amd64"][0] = "python3.12-libs-3.12.12-3.el9_8.1.x86_64"
+    shifted_marker = runtime_marker_from_contract(shifted_contract, "amd64")
+    _expect_rejection(
+        "contract version versus Trivy marker",
+        lambda: assert_raw_report(clean_trivy, "trivy", shifted_marker),
+        f"{RUNTIME_PACKAGE_MARKER} Version does not match contract",
+    )
+
+    valid_args = argparse.Namespace(
+        trivy_json=Path("trivy.json"),
+        grype_json=Path("grype.json"),
+        contract=Path("contract.json"),
+        arch="amd64",
+        self_test=False,
+    )
+    for attribute, flag in (
+        ("trivy_json", "--trivy-json"),
+        ("grype_json", "--grype-json"),
+        ("contract", "--contract"),
+        ("arch", "--arch"),
+    ):
+        missing = copy.copy(valid_args)
+        setattr(missing, attribute, None)
+        _expect_rejection(
+            f"missing {flag}",
+            partial(_normal_inputs, missing),
+            f"{flag} is required",
+        )
+    invalid_arch = copy.copy(valid_args)
+    invalid_arch.arch = "s390x"
+    _expect_rejection(
+        "invalid --arch",
+        lambda: _normal_inputs(invalid_arch),
+        "--arch must be one of: amd64, arm64",
+    )
+    _expect_rejection(
+        "invalid --contract",
+        lambda: _load(Path("/__raw_scanner_self_test_missing_contract__"), "contract"),
+        "could not load contract",
+    )
+    standalone = parse_args(["--self-test"])
+    if not standalone.self_test:
+        raise RawScannerError("--self-test did not parse as a standalone mode")
+
+    total_probes = len(report_probes) + len(contract_probes) + 7
     print(
-        f"raw scanner SQLite absence self-test: clean reports accepted; {rejected}/{len(mutations)} mutations rejected"
+        "raw scanner SQLite absence self-test: zero-finding and non-marker Grype reports accepted; "
+        f"{total_probes} singleton probes rejected for their expected reasons"
     )
 
 
@@ -438,8 +1014,25 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--trivy-json", type=Path, help="raw Trivy JSON report")
     parser.add_argument("--grype-json", type=Path, help="raw Grype JSON report")
+    parser.add_argument("--contract", type=Path, help="image manifest contract")
+    parser.add_argument("--arch", metavar="{amd64,arm64}", help="workflow architecture")
     parser.add_argument("--self-test", action="store_true", help="run the offline self-test")
     return parser.parse_args(argv)
+
+
+def _normal_inputs(args: argparse.Namespace) -> tuple[Path, Path, Path, str]:
+    required = (
+        ("trivy_json", "--trivy-json"),
+        ("grype_json", "--grype-json"),
+        ("contract", "--contract"),
+        ("arch", "--arch"),
+    )
+    for attribute, flag in required:
+        if getattr(args, attribute) is None:
+            raise RawScannerError(f"{flag} is required unless --self-test is used")
+    if args.arch not in RPM_ARCHITECTURES:
+        raise RawScannerError("--arch must be one of: amd64, arm64")
+    return args.trivy_json, args.grype_json, args.contract, args.arch
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -448,12 +1041,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.self_test:
             self_test()
             return 0
-        if args.trivy_json is None or args.grype_json is None:
-            raise RawScannerError("--trivy-json and --grype-json are required")
-        assert_raw_report(_load(args.trivy_json), "trivy")
-        assert_raw_report(_load(args.grype_json), "grype")
+        trivy_path, grype_path, contract_path, arch = _normal_inputs(args)
+        marker = runtime_marker_from_contract(_load(contract_path, "contract"), arch)
+        assert_raw_report(_load(trivy_path, "Trivy scanner report"), "trivy", marker)
+        assert_raw_report(_load(grype_path, "Grype scanner report"), "grype")
         print(
-            "raw scanner SQLite absence: Trivy and Grype contain neither sqlite-libs nor "
+            f"raw scanner SQLite absence ({arch}): Trivy and Grype contain neither sqlite-libs nor "
             + ",".join(sorted(SQLITE_CVES))
         )
     except RawScannerError as exc:

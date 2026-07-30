@@ -4542,7 +4542,9 @@ def check_python_evidence_self_test() -> None:
     raw_scanner_block = (
         "          python3 images/python/tools/assert-raw-scanners-no-sqlite.py \\\n"
         '            --trivy-json "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json" \\\n'
-        '            --grype-json "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json"\n'
+        '            --grype-json "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json" \\\n'
+        "            --contract images/python/contracts/image-manifest.json \\\n"
+        '            --arch "${ARCH}"\n'
     )
     vex_block = (
         "          python3 tools/assert-vex.py \\\n"

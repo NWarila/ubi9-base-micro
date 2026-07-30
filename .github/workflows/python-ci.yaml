@@ -303,35 +303,6 @@ jobs:
           python3 tools/assert-scanner-db-freshness.py --max-age-days "${SCANNER_DB_MAX_AGE_DAYS}"
 
           image="local/ubi9-base-python:ci-${ARCH}"
-          grype_json="dist/python/grype.${ARCH}.json"
-          dist/tools/grype "${image}" -o json --file "${grype_json}"
-          python3 - "${ARCH}" "${grype_json}" << 'VISIBILITY'
-          import json
-          import sys
-
-          arch, grype_path = sys.argv[1:3]
-          contract = json.load(open("images/python/contracts/image-manifest.json"))
-          expected = next(
-              nevra for nevra in contract["runtime"]["shipped"][arch] if nevra.startswith("python3.12-3.")
-          )
-          name_version = expected.rsplit(".", 1)[0]
-          report = json.load(open(grype_path))
-          artifacts = {
-              f"{artifact['name']}-{artifact['version']}"
-              for match in [*report.get("matches", []), *report.get("ignoredMatches", [])]
-              for artifact in [match["artifact"]]
-          }
-          rpmdb_names = {
-              f"{artifact['name']}-{artifact['version']}"
-              for artifact in report.get("artifacts", [])
-          } if "artifacts" in report else set()
-          visible = any(entry.startswith("python3.12-3.") for entry in artifacts | rpmdb_names)
-          if not visible:
-              raise SystemExit(
-                  f"scanner did not surface the python3.12 package from the combined rpmdb ({name_version})"
-              )
-          print(f"scanner visibility ok: {name_version} present in the scan surface")
-          VISIBILITY
 
           dist/tools/trivy image \
             --platform "linux/${ARCH}" \
@@ -432,7 +403,9 @@ jobs:
             --file "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json"
           python3 images/python/tools/assert-raw-scanners-no-sqlite.py \
             --trivy-json "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json" \
-            --grype-json "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json"
+            --grype-json "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json" \
+            --contract images/python/contracts/image-manifest.json \
+            --arch "${ARCH}"
           python3 tools/assert-vex.py \
             --product "${image}" \
             --trivy-json "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json" \
