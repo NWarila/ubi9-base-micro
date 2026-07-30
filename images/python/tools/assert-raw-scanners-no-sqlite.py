@@ -73,6 +73,10 @@ def _is_sqlite_package_reference(value: str) -> bool:
     return lowered == SQLITE_PACKAGE or (lowered.startswith("pkg:rpm/") and f"/{SQLITE_PACKAGE}@" in lowered)
 
 
+def _is_canonical_package_name(value: str) -> bool:
+    return value == value.strip() and not any(character.isspace() for character in value)
+
+
 def _parse_runtime_marker_nevra(value: str, arch: str) -> RuntimeMarker:
     try:
         name, epoch_version, release_arch = value.rsplit("-", 2)
@@ -80,6 +84,8 @@ def _parse_runtime_marker_nevra(value: str, arch: str) -> RuntimeMarker:
     except ValueError as exc:
         raise RawScannerError(f"contract runtime marker NEVRA is malformed: {value!r}") from exc
 
+    if epoch_version.count(":") > 1 or ":" in release:
+        raise RawScannerError(f"contract runtime marker NEVRA is malformed: {value!r}")
     if ":" in epoch_version:
         epoch, version = epoch_version.split(":", 1)
         if not epoch.isdigit():
@@ -191,6 +197,8 @@ def _assert_runtime_marker_package(
         ("Arch", package.get("Arch"), expected.rpm_arch),
     )
     for field, actual, wanted in comparisons:
+        if field in {"Version", "Release"} and isinstance(actual, str) and ":" in actual:
+            raise RawScannerError(f"Trivy runtime package {expected.name} {field} must not contain ':'")
         if actual != wanted:
             qualifier = f"--arch {expected.workflow_arch} contract" if field == "Arch" else "contract"
             raise RawScannerError(
@@ -208,6 +216,8 @@ def assert_raw_report(
     if scanner == "trivy":
         if expected_runtime is None:
             raise RawScannerError("Trivy validation requires a contract-derived runtime marker")
+        if not _is_canonical_package_name(expected_runtime.name):
+            raise RawScannerError("contract runtime marker package name must be canonical without whitespace")
         trivy = document.get("Trivy")
         if not isinstance(trivy, dict) or not isinstance(trivy.get("Version"), str) or not trivy["Version"].strip():
             raise RawScannerError("Trivy report must contain a Trivy version identity")
@@ -248,6 +258,11 @@ def assert_raw_report(
                     if not isinstance(name, str) or not name.strip():
                         raise RawScannerError(
                             f"Trivy Results[{result_index}].Packages[{package_index}].Name must be a non-empty string"
+                        )
+                    if not _is_canonical_package_name(name):
+                        raise RawScannerError(
+                            f"Trivy Results[{result_index}].Packages[{package_index}].Name "
+                            "must be canonical without whitespace"
                         )
                     version = package.get("Version")
                     if not isinstance(version, str) or not version.strip():
@@ -313,6 +328,10 @@ def assert_raw_report(
             artifact_name = artifact.get("name")
             if not isinstance(artifact_name, str) or not artifact_name.strip():
                 raise RawScannerError(f"Grype matches[{match_index}].artifact.name must be a non-empty string")
+            if not _is_canonical_package_name(artifact_name):
+                raise RawScannerError(
+                    f"Grype matches[{match_index}].artifact.name must be canonical without whitespace"
+                )
             if artifact.get("type") != "rpm":
                 raise RawScannerError(f"Grype matches[{match_index}].artifact.type must be rpm")
             vulnerability = match.get("vulnerability")
@@ -536,6 +555,28 @@ def self_test() -> None:
             "Packages[0].Version must be a non-empty string",
         )
     )
+    trivy_padded_package_name = copy.deepcopy(clean_trivy)
+    trivy_padded_package_name["Results"][0]["Packages"].append({"Name": " sqlite-libs ", "Version": "3.34.1"})
+    report_probes.append(
+        (
+            "Trivy padded package name",
+            trivy_padded_package_name,
+            "trivy",
+            amd64_marker,
+            "Packages[1].Name must be canonical without whitespace",
+        )
+    )
+    trivy_embedded_package_whitespace = copy.deepcopy(clean_trivy)
+    trivy_embedded_package_whitespace["Results"][0]["Packages"].append({"Name": "sqlite libs", "Version": "3.34.1"})
+    report_probes.append(
+        (
+            "Trivy embedded package name whitespace",
+            trivy_embedded_package_whitespace,
+            "trivy",
+            amd64_marker,
+            "Packages[1].Name must be canonical without whitespace",
+        )
+    )
     trivy_vulnerabilities_type = copy.deepcopy(clean_trivy)
     trivy_vulnerabilities_type["Results"][0]["Vulnerabilities"] = {}
     report_probes.append(
@@ -591,6 +632,34 @@ def self_test() -> None:
             f"did not enumerate runtime package {RUNTIME_PACKAGE_MARKER}",
         )
     )
+    trivy_padded_marker_name = copy.deepcopy(clean_trivy)
+    trivy_padded_marker_name["Results"][0]["Packages"][0]["Name"] = f"{RUNTIME_PACKAGE_MARKER} "
+    report_probes.append(
+        (
+            "Trivy runtime marker package name whitespace",
+            trivy_padded_marker_name,
+            "trivy",
+            amd64_marker,
+            "Packages[0].Name must be canonical without whitespace",
+        )
+    )
+    noncanonical_expected_marker = RuntimeMarker(
+        workflow_arch=amd64_marker.workflow_arch,
+        name=f" {amd64_marker.name}",
+        epoch=amd64_marker.epoch,
+        version=amd64_marker.version,
+        release=amd64_marker.release,
+        rpm_arch=amd64_marker.rpm_arch,
+    )
+    report_probes.append(
+        (
+            "contract runtime marker package name",
+            clean_trivy,
+            "trivy",
+            noncanonical_expected_marker,
+            "contract runtime marker package name must be canonical without whitespace",
+        )
+    )
     trivy_marker_epoch = copy.deepcopy(clean_trivy)
     trivy_marker_epoch["Results"][0]["Packages"][0]["Epoch"] = 1
     report_probes.append(
@@ -624,6 +693,17 @@ def self_test() -> None:
             f"{RUNTIME_PACKAGE_MARKER} Version does not match contract",
         )
     )
+    trivy_marker_version_colon = copy.deepcopy(clean_trivy)
+    trivy_marker_version_colon["Results"][0]["Packages"][0]["Version"] = "1:3.12.13"
+    report_probes.append(
+        (
+            "Trivy runtime marker version colon",
+            trivy_marker_version_colon,
+            "trivy",
+            amd64_marker,
+            f"{RUNTIME_PACKAGE_MARKER} Version must not contain ':'",
+        )
+    )
     trivy_marker_release = copy.deepcopy(clean_trivy)
     trivy_marker_release["Results"][0]["Packages"][0]["Release"] = "2.el9"
     report_probes.append(
@@ -633,6 +713,17 @@ def self_test() -> None:
             "trivy",
             amd64_marker,
             f"{RUNTIME_PACKAGE_MARKER} Release does not match contract",
+        )
+    )
+    trivy_marker_release_colon = copy.deepcopy(clean_trivy)
+    trivy_marker_release_colon["Results"][0]["Packages"][0]["Release"] = "3:el9_8.1"
+    report_probes.append(
+        (
+            "Trivy runtime marker release colon",
+            trivy_marker_release_colon,
+            "trivy",
+            amd64_marker,
+            f"{RUNTIME_PACKAGE_MARKER} Release must not contain ':'",
         )
     )
     trivy_marker_arch = copy.deepcopy(clean_trivy)
@@ -789,6 +880,28 @@ def self_test() -> None:
             "matches[0].artifact.name must be a non-empty string",
         )
     )
+    grype_padded_artifact_name = copy.deepcopy(clean_grype_directory)
+    grype_padded_artifact_name["matches"][0]["artifact"]["name"] = " sqlite-libs "
+    report_probes.append(
+        (
+            "Grype padded artifact name",
+            grype_padded_artifact_name,
+            "grype",
+            None,
+            "matches[0].artifact.name must be canonical without whitespace",
+        )
+    )
+    grype_embedded_artifact_whitespace = copy.deepcopy(clean_grype_directory)
+    grype_embedded_artifact_whitespace["matches"][0]["artifact"]["name"] = "sqlite libs"
+    report_probes.append(
+        (
+            "Grype embedded artifact name whitespace",
+            grype_embedded_artifact_whitespace,
+            "grype",
+            None,
+            "matches[0].artifact.name must be canonical without whitespace",
+        )
+    )
     grype_artifact_kind = copy.deepcopy(clean_grype_directory)
     grype_artifact_kind["matches"][0]["artifact"]["type"] = "deb"
     report_probes.append(
@@ -922,6 +1035,16 @@ def self_test() -> None:
         (
             "contract malformed marker NEVRA",
             {"runtime": {"shipped": {"amd64": ["python3.12-libs-not-a-nevra"]}}},
+            "contract runtime marker NEVRA is malformed",
+        ),
+        (
+            "contract marker NEVRA with second epoch separator",
+            {"runtime": {"shipped": {"amd64": ["python3.12-libs-0:1:3.12.13-3.el9_8.1.x86_64"]}}},
+            "contract runtime marker NEVRA is malformed",
+        ),
+        (
+            "contract marker NEVRA with release colon",
+            {"runtime": {"shipped": {"amd64": ["python3.12-libs-0:3.12.13-3:el9_8.1.x86_64"]}}},
             "contract runtime marker NEVRA is malformed",
         ),
         (
