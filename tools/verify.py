@@ -8671,6 +8671,58 @@ def check_internal_process_residue_self_test() -> None:
             "replacement-aware collector rejected for changed traversal and read"
         )
 
+        non_blob_repository = root / "non-blob"
+        initialize_repository(non_blob_repository)
+        gitlink_repository = non_blob_repository / "vendor"
+        initialize_repository(gitlink_repository)
+        (gitlink_repository / "content.txt").write_text("gitlink content\n", encoding="utf-8")
+        commit_fixture(gitlink_repository, "Add gitlink content")
+        commit_fixture(non_blob_repository, "Add gitlink")
+        expected_non_blob_reason = "unsupported tracked entry for residue scan: vendor mode=160000 type=commit"
+        try:
+            collect_tracked_text_at_head(non_blob_repository)
+        except VerifyError as exc:
+            require(
+                str(exc) == expected_non_blob_reason,
+                f"collector non-blob fixture rejected for the wrong reason: {exc}",
+            )
+        else:
+            raise VerifyError("collector non-blob fixture unexpectedly passed")
+        print("Tracked-text collector fixture 7: gitlink rejected as an unsupported tracked entry")
+
+        malformed_repository = root / "malformed-metadata"
+        initialize_repository(malformed_repository)
+        (malformed_repository / "content.txt").write_text("tracked content\n", encoding="utf-8")
+        commit_fixture(malformed_repository, "Add tracked content")
+        original_subprocess_run = subprocess.run
+
+        def successful_malformed_ls_tree(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+            command = args[0]
+            require(
+                isinstance(command, list) and command[:3] == ["git", "--no-replace-objects", "ls-tree"],
+                "collector malformed-metadata fixture did not intercept production git ls-tree",
+            )
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout=b"malformed",
+                stderr=b"",
+            )
+
+        subprocess.run = successful_malformed_ls_tree
+        try:
+            collect_tracked_text_at_head(malformed_repository)
+        except VerifyError as exc:
+            require(
+                str(exc) == "git ls-tree returned malformed tracked-entry metadata",
+                f"collector malformed-metadata fixture rejected for the wrong reason: {exc}",
+            )
+        else:
+            raise VerifyError("collector malformed-metadata fixture unexpectedly passed")
+        finally:
+            subprocess.run = original_subprocess_run
+        print("Tracked-text collector fixture 8: successful malformed git ls-tree metadata rejected")
+
         positive_findings = find_internal_process_residue(collection.sources)
         positive_labels = {finding.rsplit(": ", 1)[1] for finding in positive_findings}
         require(
