@@ -27,4 +27,9 @@ statements bind the image products, not an included SQLite subcomponent:
 `sqlite-libs`, `libsqlite3`, the CPython `_sqlite3` extension, the `sqlite3`
 stdlib package directory, and the matching build-id link are all absent from
 the final image. Build, runtime, rpmdb, SBOM, phantom-package, and raw-scanner
-gates independently prove that absence before OpenVEX is applied.
+gates independently prove that absence before OpenVEX is applied. The raw
+scanner gate treats a correctly formed zero-finding pair as a pass: Trivy's
+inventory provides the contract-derived runtime-package marker, while Grype's
+findings-only `matches` list may be empty. `tools/assert-vex.py` then separately
+binds the report identities to each other and to the scanned product before it
+evaluates findings and dispositions.

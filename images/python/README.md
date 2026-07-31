@@ -22,6 +22,30 @@ the matching Python payload is also absent. Consumers that need `sqlite3` should
 use a fuller Red Hat Python base image or build a derivative that deliberately
 retains both the matching `python3.12-libs` SQLite payload and `sqlite-libs`.
 
+## Raw scanner evidence
+
+A valid clean scan is a successful result. The SQLite-absence gate accepts a
+Trivy report with no vulnerabilities and a Grype report with `matches: []`; it
+does not require the image to retain a vulnerability finding. Positive content
+evidence comes from Trivy's `--list-all-pkgs` inventory. The gate selects
+`python3.12-libs` as the runtime marker and derives its expected epoch, version,
+release, and RPM architecture from the exactly one matching entry in
+`runtime.shipped[arch]` in the image contract.
+
+Grype does not expose a complete package inventory in this report. Its side of
+the gate therefore validates the Grype descriptor, Red Hat distro, recognized
+image-or-directory source shape, list-valued `matches`, and every present
+match's RPM artifact and vulnerability fields. Both scanner documents are still
+searched for `sqlite-libs` and the five SQLite CVEs. Marker identities with an
+extra epoch separator or a colon in version/release, and whitespace-bearing
+Trivy package or Grype artifact names, are rejected as malformed evidence.
+
+Normal execution requires `--trivy-json`, `--grype-json`, `--contract`, and
+`--arch` (`amd64` or `arm64`); `--self-test` remains standalone. This raw gate
+does not bind the two reports to each other. The adjacent `tools/assert-vex.py`
+invocation owns product, image, architecture, distro, and repository-digest
+binding before findings are evaluated against OpenVEX.
+
 **Status: built and gated in CI, unpublished.** The evidence machinery is in
 place and exercised on every change — a tailored RHEL9 STIG profile evaluated
 fail-closed, rpmdb-derived SPDX and CycloneDX SBOMs, dual CVE scanners with

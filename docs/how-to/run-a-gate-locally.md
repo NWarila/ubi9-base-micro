@@ -45,6 +45,34 @@ scanning and fail if the DB metadata is stale or missing. Set
 default home cache is too small. The default freshness ceiling is seven days and
 can be tightened with `SCANNER_DB_MAX_AGE_DAYS`.
 
+## Base-Python Raw Scanner Evidence
+
+To replay the SQLite-absence assertion against the reports produced by the
+Python CI workflow, select the matching architecture and pass all four normal
+inputs:
+
+```sh
+ARCH=amd64
+python3 images/python/tools/assert-raw-scanners-no-sqlite.py \
+  --trivy-json "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json" \
+  --grype-json "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json" \
+  --contract images/python/contracts/image-manifest.json \
+  --arch "${ARCH}"
+```
+
+Use `arm64` only with the corresponding arm64 reports. The Trivy input must be
+the inventory-bearing report produced with `--list-all-pkgs`; the Grype report
+may legitimately contain `"matches": []`. The raw gate validates the required
+identity and schema fields plus SQLite absence in each report, but it does not
+bind the report identities to each other. The following `tools/assert-vex.py`
+invocation in the workflow owns that binding.
+
+The offline self-test remains standalone:
+
+```sh
+python3 images/python/tools/assert-raw-scanners-no-sqlite.py --self-test
+```
+
 ## Reproducibility
 
 For any image-affecting change, run both rootfs byte-identity gates from

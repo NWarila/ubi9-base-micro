@@ -49,6 +49,17 @@ and this project adheres to
 
 ### Changed
 
+- Corrected the `base-python` raw-scanner gate so a valid zero-finding
+  Trivy/Grype report pair passes. Trivy's package inventory now supplies the
+  positive `python3.12-libs` marker, with epoch, version, release, and RPM
+  architecture derived from `runtime.shipped[arch]`; Grype validates report
+  identity, distro, source shape, and every present match while permitting
+  `matches: []`. Normal invocations now require `--contract` and `--arch`, and
+  the redundant early Grype visibility scan was removed.
+- Tightened the same gate to reject malformed runtime-marker identities with
+  extra epoch separators or colons in version/release, and to reject
+  whitespace-bearing Trivy package names and Grype artifact names before the
+  SQLite absence decision.
 - Recorded the reversed base-image family topology in ADR-0010: planned language
   variants will live in this repository as `images/<variant>/` trees with
   per-image path-scoped publish workflows; the root micro image is unchanged.
