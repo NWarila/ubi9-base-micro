@@ -52,8 +52,8 @@ and this project adheres to
 - Hardened repository self-verification: the planning-residue check now reads
   every UTF-8-decodable tracked blob directly from the Git objects named by
   `HEAD`, with replacement-object processing disabled; the required-file
-  manifest rejects duplicate paths; and parser, scanner, and SQLite proof
-  fixtures assert their exact failure reasons.
+  manifest rejects duplicate paths; and collector, parser, scanner, and SQLite
+  proof fixtures assert their exact failure reasons.
 - Aligned decision-envelope fixability with the OpenVEX classifier. Malformed
   Trivy or Grype fix metadata grants no fix, stays on the unfixed OpenVEX path,
   and is reported consistently in pull-request decisions and nightly drift

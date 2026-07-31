@@ -46,8 +46,8 @@ The planning-residue check enumerates the tracked tree at `HEAD` and reads each
 blob directly from Git with replacement-object processing disabled. It has no
 path exclusions, does not read working-tree or untracked content, and skips
 only blobs that cannot be decoded as UTF-8. Tree enumeration failures,
-unsupported tracked entry types, and individual blob-read failures stop the
-verifier.
+malformed tracked-entry metadata, non-blob tracked entries, and individual
+blob-read failures stop the verifier.
 
 The fixable scanner gate rejects MEDIUM, HIGH, and CRITICAL findings. TD-6
 temporarily excuses only `CVE-2026-31790` on the two held FIPS provider packages
