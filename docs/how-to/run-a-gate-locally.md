@@ -12,7 +12,12 @@ python tools/verify.py
 
 The verifier checks a duplicate-free required-file manifest, pinned workflow
 inputs, deny-all ignore allowlists, documentation markers, Diataxis layout, ADR
-inventory, lint setup, helper self-tests, and attribution-residue denial.
+inventory, lint setup, helper self-tests, attribution-residue denial, and a
+separate internal-process-residue denial.
+
+The internal-process check reads only Markdown in the current checkout at
+`README.md`, `docs/**/*.md`, and `images/**/*.md`. Paths outside that set are
+outside this check.
 
 ## Runtime Hardening
 

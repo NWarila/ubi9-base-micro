@@ -6,7 +6,7 @@ it.
 
 | Path | Enforces |
 | --- | --- |
-| `tools/verify.py` | Repository contract checks: a duplicate-free required-file manifest, pinned workflow inputs, deny-all ignore allowlists, documentation markers, Diataxis layout, ADR inventory, lint setup, helper self-tests, and attribution-residue denial. |
+| `tools/verify.py` | Repository contract checks: a duplicate-free required-file manifest, pinned workflow inputs, deny-all ignore allowlists, documentation markers, Diataxis layout, ADR inventory, lint setup, helper self-tests, attribution-residue denial, and internal-process-residue denial limited to `README.md`, `docs/**/*.md`, and `images/**/*.md` in the current checkout. |
 | `tools/run-test-gates.sh` | Local orchestration for the image gate set: build, hardening, FIPS, footprint, STIG, SBOM, fixable MEDIUM+ scanners, OpenVEX, rootfs secret scan, NIST SP 800-190 predicate validation, SLSA builder assertion, and Rekor assertion helpers. |
 | `tools/assert-reproducible.py` | Builds the same runtime twice for a platform, exports both rootfs tar streams, reports canonical rootfs and rpmdb digests, fails on any byte, metadata, ownership, type, mtime, or presence difference when `--assert-byte-identical` is set, and fails when `--expect-from-contract` values from `contracts/image-manifest.json` do not match. |
 | `tools/assert-footprint.py` | Exports the runtime rootfs and fails when regular-file bytes exceed the configured H2 limit. |
@@ -41,6 +41,9 @@ parse failure, missing input, or unhandled evidence shape is treated as a
 failing gate rather than a skipped or advisory result. Decision-envelope
 generation is reporting, not enforcement; an incomplete envelope carries an
 attention reason while the upstream gate result remains authoritative.
+
+The internal-process-residue check reads only the three Markdown path sets named
+above. Other paths are outside this check.
 
 The fixable scanner gate rejects MEDIUM, HIGH, and CRITICAL findings. TD-6
 temporarily excuses only `CVE-2026-31790` on the two held FIPS provider packages

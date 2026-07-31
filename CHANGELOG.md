@@ -49,13 +49,16 @@ and this project adheres to
 
 ### Changed
 
-- Hardened repository self-verification: the required-file manifest rejects
-  duplicate paths, and parser, scanner, and SQLite proof fixtures assert their
-  exact failure reasons.
+- Hardened repository self-verification: the required-file manifest is
+  duplicate-free and its rejection fixture checks the exact reason; twelve
+  `assert-vex.py` JSON/OpenVEX loader and parser probes, the raw-scanner marker's
+  invalid-architecture probe, and all six SQLite absence probes likewise check
+  their exact failure reasons.
 - Aligned decision-envelope fixability with the OpenVEX classifier. Malformed
-  Trivy or Grype fix metadata grants no fix, stays on the unfixed OpenVEX path,
-  and is reported consistently in pull-request decisions and nightly drift
-  issues.
+  Trivy or Grype fix metadata on HIGH or CRITICAL findings grants no fix and
+  stays on the unfixed OpenVEX path. Grype's `fix.available` field remains
+  descriptive and is deliberately excluded from fixability; both pull-request
+  decisions and nightly drift issues report the resulting classification.
 - Corrected the `base-python` raw-scanner gate so a valid zero-finding
   Trivy/Grype report pair passes. Trivy's package inventory now supplies the
   positive `python3.12-libs` marker, with epoch, version, release, and RPM
