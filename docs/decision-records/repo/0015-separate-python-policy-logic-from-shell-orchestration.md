@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-11
+- Last reviewed: 2026-07-31
 - Scope: repo
 
 ## Context
@@ -96,6 +97,16 @@ The current-state ledger is:
   candidates, successful-signature output predicate, and LF-exact lock rendering.
   Its unit suite proves the full pre-strip row universe and discarded set survive
   classification in input order.
+- `images/python/tools/assert-raw-scanners-no-sqlite.py` owns the structured
+  scanner-report and contract policy for the Python SQLite-absence proof. The
+  workflow produces the reports, passes their paths with the image contract and
+  architecture, and invokes the helper; the former inline Grype visibility
+  policy and its private feeder scan are no longer part of orchestration.
+  Inventory-bearing Trivy supplies the positive runtime-package evidence.
+  Grype's `matches` surface contains findings rather than a package inventory,
+  so an empty list is valid while every present match remains schema-checked.
+  Cross-report product and image binding remains the responsibility of the
+  immediately following `tools/assert-vex.py` gate.
 
 ### Declared boundaries
 
@@ -147,6 +158,9 @@ The current-state ledger is:
 - `docs/decision-records/repo/0001-byte-for-byte-rootfs-reproducibility.md`
 - `docs/decision-records/repo/0014-pin-builder-python-closure.md`
 - `containers/Dockerfile`
+- `.github/workflows/python-ci.yaml`
+- `images/python/tools/assert-raw-scanners-no-sqlite.py`
+- `tools/assert-vex.py`
 - `tools/rpmlock.py`
 - `tools/assert-rpm-lock-hashes.py`
 - `tools/build-runtime-rootfs.py`

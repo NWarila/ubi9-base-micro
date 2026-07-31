@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-29
+- Last reviewed: 2026-07-31
 - Scope: repo
 
 ## Context
@@ -36,6 +37,20 @@ deviation is committed in
 `rpm -V --nodeps python3.12-libs` result must report exactly that set and no
 other retained-package payload deviation.
 
+The raw-scanner proof uses `python3.12-libs` as a policy selector, not as a
+hardcoded package identity. With required `--contract` and `--arch` inputs,
+`images/python/tools/assert-raw-scanners-no-sqlite.py` selects exactly one
+matching NEVRA from `runtime.shipped[arch]` and compares its complete epoch,
+version, release, and RPM architecture with Trivy's package inventory. Trivy
+therefore supplies the positive content evidence. Grype exposes findings rather
+than a package inventory, so `matches: []` is a legitimate clean result; every
+present match is still schema-checked, and both reports are still searched for
+`sqlite-libs` and the five associated CVEs. Malformed marker NEVRAs, colons in
+the compared version or release, and whitespace-bearing Trivy package or Grype
+artifact names fail as malformed evidence. The adjacent `tools/assert-vex.py`
+gate, not this raw absence gate, binds the two reports to each other and to the
+scanned product.
+
 This decision does not authorize mechanical stripping from other language
 images. Node and Java require independent dependency and API review. Standard
 runtime features are presumed supported unless the image prominently declares
@@ -49,7 +64,8 @@ their omission and gives consumers a viable alternative.
   fuller Red Hat Python base or a derivative retaining both parts.
 - The final rpmdb and all three SBOM formats omit `sqlite-libs`; raw Trivy and
   Grype reports must contain neither that package nor the five associated
-  findings before OpenVEX is evaluated.
+  findings before OpenVEX is evaluated. A correctly formed pair with zero
+  vulnerability findings is a successful proof, not a gate failure.
 - The retained `python3.12-libs` RPM has a deliberate, exact payload deviation
   instead of an implied claim of complete RPM payload fidelity.
 - Future removals require the same supported-surface analysis and evidence; this
@@ -62,5 +78,7 @@ their omission and gives consumers a viable alternative.
 - `images/python/rpm-lock/retained-payload-trim.json`
 - `images/python/tools/build-python-rootfs.py`
 - `images/python/tools/run-python-gates.sh`
+- `images/python/tools/assert-raw-scanners-no-sqlite.py`
+- `tools/assert-vex.py`
 - `tools/assert-no-phantom-packages.py`
 - `docs/decision-records/repo/0005-strip-runtime-with-phantom-package-guard.md`
