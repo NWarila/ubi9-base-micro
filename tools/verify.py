@@ -1096,8 +1096,16 @@ def check_pin_invariant_self_test() -> None:
     )
 
 
+def require_unique_required_files(relative_paths: list[str]) -> None:
+    duplicates = sorted(path for path, count in Counter(relative_paths).items() if count > 1)
+    require(
+        not duplicates,
+        "required file list contains duplicate entries: " + ", ".join(duplicates),
+    )
+
+
 def check_required_files() -> None:
-    for relative_path in [
+    required_files = [
         ".dockerignore",
         ".editorconfig",
         ".gitattributes",
@@ -1188,9 +1196,6 @@ def check_required_files() -> None:
         "images/python/tools/generate-python-lock.sh",
         "images/python/tools/rpmlock.py",
         "images/python/tools/retained_payload_trim.py",
-        "images/python/tools/assert-no-rootfs-secrets.py",
-        "images/python/tools/assert-sbom-rpms.py",
-        "images/python/tools/generate-nist-800-190-predicate.py",
         "images/python/tools/run-stig-arf.sh",
         "images/python/stig/rhel9-base-python-tailoring.xml",
         "images/python/stig/tailoring-justifications.json",
@@ -1267,8 +1272,22 @@ def check_required_files() -> None:
         "vex/cve-2026-31790.openvex.json",
         "vex/README.md",
         "tests/fixtures/scanner-canary/log4shell.cdx.json",
-    ]:
+    ]
+    require_unique_required_files(required_files)
+    for relative_path in required_files:
         require((ROOT / relative_path).is_file(), f"missing required file: {relative_path}")
+
+    duplicate_fixture = [required_files[0], required_files[0]]
+    try:
+        require_unique_required_files(duplicate_fixture)
+    except VerifyError as exc:
+        require(
+            str(exc) == f"required file list contains duplicate entries: {required_files[0]}",
+            f"required-file uniqueness fixture rejected for the wrong reason: {exc}",
+        )
+    else:
+        raise VerifyError("required-file uniqueness fixture unexpectedly passed")
+    print(f"Required-file uniqueness: {len(required_files)}/{len(set(required_files))}; duplicate fixture rejected")
     dockerignore = read(".dockerignore")
     expected_dockerignore_negations = {
         "!containers/",

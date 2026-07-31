@@ -17,6 +17,17 @@ from typing import Any
 
 ARCHES = {"amd64", "arm64"}
 HIGH_CRITICAL = {"HIGH", "CRITICAL"}
+TRIVY_FIX_STATUSES = {
+    "affected",
+    "end_of_life",
+    "fixed",
+    "fix_deferred",
+    "not_affected",
+    "under_investigation",
+    "unknown",
+    "will_not_fix",
+}
+GRYPE_FIX_STATES = {"fixed", "not-fixed", "unknown", "wont-fix"}
 OPENVEX_STATUSES = {"affected", "fixed", "not_affected", "under_investigation"}
 OPENVEX_NOT_AFFECTED_JUSTIFICATIONS = {
     "component_not_present",
@@ -211,6 +222,41 @@ def _contract_values(contract_path: Path, arch: str) -> tuple[int, str, str]:
     return limit, rootfs_digest, rpmdb_sha256
 
 
+def _trivy_fixability(finding: dict[str, Any]) -> tuple[bool, str | None]:
+    fixed_version = ""
+    if "FixedVersion" in finding:
+        raw_fixed_version = finding["FixedVersion"]
+        if not isinstance(raw_fixed_version, str):
+            return False, None
+        fixed_version = raw_fixed_version.strip()
+    status: str | None = None
+    if "Status" in finding:
+        raw_status = finding["Status"]
+        if not isinstance(raw_status, str) or raw_status not in TRIVY_FIX_STATUSES:
+            return False, None
+        status = raw_status
+    return bool(fixed_version) or status == "fixed", fixed_version or None
+
+
+def _grype_fixability(vulnerability: dict[str, Any]) -> tuple[bool, str | None]:
+    raw_fix = vulnerability.get("fix")
+    if raw_fix is None or not isinstance(raw_fix, dict):
+        return False, None
+    raw_versions = raw_fix.get("versions")
+    if not isinstance(raw_versions, list):
+        return False, None
+    versions: list[str] = []
+    for version in raw_versions:
+        if not isinstance(version, str) or not version.strip():
+            return False, None
+        versions.append(version.strip())
+    raw_state = raw_fix.get("state")
+    if not isinstance(raw_state, str) or raw_state not in GRYPE_FIX_STATES:
+        return False, None
+    fixed_version = ", ".join(versions) or None
+    return bool(versions) or raw_state == "fixed", fixed_version
+
+
 def _trivy_findings(path: Path) -> list[Finding]:
     report = _object(_load_json(path, "Trivy report"), "Trivy report")
     findings: list[Finding] = []
@@ -226,13 +272,12 @@ def _trivy_findings(path: Path) -> list[Finding]:
             vulnerability = _string(finding.get("VulnerabilityID"), "Trivy vulnerability id")
             package = _string(finding.get("PkgName"), f"Trivy package for {vulnerability}")
             version = _string(finding.get("InstalledVersion"), f"Trivy installed version for {vulnerability}")
-            fixed_version = str(finding.get("FixedVersion") or "").strip()
-            fixable = bool(fixed_version) or str(finding.get("Status") or "").lower() == "fixed"
+            fixable, fixed_version = _trivy_fixability(finding)
             purl: str | None = None
             identifier = finding.get("PkgIdentifier")
             if isinstance(identifier, dict) and isinstance(identifier.get("PURL"), str):
                 purl = identifier["PURL"].strip() or None
-            findings.append(Finding(vulnerability, package, version, severity, fixable, fixed_version or None, purl))
+            findings.append(Finding(vulnerability, package, version, severity, fixable, fixed_version, purl))
     return findings
 
 
@@ -250,12 +295,7 @@ def _grype_match(raw_match: Any, label: str) -> Finding | None:
     version = _string(artifact.get("version"), f"{label} version")
     purl_value = artifact.get("purl")
     purl = purl_value.strip() if isinstance(purl_value, str) and purl_value.strip() else None
-    fix = vulnerability.get("fix")
-    fix_object = fix if isinstance(fix, dict) else {}
-    versions = fix_object.get("versions")
-    fixed_versions = [str(value).strip() for value in versions] if isinstance(versions, list) else []
-    fixed_version = ", ".join(value for value in fixed_versions if value) or None
-    fixable = bool(fixed_version) or str(fix_object.get("state") or "").lower() == "fixed"
+    fixable, fixed_version = _grype_fixability(vulnerability)
     return Finding(vulnerability_id, package, version, severity, fixable, fixed_version, purl)
 
 

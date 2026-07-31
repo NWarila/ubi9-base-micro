@@ -122,3 +122,16 @@ On the current image, tightening the fixable threshold catches two findings and
 the exact exception excuses those same two findings, so the immediate enforcement
 delta is zero. The tightening is forward-looking: any future fixable Medium on a
 different CVE, package, or version fails the gate.
+
+## TD-7: RPM verification is limited to payload-trim packages
+
+`assert_exact_rpm_verify_deviations` runs `rpm -V` only for packages named by the
+retained-payload-trim contract. It therefore detects undeclared verification
+deviations in those deliberately trimmed packages, but it does not detect a
+missing-payload deviation in a different retained package. The trim contract and
+the associated decision record remain correctly scoped to the contracted
+packages; they do not claim repository-wide RPM payload verification.
+
+Widening this check requires a separate security-gate change with positive and
+negative oracles across every retained package. Until then, do not describe the
+current assertion as complete verification of all retained RPM payloads.

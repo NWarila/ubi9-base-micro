@@ -48,4 +48,5 @@ Documentation for this repository follows the Diataxis framework.
 
 ## Maintenance Ledgers
 
-- [`TECH-DEBT.md`](TECH-DEBT.md) - tracked repository debt for provider z-stream availability and future revalidation decisions.
+- [`TECH-DEBT.md`](TECH-DEBT.md) - tracked repository debt and scoped exceptions,
+  including the retained-RPM payload-verification limitation.

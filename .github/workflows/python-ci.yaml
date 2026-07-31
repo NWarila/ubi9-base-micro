@@ -313,7 +313,6 @@ jobs:
             "${image}"
           dist/tools/grype "${image}" --only-fixed --fail-on high -o table
 
-
       - name: Install OpenSCAP STIG tooling
         run: bash tools/install-openscap.sh
 

@@ -10,9 +10,14 @@ Run this for documentation-only, metadata, and repository-health changes:
 python tools/verify.py
 ```
 
-The verifier checks required files, pinned workflow inputs, deny-all ignore
-allowlists, documentation markers, Diataxis layout, ADR inventory, lint setup,
-helper self-tests, and attribution-residue denial.
+The verifier checks a duplicate-free required-file manifest, pinned workflow
+inputs, deny-all ignore allowlists, documentation markers, Diataxis layout, ADR
+inventory, lint setup, helper self-tests, attribution-residue denial, and a
+separate internal-process-residue denial.
+
+The internal-process check reads only Markdown in the current checkout at
+`README.md`, `docs/**/*.md`, and `images/**/*.md`. Paths outside that set are
+outside this check.
 
 ## Runtime Hardening
 
