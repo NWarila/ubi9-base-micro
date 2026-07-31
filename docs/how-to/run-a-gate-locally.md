@@ -12,13 +12,7 @@ python tools/verify.py
 
 The verifier checks a duplicate-free required-file manifest, pinned workflow
 inputs, deny-all ignore allowlists, documentation markers, Diataxis layout, ADR
-inventory, lint setup, helper self-tests, and planning-residue denial.
-
-The residue check reads raw Git blobs for tracked paths at `HEAD`, with
-replacement-object processing disabled. It does not inspect uncommitted or
-untracked content and skips only blobs that are not valid UTF-8. Commit the
-content you intend to prove before relying on this result; enumeration or blob
-retrieval failures stop the verifier.
+inventory, lint setup, helper self-tests, and attribution-residue denial.
 
 ## Runtime Hardening
 

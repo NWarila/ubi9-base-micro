@@ -748,7 +748,7 @@ def self_test() -> None:
         (root / "usr/lib64/libother.so").symlink_to("libdemo.so")
         xattr_probe = True
         try:
-            os.setxattr(root / "etc/passwd", "user.xattrprobe", b"probe")
+            os.setxattr(root / "etc/passwd", "user.step034", b"probe")
         except OSError:
             xattr_probe = False
 
@@ -756,7 +756,7 @@ def self_test() -> None:
         assert pre["usr/lib64/libdemo.so"].nlink_group == pre["usr/lib64/libdemo-alias.so"].nlink_group != ""
         assert pre["usr/lib64/libother.so"].kind == "l"
         if xattr_probe:
-            assert "user.xattrprobe=" in pre["etc/passwd"].xattrs
+            assert "user.step034=" in pre["etc/passwd"].xattrs
 
         identical = walk_root(root)
         assert_parent_invariance(pre, identical, set(), set())
