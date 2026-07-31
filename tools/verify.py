@@ -12,6 +12,7 @@ import ast
 import copy
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -19,6 +20,7 @@ import tarfile
 import tempfile
 from collections import Counter
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -1096,8 +1098,16 @@ def check_pin_invariant_self_test() -> None:
     )
 
 
+def require_unique_required_files(relative_paths: list[str]) -> None:
+    duplicates = sorted(path for path, count in Counter(relative_paths).items() if count > 1)
+    require(
+        not duplicates,
+        "required file list contains duplicate entries: " + ", ".join(duplicates),
+    )
+
+
 def check_required_files() -> None:
-    for relative_path in [
+    required_files = [
         ".dockerignore",
         ".editorconfig",
         ".gitattributes",
@@ -1188,9 +1198,6 @@ def check_required_files() -> None:
         "images/python/tools/generate-python-lock.sh",
         "images/python/tools/rpmlock.py",
         "images/python/tools/retained_payload_trim.py",
-        "images/python/tools/assert-no-rootfs-secrets.py",
-        "images/python/tools/assert-sbom-rpms.py",
-        "images/python/tools/generate-nist-800-190-predicate.py",
         "images/python/tools/run-stig-arf.sh",
         "images/python/stig/rhel9-base-python-tailoring.xml",
         "images/python/stig/tailoring-justifications.json",
@@ -1267,8 +1274,22 @@ def check_required_files() -> None:
         "vex/cve-2026-31790.openvex.json",
         "vex/README.md",
         "tests/fixtures/scanner-canary/log4shell.cdx.json",
-    ]:
+    ]
+    require_unique_required_files(required_files)
+    for relative_path in required_files:
         require((ROOT / relative_path).is_file(), f"missing required file: {relative_path}")
+
+    duplicate_fixture = [required_files[0], required_files[0]]
+    try:
+        require_unique_required_files(duplicate_fixture)
+    except VerifyError as exc:
+        require(
+            str(exc) == f"required file list contains duplicate entries: {required_files[0]}",
+            f"required-file uniqueness fixture rejected for the wrong reason: {exc}",
+        )
+    else:
+        raise VerifyError("required-file uniqueness fixture unexpectedly passed")
+    print(f"Required-file uniqueness: {len(required_files)}/{len(set(required_files))}; duplicate fixture rejected")
     dockerignore = read(".dockerignore")
     expected_dockerignore_negations = {
         "!containers/",
@@ -7966,7 +7987,7 @@ def check_docs() -> None:
         "docs/how-to/verify-a-published-image.md child attestation routing is not fail-closed: "
         f"{howto_child_loop_failure}",
     )
-    for residue in ["P1.8", "one-time owner visibility change"]:
+    for residue in ["P" + "1.8", "one-time owner visibility change"]:
         require(residue not in verify, f"docs/reference/verify.md retains false anonymous-pull residue: {residue}")
 
     for marker in [
@@ -8304,16 +8325,102 @@ INTERNAL_PROCESS_RESIDUE_PATTERNS = [
 ]
 
 
-def collect_internal_process_docs(root: Path = ROOT) -> list[tuple[str, str]]:
-    readme = root / "README.md"
-    docs_dir = root / "docs"
-    images_dir = root / "images"
-    require(readme.is_file(), "missing public README.md for internal-process residue scan")
-    require(docs_dir.is_dir(), "missing docs directory for internal-process residue scan")
-    paths = [readme, *sorted(docs_dir.rglob("*.md"))]
-    if images_dir.is_dir():
-        paths.extend(sorted(images_dir.rglob("*.md")))
-    return [(str(path.relative_to(root)), path.read_text(encoding="utf-8")) for path in paths]
+@dataclass(frozen=True)
+class TrackedTextCollection:
+    sources: list[tuple[str, str]]
+    tracked_paths: int
+    decoded_paths: int
+    skipped_paths: int
+
+
+def _collect_tracked_text_at_head(
+    root: Path,
+    *,
+    git_options: tuple[str, ...],
+    git_environment: dict[str, str],
+) -> TrackedTextCollection:
+    tree_result = subprocess.run(
+        [
+            "git",
+            *git_options,
+            "ls-tree",
+            "-r",
+            "-z",
+            "--format=%(objectmode)%x00%(objecttype)%x00%(objectname)%x00%(path)",
+            "HEAD",
+        ],
+        cwd=root,
+        capture_output=True,
+        check=False,
+        env=git_environment,
+    )
+    require(
+        tree_result.returncode == 0,
+        "git ls-tree failed for tracked-text collection: " + tree_result.stderr.decode(errors="replace").strip(),
+    )
+    fields = tree_result.stdout.split(b"\0")
+    require(
+        fields[-1:] == [b""] and (len(fields) - 1) % 4 == 0,
+        "git ls-tree returned malformed tracked-entry metadata",
+    )
+
+    sources: list[tuple[str, str]] = []
+    skipped_paths = 0
+    entries = [fields[index : index + 4] for index in range(0, len(fields) - 1, 4)]
+    for raw_mode, raw_type, raw_object_id, raw_path in entries:
+        relative_path = raw_path.decode("utf-8", errors="surrogateescape")
+        mode = raw_mode.decode("ascii", errors="replace")
+        object_type = raw_type.decode("ascii", errors="replace")
+        require(
+            object_type == "blob",
+            f"unsupported tracked entry for residue scan: {relative_path} mode={mode} type={object_type}",
+        )
+        object_id = raw_object_id.decode("ascii", errors="strict")
+        blob_result = subprocess.run(
+            ["git", *git_options, "cat-file", "blob", object_id],
+            cwd=root,
+            capture_output=True,
+            check=False,
+            env=git_environment,
+        )
+        require(
+            blob_result.returncode == 0,
+            f"git cat-file failed for tracked blob {relative_path} ({object_id}): "
+            + blob_result.stderr.decode(errors="replace").strip(),
+        )
+        try:
+            text = blob_result.stdout.decode("utf-8")
+        except UnicodeDecodeError:
+            skipped_paths += 1
+            continue
+        sources.append((relative_path, text))
+
+    return TrackedTextCollection(
+        sources=sources,
+        tracked_paths=len(entries),
+        decoded_paths=len(sources),
+        skipped_paths=skipped_paths,
+    )
+
+
+def collect_tracked_text_at_head(root: Path = ROOT) -> TrackedTextCollection:
+    environment = os.environ.copy()
+    for key in [
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_NAMESPACE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_WORK_TREE",
+    ]:
+        environment.pop(key, None)
+    environment["GIT_NO_REPLACE_OBJECTS"] = "1"
+    return _collect_tracked_text_at_head(
+        root,
+        git_options=("--no-replace-objects",),
+        git_environment=environment,
+    )
 
 
 def find_internal_process_residue(sources: list[tuple[str, str]]) -> list[str]:
@@ -8332,40 +8439,244 @@ def assert_no_internal_process_residue(sources: list[tuple[str, str]]) -> None:
 
 
 def check_internal_process_residue_self_test() -> None:
+    # Assemble residue fixtures so this tracked detector source cannot satisfy its own patterns.
     positive_fixtures = [
-        ("ledger label", "P1.5a"),
-        ("numbered work label", "step024"),
-        ("internal directive", "MANDATE"),
-        ("ratification label", "OWNER-RATIFIED"),
-        ("revision label", "Rev.   B"),
-        ("internal namespace", "NWarila-Platform"),
-        ("fleet-size label", "8 Images"),
+        ("ledger label", "P" + "1.5a"),
+        ("numbered work label", "step" + "024"),
+        ("internal directive", "MAN" + "DATE"),
+        ("ratification label", "OWNER-RAT" + "IFIED"),
+        ("revision label", "Rev." + "   B"),
+        ("internal namespace", "NWarila-" + "Platform"),
+        ("fleet-size label", "8" + " Images"),
     ]
+
+    def fixture_environment() -> dict[str, str]:
+        environment = os.environ.copy()
+        for key in list(environment):
+            if key.startswith("GIT_"):
+                environment.pop(key)
+        environment["GIT_CONFIG_GLOBAL"] = os.devnull
+        environment["GIT_CONFIG_SYSTEM"] = os.devnull
+        environment["GIT_CONFIG_NOSYSTEM"] = "1"
+        return environment
+
+    git_environment = fixture_environment()
+
+    def fixture_git(
+        root: Path,
+        arguments: list[str],
+        *,
+        input_bytes: bytes | None = None,
+    ) -> subprocess.CompletedProcess[bytes]:
+        result = subprocess.run(
+            ["git", *arguments],
+            cwd=root,
+            input=input_bytes,
+            capture_output=True,
+            check=False,
+            env=git_environment,
+        )
+        require(
+            result.returncode == 0,
+            f"collector fixture git {' '.join(arguments)} failed: " + result.stderr.decode(errors="replace").strip(),
+        )
+        return result
+
+    def initialize_repository(root: Path) -> None:
+        root.mkdir()
+        fixture_git(root, ["init", "-q"])
+
+    def commit_fixture(root: Path, message: str) -> None:
+        fixture_git(root, ["add", "--all"])
+        fixture_git(
+            root,
+            [
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "user.name=Residue Fixture",
+                "-c",
+                "user.email=residue-fixture@example.invalid",
+                "commit",
+                "-q",
+                "-m",
+                message,
+            ],
+        )
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        nested_docs = root / "docs/nested"
-        nested_docs.mkdir(parents=True)
-        images_docs = root / "images"
-        images_docs.mkdir()
-        (root / "README.md").write_text(
-            "\n".join(fixture for _, fixture in positive_fixtures[:4]) + "\n",
+        repository = root / "collector"
+        initialize_repository(repository)
+        committed_path = repository / "positive.txt"
+        committed_text = positive_fixtures[1][1] + "\n"
+        committed_path.write_text(committed_text, encoding="utf-8")
+        (repository / "patterns.txt").write_text(
+            "\n".join(fixture for index, (_, fixture) in enumerate(positive_fixtures) if index != 1) + "\n",
             encoding="utf-8",
         )
-        (nested_docs / "fixture.md").write_text(
-            "\n".join(fixture for _, fixture in positive_fixtures[4:6]) + "\n",
+        (repository / "near-misses.txt").write_text(
+            "This behavior is man" + "dated. Complete the next st" + "ep carefully.\n"
+            "This is revision b, while the unrelated abbreviated revision is rev. c.\n"
+            "X" + "P" + "1.5a P" + "1.5aa XSTEP" + "001 STEP" + "001x preowner-ratified owner-ratifieds\n"
+            "preview. b xnwarila-" + "platform nwarila-" + "platformx\n"
+            "18 images 8 imageset\n",
             encoding="utf-8",
         )
-        (images_docs / "fixture.md").write_text(
-            "\n".join(fixture for _, fixture in positive_fixtures[6:]) + "\n",
+        (repository / "invalid.bin").write_bytes(b"\xff\xfe\xfd")
+        commit_fixture(repository, "Add collector fixtures")
+
+        committed_path.unlink()
+        (repository / "untracked.txt").write_text(
+            "P" + "9.9 STEP" + "999 MAN" + "DATE\n",
             encoding="utf-8",
         )
-        (root / "outside.md").write_text("P9.9 STEP999 MANDATE\n", encoding="utf-8")
-        positive_findings = find_internal_process_residue(collect_internal_process_docs(root))
+        collection = collect_tracked_text_at_head(repository)
+        collected_sources = dict(collection.sources)
+        require(
+            collected_sources.get("positive.txt") == committed_text,
+            "collector fixture did not return committed bytes after the working-tree file was deleted",
+        )
+        print("Tracked-text collector fixture 1: committed non-markdown bytes returned after working-tree deletion")
+        require("untracked.txt" not in collected_sources, "collector fixture included an untracked file")
+        print("Tracked-text collector fixture 2: untracked file excluded from the HEAD path set")
+        require(
+            collection.tracked_paths == 4
+            and collection.decoded_paths == 3
+            and collection.skipped_paths == 1
+            and "invalid.bin" not in collected_sources,
+            "collector fixture did not skip only the invalid-UTF-8 blob",
+        )
+        print("Tracked-text collector fixture 3: tracked=4 decoded=3 skipped=1 (invalid UTF-8 only)")
+
+        enumeration_failure_root = root / "not-a-repository"
+        enumeration_failure_root.mkdir()
+        try:
+            collect_tracked_text_at_head(enumeration_failure_root)
+        except VerifyError as exc:
+            require(
+                str(exc).startswith("git ls-tree failed for tracked-text collection:"),
+                f"collector enumeration fixture rejected for the wrong reason: {exc}",
+            )
+        else:
+            raise VerifyError("collector enumeration failure fixture unexpectedly passed")
+        print("Tracked-text collector fixture 4: git ls-tree failure rejected at enumeration")
+
+        broken_repository = root / "broken-blob"
+        initialize_repository(broken_repository)
+        (broken_repository / "broken.txt").write_text("referenced blob\n", encoding="utf-8")
+        commit_fixture(broken_repository, "Add referenced blob")
+        broken_object_id = (
+            fixture_git(broken_repository, ["rev-parse", "HEAD:broken.txt"]).stdout.decode("ascii").strip()
+        )
+        git_dir = fixture_git(broken_repository, ["rev-parse", "--git-dir"]).stdout.decode("utf-8").strip()
+        (broken_repository / git_dir / "objects" / broken_object_id[:2] / broken_object_id[2:]).unlink()
+        try:
+            collect_tracked_text_at_head(broken_repository)
+        except VerifyError as exc:
+            require(
+                str(exc).startswith(f"git cat-file failed for tracked blob broken.txt ({broken_object_id}):"),
+                f"collector blob-retrieval fixture rejected for the wrong reason: {exc}",
+            )
+        else:
+            raise VerifyError("collector blob-retrieval failure fixture unexpectedly passed")
+        print("Tracked-text collector fixture 5: referenced-blob retrieval failure rejected at git cat-file")
+
+        original_commit = fixture_git(repository, ["rev-parse", "HEAD"]).stdout.decode("ascii").strip()
+        original_tree = fixture_git(repository, ["rev-parse", "HEAD^{tree}"]).stdout.decode("ascii").strip()
+        original_blob = fixture_git(repository, ["rev-parse", "HEAD:positive.txt"]).stdout.decode("ascii").strip()
+        replacement_blob = (
+            fixture_git(
+                repository,
+                ["hash-object", "-w", "--stdin"],
+                input_bytes=b"replacement bytes\n",
+            )
+            .stdout.decode("ascii")
+            .strip()
+        )
+        replacement_only_blob = (
+            fixture_git(
+                repository,
+                ["hash-object", "-w", "--stdin"],
+                input_bytes=b"replacement-only path\n",
+            )
+            .stdout.decode("ascii")
+            .strip()
+        )
+        replacement_tree = (
+            fixture_git(
+                repository,
+                ["mktree", "-z"],
+                input_bytes=(
+                    f"100644 blob {original_blob}\tpositive.txt\0"
+                    f"100644 blob {replacement_only_blob}\treplacement-only.txt\0"
+                ).encode("ascii"),
+            )
+            .stdout.decode("ascii")
+            .strip()
+        )
+        replacement_commit = (
+            fixture_git(
+                repository,
+                [
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                    "user.name=Residue Fixture",
+                    "-c",
+                    "user.email=residue-fixture@example.invalid",
+                    "commit-tree",
+                    original_tree,
+                    "-m",
+                    "Replacement commit",
+                ],
+            )
+            .stdout.decode("ascii")
+            .strip()
+        )
+        for original, replacement in [
+            (original_blob, replacement_blob),
+            (original_tree, replacement_tree),
+            (original_commit, replacement_commit),
+        ]:
+            fixture_git(repository, ["replace", original, replacement])
+
+        def require_original_objects(candidate: TrackedTextCollection) -> None:
+            candidate_sources = dict(candidate.sources)
+            failures = []
+            if set(candidate_sources) != {"near-misses.txt", "patterns.txt", "positive.txt"}:
+                failures.append("traversal")
+            if candidate_sources.get("positive.txt") != committed_text:
+                failures.append("read")
+            require(not failures, "replacement-aware collector changed " + " and ".join(failures))
+
+        replacement_safe_collection = collect_tracked_text_at_head(repository)
+        require_original_objects(replacement_safe_collection)
+        replacement_aware_collection = _collect_tracked_text_at_head(
+            repository,
+            git_options=(),
+            git_environment=git_environment,
+        )
+        try:
+            require_original_objects(replacement_aware_collection)
+        except VerifyError as exc:
+            require(
+                str(exc) == "replacement-aware collector changed traversal and read",
+                f"replacement-ref discriminator failed for the wrong reason: {exc}",
+            )
+        else:
+            raise VerifyError("replacement-ref fixture did not reject a replacement-aware collector")
+        print(
+            "Tracked-text collector fixture 6: commit/tree/blob replacements ignored; "
+            "replacement-aware collector rejected for changed traversal and read"
+        )
+
+        positive_findings = find_internal_process_residue(collection.sources)
         positive_labels = {finding.rsplit(": ", 1)[1] for finding in positive_findings}
         require(
             len(positive_findings) == len(INTERNAL_PROCESS_RESIDUE_PATTERNS)
             and positive_labels == {label for label, _ in INTERNAL_PROCESS_RESIDUE_PATTERNS},
-            "internal-process residue self-test must detect every pattern across README.md, nested docs, and images",
+            "internal-process residue self-test must detect every pattern in tracked text",
         )
 
         rejected = 0
@@ -8378,21 +8689,7 @@ def check_internal_process_residue_self_test() -> None:
             else:
                 raise VerifyError(f"internal-process residue mutation unexpectedly passed: {label}")
 
-        (root / "README.md").write_text(
-            "This behavior is mandated. Complete the next step carefully.\n"
-            "This is revision b, while the unrelated abbreviated revision is rev. c.\n"
-            "XP1.5a P1.5aa XSTEP001 STEP001x preowner-ratified owner-ratifieds\n",
-            encoding="utf-8",
-        )
-        (nested_docs / "fixture.md").write_text(
-            "preview. b xnwarila-platform nwarila-platformx\n",
-            encoding="utf-8",
-        )
-        (images_docs / "fixture.md").write_text(
-            "18 images 8 imageset\n",
-            encoding="utf-8",
-        )
-        negative_findings = find_internal_process_residue(collect_internal_process_docs(root))
+        negative_findings = find_internal_process_residue([("near-misses.txt", collected_sources["near-misses.txt"])])
         require(
             not negative_findings,
             "internal-process residue self-test must accept boundary and prose near misses",
@@ -8405,7 +8702,13 @@ def check_internal_process_residue_self_test() -> None:
 
 def check_no_internal_process_residue() -> None:
     check_internal_process_residue_self_test()
-    assert_no_internal_process_residue(collect_internal_process_docs())
+    collection = collect_tracked_text_at_head()
+    print(
+        "Tracked-text residue collection: "
+        f"tracked_paths={collection.tracked_paths} decoded={collection.decoded_paths} "
+        f"skipped={collection.skipped_paths}"
+    )
+    assert_no_internal_process_residue(collection.sources)
 
 
 def main() -> int:

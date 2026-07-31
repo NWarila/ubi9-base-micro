@@ -1078,6 +1078,11 @@ def self_test() -> None:
             partial(runtime_marker_from_contract, document, "amd64"),
             expected_reason,
         )
+    _expect_rejection(
+        "runtime marker invalid --arch",
+        partial(runtime_marker_from_contract, clean_contract, "s390x"),
+        "--arch must be one of: amd64, arm64",
+    )
 
     shifted_contract = copy.deepcopy(clean_contract)
     shifted_contract["runtime"]["shipped"]["amd64"][0] = "python3.12-libs-3.12.12-3.el9_8.1.x86_64"
@@ -1124,7 +1129,7 @@ def self_test() -> None:
     if not standalone.self_test:
         raise RawScannerError("--self-test did not parse as a standalone mode")
 
-    total_probes = len(report_probes) + len(contract_probes) + 7
+    total_probes = len(report_probes) + len(contract_probes) + 8
     print(
         "raw scanner SQLite absence self-test: zero-finding and non-marker Grype reports accepted; "
         f"{total_probes} singleton probes rejected for their expected reasons"

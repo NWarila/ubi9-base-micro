@@ -242,7 +242,7 @@ def serve():
     conn, _ = listener.accept()
     with server_ctx.wrap_socket(conn, server_side=True) as tls:
         result["server_version"] = tls.version()
-        tls.sendall(b"step034")
+        tls.sendall(b"tlsprobe")
 
 
 thread = threading.Thread(target=serve)
@@ -254,7 +254,7 @@ with socket.create_connection(("127.0.0.1", port)) as raw, client_ctx.wrap_socke
     result["client_version"] = tls.version()
 thread.join(timeout=10)
 listener.close()
-expect(payload == b"step034", f"TLS payload mismatch: {payload!r}")
+expect(payload == b"tlsprobe", f"TLS payload mismatch: {payload!r}")
 expect(result.get("client_version") == result.get("server_version") and result.get("client_version"),
        f"TLS handshake versions: {result}")
 

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 import subprocess
@@ -16,6 +17,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOL = ROOT / "tools/summarize-gates.py"
+PR_RENDERER_TOOL = ROOT / "tools/render-pr-decision.py"
+DRIFT_RENDERER_TOOL = ROOT / "tools/render-drift-issue.py"
 SHA_A = "a" * 64
 SHA_B = "b" * 64
 OPENSSL_LIBS_NEVRA_MISMATCH = (
@@ -42,6 +45,100 @@ def _load_tool() -> ModuleType:
 
 
 SUMMARY = _load_tool()
+
+
+def _load_consumer(name: str, path: Path) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+PR_RENDERER = _load_consumer("fixability_render_pr_decision", PR_RENDERER_TOOL)
+DRIFT_RENDERER = _load_consumer("fixability_render_drift_issue", DRIFT_RENDERER_TOOL)
+
+
+FIX_RECORD_MATRIX = [
+    pytest.param("trivy", {"FixedVersion": None, "Status": "fixed"}, False, id="trivy-null-version"),
+    pytest.param("trivy", {"FixedVersion": [], "Status": "fixed"}, False, id="trivy-version-type"),
+    pytest.param("trivy", {"Status": "FiXeD"}, False, id="trivy-status-case"),
+    pytest.param("trivy", {"Status": " fixed "}, False, id="trivy-status-padding"),
+    pytest.param(
+        "trivy",
+        {"FixedVersion": "1.2.3", "Status": []},
+        False,
+        id="trivy-status-type",
+    ),
+    pytest.param(
+        "trivy",
+        {"FixedVersion": "1.2.3", "Status": "surprising"},
+        False,
+        id="trivy-status-vocabulary",
+    ),
+    pytest.param("grype", [], False, id="grype-fix-type"),
+    pytest.param("grype", {"versions": {}, "state": "fixed"}, False, id="grype-versions-type"),
+    pytest.param(
+        "grype",
+        {"versions": [{}], "state": "not-fixed"},
+        False,
+        id="grype-version-entry-type",
+    ),
+    pytest.param(
+        "grype",
+        {"versions": [""], "state": "not-fixed"},
+        False,
+        id="grype-empty-version",
+    ),
+    pytest.param(
+        "grype",
+        {"versions": ["1.2.3"], "state": []},
+        False,
+        id="grype-state-type",
+    ),
+    pytest.param("grype", {"versions": ["1.2.3"]}, False, id="grype-state-missing"),
+    pytest.param(
+        "grype",
+        {"versions": ["1.2.3"], "state": "surprising"},
+        False,
+        id="grype-state-vocabulary",
+    ),
+    pytest.param("grype", {"versions": [], "state": "FiXeD"}, False, id="grype-state-case"),
+    pytest.param("grype", {"versions": [], "state": " fixed "}, False, id="grype-state-padding"),
+    pytest.param(
+        "trivy",
+        {"FixedVersion": "1.2.3", "Status": "fixed"},
+        True,
+        id="trivy-complete-fix",
+    ),
+    pytest.param("trivy", {"FixedVersion": "1.2.3"}, True, id="trivy-version-only"),
+    pytest.param("trivy", {"Status": "fixed"}, True, id="trivy-status-only"),
+    pytest.param(
+        "trivy",
+        {"FixedVersion": "1.2.3", "Status": "fix_deferred"},
+        True,
+        id="trivy-version-with-deferred-status",
+    ),
+    pytest.param(
+        "grype",
+        {"versions": ["1.2.3"], "state": "fixed"},
+        True,
+        id="grype-complete-fix",
+    ),
+    pytest.param(
+        "grype",
+        {"versions": ["1.2.3"], "state": "not-fixed"},
+        True,
+        id="grype-version-establishes-fix",
+    ),
+    pytest.param(
+        "grype",
+        {"versions": [], "state": "fixed"},
+        True,
+        id="grype-state-establishes-fix",
+    ),
+]
 
 
 def _write(path: Path, value: Any) -> None:
@@ -203,6 +300,104 @@ def _summarize(inputs: dict[str, Path]) -> dict[str, Any]:
         "example.invalid/base-micro",
     )
     return result
+
+
+def _fix_record_envelope(inputs: dict[str, Path], scanner: str, fix_record: Any) -> dict[str, Any]:
+    vulnerability = "CVE-2099-4242"
+    package = "matrix-package"
+    version = "1"
+    trivy_findings: list[dict[str, Any]] = []
+    grype_findings: list[dict[str, Any]] = []
+    grype_gate_findings: list[dict[str, Any]] = []
+    if scanner == "trivy":
+        finding = _trivy(vulnerability, package, version, fixable=False)
+        finding.pop("FixedVersion")
+        finding.update(cast(dict[str, Any], fix_record))
+        trivy_findings.append(finding)
+    else:
+        finding = _grype(vulnerability, package, version, fixable=False)
+        finding["vulnerability"]["fix"] = fix_record
+        grype_findings.append(finding)
+        grype_gate_findings.append(copy.deepcopy(finding))
+
+    dist = inputs["dist"]
+    _write(dist / "vuln/base-micro.amd64.trivy.all.json", {"Results": [{"Vulnerabilities": trivy_findings}]})
+    _write(dist / "vuln/base-micro.amd64.grype.all.json", {"matches": grype_findings})
+    _write(
+        dist / "vuln/base-micro.amd64.grype.gate.json",
+        {"matches": grype_gate_findings, "ignoredMatches": []},
+    )
+    return _summarize(inputs)
+
+
+def _repro_envelope(arch: str) -> dict[str, Any]:
+    return {
+        "schema_version": "1.1.0",
+        "kind": "repro",
+        "arch": arch,
+        "complete": True,
+        "attention_reasons": [],
+        "reproducibility": {
+            "byte_identical": True,
+            "rootfs_matches_contract": True,
+            "rpmdb_matches_contract": True,
+        },
+    }
+
+
+@pytest.mark.parametrize("scanner,fix_record,expected_fixable", FIX_RECORD_MATRIX)
+def test_fix_record_matrix_reaches_both_reporting_consumers(
+    hardening_inputs: dict[str, Path],
+    scanner: str,
+    fix_record: Any,
+    expected_fixable: bool,
+) -> None:
+    envelope = _fix_record_envelope(hardening_inputs, scanner, fix_record)
+    expected_count = int(expected_fixable)
+
+    assert envelope["complete"] is True
+    assert envelope["cves"]["raw"] == {
+        "trivy": int(scanner == "trivy"),
+        "grype": int(scanner == "grype"),
+        "unique": 1,
+    }
+    assert envelope["cves"]["actionable"]["unique"] == expected_count
+    assert envelope["vex"]["missing"] == 1 - expected_count
+
+    arm64_envelope = copy.deepcopy(envelope)
+    arm64_envelope["arch"] = "arm64"
+    envelopes = [envelope, arm64_envelope, _repro_envelope("amd64"), _repro_envelope("arm64")]
+    head_sha = "c" * 40
+    pr_body = PR_RENDERER.render_decision(
+        envelopes,
+        {
+            "title": "Align scanner fixability",
+            "number": 1,
+            "changed_files": "reporting code and tests",
+            "head_sha": head_sha,
+            "run_url": "https://example.invalid/run",
+        },
+        {
+            "api_error": None,
+            "head_sha": head_sha,
+            "required_contexts": ["repo contract"],
+            "contexts": [{"context": "repo contract", "conclusion": "success", "source": "check"}],
+        },
+    )
+    assert f"| amd64 | 1 | 0 CVE · 0 VEX | {expected_count} |" in pr_body
+
+    drift_body, attention, _signature = DRIFT_RENDERER.render_issue(
+        envelopes,
+        {"hardening": "success", "build": "success", "reproducibility-gate": "success"},
+        {"run_url": "https://example.invalid/run", "date": "2026-07-31"},
+    )
+    assert attention is True
+    if expected_fixable:
+        assert "Actionable fixable HIGH/CRITICAL CVEs:" in drift_body
+        assert r"CVE\-2099\-4242" in drift_body
+    else:
+        assert "Actionable fixable HIGH/CRITICAL CVEs: 0" in drift_body
+    assert f"Findings missing VEX: {1 - expected_count}" in drift_body
 
 
 def test_clean_hardening_separates_raw_accepted_and_actionable(hardening_inputs: dict[str, Path]) -> None:

@@ -434,6 +434,8 @@ def grype_has_fix(vulnerability: dict[str, Any]) -> bool:
         return False
     if not isinstance(raw_fix, dict):
         return False
+    # `available` is deliberately unread and descriptive here. Any future fixability
+    # decision that consults it must validate it in the same change.
     raw_versions = raw_fix.get("versions")
     versions_valid = isinstance(raw_versions, list) and all(
         isinstance(version, str) and bool(version.strip()) for version in raw_versions
@@ -749,6 +751,24 @@ def self_test() -> int:
                 result = run_fixture(trivy, grype, floor, emit=True)
             return result, stdout.getvalue() + stderr.getvalue()
 
+        def expect_vex_rejection(label: str, action: Callable[[], Any], expected_reason: str) -> None:
+            try:
+                action()
+            except VexError as exc:
+                if expected_reason not in str(exc):
+                    print(f"self-test failed: {label} rejected for wrong reason: {exc}", file=sys.stderr)
+                    raise SystemExit(1) from exc
+            except Exception as exc:
+                print(
+                    f"self-test failed: {label} rejected for wrong reason: {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1) from exc
+            else:
+                print(f"self-test failed: {label} unexpectedly passed", file=sys.stderr)
+                raise SystemExit(1)
+            print(f"assert-vex self-test: {label} rejected at its expected discriminator")
+
         if run_fixture(clean_trivy, clean_grype, clean_floor) != 0:
             print("self-test failed: correctly bound zero-finding reports did not pass", file=sys.stderr)
             return 1
@@ -795,6 +815,144 @@ def self_test() -> int:
             print("self-test failed: directory/string source pair was not accepted", file=sys.stderr)
             return 1
         print("assert-vex self-test: exact directory/string source pair accepted")
+
+        missing_json = tmp / "missing-input.json"
+        invalid_json = tmp / "invalid-input.json"
+        invalid_json.write_text("{", encoding="utf-8")
+
+        loader_document: dict[str, Any] = {
+            "@context": "https://openvex.dev/ns/v0.2.0",
+            "statements": [
+                {
+                    "vulnerability": {"name": "CVE-2099-0003"},
+                    "products": [{"@id": product}],
+                    "status": "fixed",
+                }
+            ],
+        }
+
+        def loader_fixture(label: str, document: dict[str, Any]) -> Callable[[], list[Statement]]:
+            directory = tmp / f"loader-{label}"
+            directory.mkdir()
+            write_json(directory / "fixture.json", document)
+            return lambda: load_vex_statements(directory)
+
+        singleton_probes: list[tuple[str, Callable[[], Any], str]] = [
+            (
+                "missing JSON input",
+                lambda: load_json(missing_json),
+                f"missing JSON input: {missing_json}",
+            ),
+            (
+                "invalid JSON input",
+                lambda: load_json(invalid_json),
+                f"invalid JSON in {invalid_json}:",
+            ),
+            (
+                "missing VEX directory",
+                lambda: load_vex_statements(tmp / "missing-vex"),
+                f"missing VEX directory: {tmp / 'missing-vex'}",
+            ),
+            (
+                "OpenVEX context",
+                loader_fixture(
+                    "context",
+                    {key: value for key, value in loader_document.items() if key != "@context"},
+                ),
+                ": missing @context",
+            ),
+            (
+                "OpenVEX statements container",
+                loader_fixture("statements-container", {**loader_document, "statements": {}}),
+                ": statements must be a list",
+            ),
+            (
+                "OpenVEX statement object",
+                loader_fixture("statement-object", {**loader_document, "statements": [[]]}),
+                ": statement 0 must be an object",
+            ),
+            (
+                "OpenVEX vulnerability identifier",
+                loader_fixture(
+                    "vulnerability-id",
+                    {
+                        **loader_document,
+                        "statements": [
+                            {
+                                **loader_document["statements"][0],
+                                "vulnerability": {},
+                            }
+                        ],
+                    },
+                ),
+                ": statement 0 missing vulnerability id",
+            ),
+            (
+                "OpenVEX status",
+                loader_fixture(
+                    "status",
+                    {
+                        **loader_document,
+                        "statements": [{**loader_document["statements"][0], "status": "invalid"}],
+                    },
+                ),
+                ": statement 0 has invalid status 'invalid'",
+            ),
+            (
+                "OpenVEX not-affected justification",
+                loader_fixture(
+                    "missing-justification",
+                    {
+                        **loader_document,
+                        "statements": [{**loader_document["statements"][0], "status": "not_affected"}],
+                    },
+                ),
+                ": statement 0 not_affected requires justification",
+            ),
+            (
+                "OpenVEX justification vocabulary",
+                loader_fixture(
+                    "unsupported-justification",
+                    {
+                        **loader_document,
+                        "statements": [
+                            {
+                                **loader_document["statements"][0],
+                                "status": "not_affected",
+                                "justification": "unsupported",
+                            }
+                        ],
+                    },
+                ),
+                ": statement 0 has unsupported justification 'unsupported'",
+            ),
+            (
+                "OpenVEX products container",
+                loader_fixture(
+                    "products-container",
+                    {
+                        **loader_document,
+                        "statements": [
+                            {key: value for key, value in loader_document["statements"][0].items() if key != "products"}
+                        ],
+                    },
+                ),
+                ": statement 0 requires non-empty products",
+            ),
+            (
+                "OpenVEX product identifiers",
+                loader_fixture(
+                    "product-identifiers",
+                    {
+                        **loader_document,
+                        "statements": [{**loader_document["statements"][0], "products": [{}]}],
+                    },
+                ),
+                ": statement 0 has no product identifiers",
+            ),
+        ]
+        for label, action, expected_reason in singleton_probes:
+            expect_vex_rejection(label, action, expected_reason)
 
         probes: list[tuple[str, str, Any, Any, Any, str]] = []
 

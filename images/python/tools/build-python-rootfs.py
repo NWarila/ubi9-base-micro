@@ -748,7 +748,7 @@ def self_test() -> None:
         (root / "usr/lib64/libother.so").symlink_to("libdemo.so")
         xattr_probe = True
         try:
-            os.setxattr(root / "etc/passwd", "user.step034", b"probe")
+            os.setxattr(root / "etc/passwd", "user.xattrprobe", b"probe")
         except OSError:
             xattr_probe = False
 
@@ -756,7 +756,7 @@ def self_test() -> None:
         assert pre["usr/lib64/libdemo.so"].nlink_group == pre["usr/lib64/libdemo-alias.so"].nlink_group != ""
         assert pre["usr/lib64/libother.so"].kind == "l"
         if xattr_probe:
-            assert "user.step034=" in pre["etc/passwd"].xattrs
+            assert "user.xattrprobe=" in pre["etc/passwd"].xattrs
 
         identical = walk_root(root)
         assert_parent_invariance(pre, identical, set(), set())
@@ -867,14 +867,40 @@ def self_test() -> None:
             assert_sqlite_absent(clean_sqlite_root)
 
         sqlite_rejected = 0
-        sqlite_mutations: list[tuple[str, Callable[[Path], None], int]] = [
-            ("SQLite library", add_sqlite_library, 1),
-            ("CPython _sqlite3 extension", add_sqlite_extension, 1),
-            ("CPython sqlite3 package directory", add_sqlite_package_dir, 1),
-            ("SQLite build-id link", add_sqlite_build_id_link, 1),
-            ("sqlite-libs rpmdb entry", no_files, 0),
+        sqlite_mutations: list[tuple[str, Callable[[Path], None], int, str]] = [
+            (
+                "SQLite library",
+                add_sqlite_library,
+                1,
+                "SQLite libraries survived: /usr/lib64/libsqlite3.so.0",
+            ),
+            (
+                "CPython _sqlite3 extension",
+                add_sqlite_extension,
+                1,
+                "CPython _sqlite3 extension survived: "
+                "/usr/lib64/python3.12/lib-dynload/_sqlite3.cpython-312-x86_64-linux-gnu.so",
+            ),
+            (
+                "CPython sqlite3 package directory",
+                add_sqlite_package_dir,
+                1,
+                "CPython sqlite3 package directory survived",
+            ),
+            (
+                "SQLite build-id link",
+                add_sqlite_build_id_link,
+                1,
+                "SQLite build-id links survived: /usr/lib/.build-id/aa/sqlite-probe",
+            ),
+            (
+                "sqlite-libs rpmdb entry",
+                no_files,
+                0,
+                "sqlite-libs still present in the final rpmdb",
+            ),
         ]
-        for label, populate, rpm_returncode in sqlite_mutations:
+        for label, populate, rpm_returncode, expected_reason in sqlite_mutations:
             probe_root = Path(tmp) / f"sqlite-{sqlite_rejected}"
             probe_root.mkdir()
             populate(probe_root)
@@ -882,7 +908,11 @@ def self_test() -> None:
             with patch.object(sys.modules[__name__], "_rpm", return_value=rpm_result):
                 try:
                     assert_sqlite_absent(probe_root)
-                except BuildError:
+                except BuildError as exc:
+                    if str(exc) != expected_reason:
+                        raise SystemExit(
+                            f"self-test: SQLite absence mutation rejected for the wrong reason: {label}: {exc}"
+                        ) from exc
                     sqlite_rejected += 1
                 else:
                     raise SystemExit(f"self-test: SQLite absence mutation unexpectedly passed: {label}")
@@ -901,7 +931,12 @@ def self_test() -> None:
         with patch.object(sys.modules[__name__], "_run", return_value=sqlite_ldd):
             try:
                 assert_no_sqlite_elf_dependencies(elf_root)
-            except BuildError:
+            except BuildError as exc:
+                expected_reason = "post-trim ELF objects still need libsqlite3.so.0: /usr/bin/consumer"
+                if str(exc) != expected_reason:
+                    raise SystemExit(
+                        f"self-test: SQLite DT_NEEDED consumer mutation rejected for the wrong reason: {exc}"
+                    ) from exc
                 sqlite_rejected += 1
             else:
                 raise SystemExit("self-test: SQLite DT_NEEDED consumer mutation unexpectedly passed")
