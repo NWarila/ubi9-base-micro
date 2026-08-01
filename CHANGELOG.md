@@ -53,8 +53,11 @@ and this project adheres to
   Bake contract consumed by its CI and double-build paths. Python builders now
   fail before building unless the Buildx version, commit, Linux-amd64 asset
   SHA-256, BuildKit driver image, and derived BuildKit version match; repository
-  checks also reject protected-field overrides, undeclared build consumers, and
-  automerge on the new Buildx and BuildKit Renovate surfaces.
+  checks also require the exact `base`/`ci`/`repro` target set, token-check the CI
+  command, structurally check the double-build descriptor, and reject tracked
+  shell or Python literal-list direct builds that statically select the Python
+  Dockerfile or context. The new Buildx and BuildKit Renovate surfaces cannot
+  automerge.
 - Hardened repository self-verification: the required-file manifest is
   duplicate-free and its rejection fixture checks the exact reason; twelve
   `assert-vex.py` JSON/OpenVEX loader and parser probes, the raw-scanner marker's

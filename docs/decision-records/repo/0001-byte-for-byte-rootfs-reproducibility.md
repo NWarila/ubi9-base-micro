@@ -37,10 +37,14 @@ and the distinct CI and double-build exporter policies. It pins Buildx by
 version, expected commit, and independently verified Linux-amd64 release-asset
 SHA-256, and pins the BuildKit driver by a versioned digest-qualified image
 reference. Both Python builder jobs assert those identities before building.
-`tools/verify.py` requires every non-base target to inherit the shared target,
-forbids it from redeclaring protected graph inputs, limits consumer overrides to
-the declared per-invocation values, and admits exactly the two existing Python
-build consumers. The contract contains no release target or publisher. The
+`tools/verify.py` requires exactly the `base`, `ci`, and `repro` targets; the two
+non-base targets must inherit the shared target without redeclaring protected
+graph inputs. It token-checks the CI command and structurally fixes the harness
+descriptor to their declared per-invocation values. Its tracked-file discovery
+parses shell command segments and Python literal list or tuple commands, and
+rejects a direct build when literal tokens statically select the Python
+Dockerfile or context; those checks admit exactly the two recognized existing
+consumers. The contract contains no release target or publisher. The
 non-Python Buildx and BuildKit paths remain outside this decision's new pin and
 are not made reproducible by the Python contract.
 

@@ -65,11 +65,15 @@ Any missing or mismatched observation stops the job; there is no fallback to a
 moving tag or nearby version.
 
 Repository verification enforces the contract shape and fails closed if a
-non-base target redeclares a protected graph field, a consumer overrides
-contract-owned exporter, attestation, or cache policy, a direct or third Python
-build appears, or the double-build report and execution stop sharing the same
-per-side Bake descriptor. Those guarantees cover the current CI and `repro`
-consumers only.
+`ci` or `repro` target redeclares a protected graph field, the CI command adds a
+non-static or undeclared `--set` field, selects a builder, changes output with
+push/load/output options, or includes another token, or the double-build report
+and execution stop sharing the AST-locked per-side Bake descriptor. Discovery
+parses tracked-file shell command segments and Python literal list or tuple
+commands, rejecting direct builds whose literal tokens statically select this
+image's Dockerfile or context and requiring exactly the two recognized existing
+consumers. Those guarantees do not cover arbitrary dynamic command construction
+or a future publisher.
 
 Renovate tracks the Buildx release version and the BuildKit
 version-plus-digest reference through separate managers with automerge disabled.
