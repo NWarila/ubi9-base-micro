@@ -21,13 +21,16 @@ pinned SHA-256 values before local install.
 
 | Module or runtime | Family use | CMVP status | base-micro scope |
 | --- | --- | --- | --- |
-| RHEL 9 OpenSSL FIPS Provider, `fips.so` v3.0.7-395c1a240fbfffd8 | `base-micro` amd64, future `base-python` OpenSSL-backed paths, future `base-node` when dynamically linked to system OpenSSL | #4857 ACTIVE | Shipped on amd64 inside the #4857 OE scope |
+| RHEL 9 OpenSSL FIPS Provider, `fips.so` v3.0.7-395c1a240fbfffd8 | `base-micro` amd64, the built-and-gated unpublished `base-python` amd64 path, and future `base-node` when dynamically linked to system OpenSSL | #4857 ACTIVE | Shipped on amd64 inside the #4857 OE scope |
 | RHEL 9 OpenSSL FIPS Provider, `fips.so` v3.0.7-395c1a240fbfffd8 | `base-micro` arm64 | Not CMVP validated for arm64 OE | Shipped on arm64 with the same module/version, approved-mode configured and self-test passing only |
 | Go Cryptographic Module v1.0.0 | Go-static leaves built with `GOFIPS140=v1.0.0` | #5247 ACTIVE | Not shipped here |
 | BC-FJA v2.0.0 | Future Java/Keycloak leaves configured for BCFIPS approved-only mode | #4743 ACTIVE | Not shipped here |
 | Node.js | Future `base-node` consumer of linked OpenSSL | No independent CMVP certificate; FIPS derives from OpenSSL #4857 when linkage gates pass | Not shipped here |
 
-Python-specific `hashlib` bypass limitations belong to the planned Python variant. This image does not ship Python and does not make a Python interpreter-wide FIPS claim.
+Python-specific `hashlib` boundaries belong to `base-python`'s own gates. That
+path is built and gated but unpublished; it requires approved mode, SHA-2
+operation, and MD5 refusal without making a Python interpreter-wide validation
+claim. `base-micro` itself does not ship Python.
 
 ## Out-of-scope certificates
 
@@ -83,4 +86,7 @@ This is a module-scoped and approved-mode-scoped claim: base-micro uses the FIPS
 
 The host/runtime kernel remains non-FIPS by platform decision: `fips_enabled = 0`. That value is a host/kernel property and is not inherited from this image. RHEL distro-wide host FIPS plumbing, including `fips-mode-setup` and kernel-triggered crypto-policy auto-FIPS behavior, is not enabled by this container image.
 
-Go-static leaves ignore this OpenSSL provider and must carry their own validated Go module (#5247). Planned Node and Python variants must document their own consumer boundaries; `base-micro` only provides the OpenSSL module and the approved-mode OpenSSL configuration.
+Go-static leaves ignore this OpenSSL provider and must carry their own validated
+Go module (#5247). `base-python` and future Node variants retain their own
+consumer boundaries; `base-micro` only provides the OpenSSL module and the
+approved-mode OpenSSL configuration.
