@@ -12,20 +12,25 @@ python tools/verify.py
 
 The verifier checks a duplicate-free required-file manifest, pinned workflow
 inputs, the committed Python Bake target shape, contract-derived Python builder
-pin inputs,
-Renovate managers, deny-all ignore allowlists, documentation markers, Diataxis
-layout, ADR inventory, lint setup, helper self-tests, attribution-residue
-denial, and a separate internal-process-residue denial. Its Python build-input
-self-test runs the unmodified positive control and demonstrates seven
-contract-shape, workflow-pin, identity, Renovate, and harness CLI classes
-through fifteen non-no-op negative cases.
+pin inputs, and the fail-governing shape of each named identity step: strict
+shell mode stays enabled, `continue-on-error` is absent, and the checker is the
+final unwrapped command. It also checks Renovate managers, deny-all ignore
+allowlists, documentation markers, Diataxis layout, ADR inventory, lint setup,
+helper self-tests, attribution-residue denial, and a separate
+internal-process-residue denial. The Python build-input self-test runs the
+unmodified positive control and demonstrates seven classes through fifteen
+non-no-op negative cases: BuildKit digest qualification, repro output policy,
+workflow-pin derivation, committed target protection and shape, five identity
+observations, two Renovate managers and their non-automerge rules, and the
+harness CLI.
 
 The internal-process check reads only Markdown in the current checkout at
 `README.md`, `docs/**/*.md`, and `images/**/*.md`. Paths outside that set are
 outside this check.
 
 For a Python builder-pin or Bake-contract change, the normal verifier proves
-the static contract and fail-closed mutation checks but does not create a live
+the static contract, including the fail-governing identity-step shape, and runs
+the seven-class/fifteen-case mutation inventory, but does not create a live
 Buildx builder. The live five-observation identity assertion runs in the Python
 workflow after setup and before either build. Require non-skipped `python build
 and gates` and `python reproducibility` results for both architectures; these

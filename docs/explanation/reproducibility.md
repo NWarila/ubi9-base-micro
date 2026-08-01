@@ -42,10 +42,13 @@ and the build that the report describes. Repository verification fails closed
 unless the exact `base`/`ci`/`repro` target set is present and the two non-base
 targets inherit the base without redeclaring a protected graph field. It also
 requires the two workflow builder setups and their five-observation identity
-steps to derive the pins from the contract before building. It does not inspect
-how caller command lines apply Bake overrides and does not discover or count
-build callers. The current per-side descriptor is harness behavior, not a
-repository-wide invocation guarantee or a claim about a future publisher.
+steps to derive the pins from the contract before building. Each named identity
+step must keep `set -euo pipefail` enabled, omit `continue-on-error`, and end in
+the identity checker as its final unwrapped command, so its result cannot be
+discarded by trailing shell. The verifier does not inspect how caller command
+lines apply Bake overrides and does not discover or count build callers. The
+current per-side descriptor is harness behavior, not a repository-wide
+invocation guarantee or a claim about a future publisher.
 
 Renovate has two non-automerge Python builder surfaces. The Buildx manager
 updates the release version only; the independently owned expected commit and

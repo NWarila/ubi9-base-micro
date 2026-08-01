@@ -67,12 +67,14 @@ moving tag or nearby version.
 Repository verification enforces the contract shape and fails closed if a
 `ci` or `repro` target redeclares a protected graph field. It also requires both
 workflow builder setups and their five-observation identity steps to derive the
-pins from this file before building. Repository verification does not inspect
-Bake command-line overrides, reject alternate direct-build spellings, or
-discover and count build callers. The double-build harness continues to use one
-per-side Bake descriptor for both resolved-report data and execution; that is
-the current harness behavior, not a repository-wide invocation guarantee or a
-claim about a future publisher.
+pins from this file before building. Each named identity step must keep
+`set -euo pipefail` enabled, omit `continue-on-error`, and end with the identity
+checker as its final unwrapped command.
+Repository verification does not inspect Bake command-line overrides, reject
+alternate direct-build spellings, or discover and count build callers. The
+double-build harness continues to use one per-side Bake descriptor for both
+resolved-report data and execution; that is the current harness behavior, not a
+repository-wide invocation guarantee or a claim about a future publisher.
 
 Renovate tracks the Buildx release version and the BuildKit
 version-plus-digest reference through separate managers with automerge disabled.

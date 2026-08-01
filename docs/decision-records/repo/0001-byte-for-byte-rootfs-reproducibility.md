@@ -40,7 +40,9 @@ reference. Both Python builder jobs assert those identities before building.
 `tools/verify.py` requires exactly the `base`, `ci`, and `repro` targets; the two
 non-base targets must inherit the shared target without redeclaring protected
 graph inputs. It also requires both builder jobs to derive their setup and
-identity inputs from that file, and the both-architecture byte gates retain the
+identity inputs from that file. Each named identity step must keep strict shell
+mode enabled, omit `continue-on-error`, and finish with the identity checker as
+its final unwrapped command. The both-architecture byte gates retain the
 committed rootfs and rpmdb values. The workflow and double-build harness use the
 contract, but repository verification does not analyze their Bake command-line
 overrides and does not discover or count build callers. The contract contains no

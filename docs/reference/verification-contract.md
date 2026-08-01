@@ -24,9 +24,12 @@ The path-selected Python workflow adds a pre-publication-only boundary for the
 unpublished `base-python` image. When selected, its build and reproducibility
 matrices run for both architectures, assert five contracted Buildx/BuildKit
 identities before building, and compare the double-build rootfs and rpmdb values
-with `images/python/contracts/image-manifest.json`. It produces no publisher,
-registry write, signature, attestation, provenance, or published digest, and its
-`python / required` reducer is not a required repository status context.
+with `images/python/contracts/image-manifest.json`. Repository verification
+requires the identity checker to be the final unwrapped command in its
+strict-shell step and rejects `continue-on-error` on that step. The Python path
+produces no publisher, registry write, signature, attestation, provenance, or
+published digest, and its `python / required` reducer is not a required
+repository status context.
 
 The publish path uses exact certificate identities. The repository workflow
 identity signs image signatures and repository-generated predicates; the SLSA

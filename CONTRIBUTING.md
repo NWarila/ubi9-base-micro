@@ -90,6 +90,11 @@ builder identities before building and re-prove the rootfs and rpmdb baselines.
 The `python / required` reducer is evidence aggregation, not a required
 repository status context, and the image remains unpublished.
 
+Repository verification also requires each named builder-identity step to keep
+`set -euo pipefail` enabled, omit `continue-on-error`, and end with the
+unwrapped identity checker. It rejects a later `set +...`, a wrapped or trailing
+command, and step-level `continue-on-error`.
+
 Renovate proposes the Buildx release version and the BuildKit
 version-plus-digest reference through separate managers; neither manager
 automerge is enabled. A Buildx version proposal must be paired with the matching
