@@ -39,14 +39,14 @@ SHA-256, and pins the BuildKit driver by a versioned digest-qualified image
 reference. Both Python builder jobs assert those identities before building.
 `tools/verify.py` requires exactly the `base`, `ci`, and `repro` targets; the two
 non-base targets must inherit the shared target without redeclaring protected
-graph inputs. It token-checks the CI command and structurally fixes the harness
-descriptor to their declared per-invocation values. Its tracked-file discovery
-parses shell command segments and Python literal list or tuple commands, and
-rejects a direct build when literal tokens statically select the Python
-Dockerfile or context; those checks admit exactly the two recognized existing
-consumers. The contract contains no release target or publisher. The
-non-Python Buildx and BuildKit paths remain outside this decision's new pin and
-are not made reproducible by the Python contract.
+graph inputs. It also requires both builder jobs to derive their setup and
+identity inputs from that file, and the both-architecture byte gates retain the
+committed rootfs and rpmdb values. The workflow and double-build harness use the
+contract, but repository verification does not analyze their Bake command-line
+overrides and does not discover or count build callers. The contract contains no
+release target or publisher. The non-Python Buildx and BuildKit paths remain
+outside this decision's new pin and are not made reproducible by the Python
+contract.
 
 ## Consequences
 

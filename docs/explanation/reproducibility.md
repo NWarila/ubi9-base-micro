@@ -37,17 +37,15 @@ The Python reproducibility matrix runs the `repro` target twice with no cache
 for each architecture, compares both exported rootfs trees, and asserts the
 image-specific `canonical_rootfs_digest` and `rpmdb_sha256` baselines. Each side
 is represented by one immutable Bake invocation descriptor; the same file,
-target, variable environment, and allowed overrides drive both `bake --print`
+target, variable environment, and overrides drive both `bake --print`
 and the build that the report describes. Repository verification fails closed
 unless the exact `base`/`ci`/`repro` target set is present and the two non-base
-targets inherit the base without redeclaring a protected graph field. It
-token-checks the CI shell command and structurally fixes the harness descriptor.
-Across tracked files other than the verifier itself, discovery parses shell
-command segments and Python literal list or tuple commands; it rejects direct
-builds whose literal tokens statically select the Python Dockerfile or context
-and requires exactly the two recognized existing consumers. This is an
-existing-consumer guarantee, not a claim about arbitrary dynamic command
-construction or a future publisher.
+targets inherit the base without redeclaring a protected graph field. It also
+requires the two workflow builder setups and their five-observation identity
+steps to derive the pins from the contract before building. It does not inspect
+how caller command lines apply Bake overrides and does not discover or count
+build callers. The current per-side descriptor is harness behavior, not a
+repository-wide invocation guarantee or a claim about a future publisher.
 
 Renovate has two non-automerge Python builder surfaces. The Buildx manager
 updates the release version only; the independently owned expected commit and
