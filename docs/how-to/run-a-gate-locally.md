@@ -18,7 +18,7 @@ layout, ADR inventory, lint setup, helper self-tests, attribution-residue
 denial, and a separate internal-process-residue denial. Its Python build-input
 self-test runs the unmodified positive control and demonstrates seven
 contract-shape, workflow-pin, identity, Renovate, and harness CLI classes
-through fourteen non-no-op negative cases.
+through fifteen non-no-op negative cases.
 
 The internal-process check reads only Markdown in the current checkout at
 `README.md`, `docs/**/*.md`, and `images/**/*.md`. Paths outside that set are

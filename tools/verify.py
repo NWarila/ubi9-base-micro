@@ -1635,6 +1635,28 @@ def python_builder_workflow_error(contract: Mapping[str, Any], workflow: str) ->
         identity = _workflow_named_step(job, "Assert python builder identity")
         if not identity:
             return f"python builder job {job_name} must contain one identity step"
+        if re.search(r"^        continue-on-error\s*:", identity, re.MULTILINE) is not None:
+            return f"python identity step in {job_name} must not set continue-on-error"
+        step_configuration = [
+            line
+            for line in identity.splitlines()[1:]
+            if line.startswith("        ") and not line.startswith("          ")
+        ]
+        if step_configuration != ["        env:", "        run: |"]:
+            return f"python identity step in {job_name} must contain only env and run configuration"
+        run_marker = "        run: |\n"
+        if identity.count(run_marker) != 1:
+            return f"python identity step in {job_name} must contain one multiline run body"
+        run_lines = identity.split(run_marker, 1)[1].splitlines()
+        while run_lines and not run_lines[-1].strip():
+            run_lines.pop()
+        if not run_lines or run_lines[0] != "          set -euo pipefail":
+            return f"python identity step in {job_name} must start under set -euo pipefail"
+        if any(re.search(r"\bset\s+\+", line.split("#", 1)[0]) is not None for line in run_lines[1:]):
+            return f"python identity step in {job_name} must keep set -euo pipefail enabled"
+        identity_assertion = "          python3 tools/verify.py --check-python-builder-identity"
+        if run_lines[-1] != identity_assertion:
+            return f"python identity assertion in {job_name} must be the final unwrapped command"
         identity_outputs = {
             "EXPECTED_BUILDX_VERSION": "buildx_version",
             "EXPECTED_BUILDX_COMMIT": "buildx_commit",
@@ -1945,6 +1967,15 @@ def check_python_build_input_contract_self_test() -> None:
         "python Bake target ci must not redeclare protected field: context",
     )
 
+    target_key_set = copy.deepcopy(contract)
+    target_key_set["target"]["fork"] = {"inherits": ["base"]}
+    reject(
+        "d/target-key-set",
+        target_key_set != contract,
+        python_bake_contract_error(target_key_set),
+        "python Bake target key set must be exactly base, ci, and repro",
+    )
+
     identity_mutations = [
         (
             "f/buildx-version",
@@ -2052,8 +2083,8 @@ def check_python_build_input_contract_self_test() -> None:
         harness_reason,
         "assert-reproducible.py: error: unrecognized arguments: --source-date-epoch 1704067201",
     )
-    require(rejected == 14, f"python build input mutation inventory mismatch: expected 14, got {rejected}")
-    print("python build input mutation probes: 7 classes, 14/14 rejected")
+    require(rejected == 15, f"python build input mutation inventory mismatch: expected 15, got {rejected}")
+    print("python build input mutation probes: 7 classes, 15/15 rejected")
 
 
 def check_renovate_config() -> None:
