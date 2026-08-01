@@ -11,13 +11,23 @@ python tools/verify.py
 ```
 
 The verifier checks a duplicate-free required-file manifest, pinned workflow
-inputs, deny-all ignore allowlists, documentation markers, Diataxis layout, ADR
-inventory, lint setup, helper self-tests, attribution-residue denial, and a
-separate internal-process-residue denial.
+inputs, the Python Bake target and consumer invariants, Python builder-pin
+Renovate managers, deny-all ignore allowlists, documentation markers, Diataxis
+layout, ADR inventory, lint setup, helper self-tests, attribution-residue
+denial, and a separate internal-process-residue denial. Its Python build-input
+self-test demonstrates the contract, consumer, identity, Renovate, and harness
+CLI checks in both passing and failing directions.
 
 The internal-process check reads only Markdown in the current checkout at
 `README.md`, `docs/**/*.md`, and `images/**/*.md`. Paths outside that set are
 outside this check.
+
+For a Python builder-pin or Bake-contract change, the normal verifier proves
+the static contract and fail-closed mutation checks but does not create a live
+Buildx builder. The live five-observation identity assertion runs in the Python
+workflow after setup and before either build. Require non-skipped `python build
+and gates` and `python reproducibility` results for both architectures; these
+are pre-publication gates and do not publish the image.
 
 ## Runtime Hardening
 

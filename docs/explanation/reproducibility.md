@@ -33,6 +33,26 @@ are the per-file content digests recorded in the contract, specifically
 `rpmdb_sha256` for `/var/lib/rpm/rpmdb.sqlite` and `fips_so_sha256` for
 `/usr/lib64/ossl-modules/fips.so`.
 
+The Python reproducibility matrix runs the `repro` target twice with no cache
+for each architecture, compares both exported rootfs trees, and asserts the
+image-specific `canonical_rootfs_digest` and `rpmdb_sha256` baselines. Each side
+is represented by one immutable Bake invocation descriptor; the same file,
+target, variable environment, and allowed overrides drive both `bake --print`
+and the build that the report describes. Repository verification fails closed
+unless there is exactly one shared base target, every other target inherits it
+without redeclaring a protected graph field, the two existing consumers use
+only their declared overrides, and no direct third Python build exists. This is
+an existing-consumer guarantee, not a claim about a future publisher.
+
+Renovate has two non-automerge Python builder surfaces. The Buildx manager
+updates the release version only; the independently owned expected commit and
+Linux-amd64 asset SHA-256 must be paired with that version before the pre-build
+identity gate can pass. The BuildKit manager updates the version-plus-digest
+driver reference together, and the expected BuildKit version is derived from
+that reference. Either update still has to pass all five live identity
+observations and the both-architecture byte gates. Neither manager creates a
+release target, publisher, registry write, or published Python digest.
+
 The arm64 proof intentionally uses QEMU on the GitHub-hosted amd64 runner because
 that is the same architecture path used by the publish workflow. Native arm64
 hosted runners would be a cleaner fallback if QEMU ever produces a byte diff, but

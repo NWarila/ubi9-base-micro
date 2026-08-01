@@ -37,8 +37,12 @@ and the distinct CI and double-build exporter policies. It pins Buildx by
 version, expected commit, and independently verified Linux-amd64 release-asset
 SHA-256, and pins the BuildKit driver by a versioned digest-qualified image
 reference. Both Python builder jobs assert those identities before building.
-The non-Python Buildx and BuildKit paths remain outside this decision's new pin
-and are not made reproducible by the Python contract.
+`tools/verify.py` requires every non-base target to inherit the shared target,
+forbids it from redeclaring protected graph inputs, limits consumer overrides to
+the declared per-invocation values, and admits exactly the two existing Python
+build consumers. The contract contains no release target or publisher. The
+non-Python Buildx and BuildKit paths remain outside this decision's new pin and
+are not made reproducible by the Python contract.
 
 ## Consequences
 
@@ -49,8 +53,12 @@ and are not made reproducible by the Python contract.
   they do not replace the current fail-closed gate.
 - Any image-input change must preserve the both-architecture byte-identity proof
   or be treated as an image change requiring a fresh proof.
-- A Python Buildx or BuildKit update fails closed until its executable/image
-  identity and both-architecture byte evidence are reviewed together.
+- Renovate tracks the Python Buildx release version and the BuildKit
+  version-plus-digest reference through separate, non-automerge managers. A
+  Buildx version update cannot pass until its expected commit and asset SHA-256
+  are updated to the same release identity.
+- A Python Buildx or BuildKit update fails closed until its executable or image
+  identity and both-architecture byte gates pass together.
 
 ## References
 

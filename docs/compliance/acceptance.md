@@ -1,7 +1,8 @@
 # Acceptance Criteria
 
-This document states the acceptance policy for the image produced by this
-repository. Command-level consumer verification is canonical in
+This document states the acceptance policy for the published `base-micro`
+artifact and the separately scoped pre-publication gates for `base-python`.
+Command-level consumer verification of the published artifact is canonical in
 [`../how-to/verify-a-published-image.md`](../how-to/verify-a-published-image.md)
 and [`../reference/verify.md`](../reference/verify.md); the separation between
 pull-request, publish, and post-publish proof is summarized in
@@ -28,15 +29,18 @@ head need not be current with the base branch.
 `base-python` is a separate pre-publication image path. It is built and gated in
 CI for both architectures but remains unpublished: it has no publisher,
 registry write, signature, attestation, or published digest. Its Python-only
-Bake contract pins the build graph, Buildx executable identity, and BuildKit
-driver identity; it does not pin the micro build path or make the Python reducer
-a claimed merge-blocking context.
+Bake contract fixes the graph-affecting inputs and the distinct CI and
+double-build policies, while the workflow pins and observes the Buildx
+executable and BuildKit driver identities. The verifier limits this claim to the
+two existing Python build consumers and rejects protected-field or policy
+overrides. The contract has no release target and does not pin the micro build path;
+it does not make the Python reducer a claimed merge-blocking context.
 
 ## Criteria and gates
 
 | Criterion | Accepted state | Enforcing gate |
 | --- | --- | --- |
-| Pre-publication base-python build identity | Both Python architectures must consume `images/python/docker-bake.json`; each builder must match the contracted Buildx version, commit, Linux-amd64 asset SHA-256, digest-qualified BuildKit image, and derived BuildKit version before either the CI build or double-build gate starts. The result remains built-and-gated, unpublished. | `.github/workflows/python-ci.yaml`, `images/python/docker-bake.json`, `images/python/tools/assert-reproducible.py`, and `tools/verify.py`. |
+| Pre-publication base-python build identity | The existing CI build and double-build harness must consume `images/python/docker-bake.json` for both architectures. Before either build starts, its builder must match the contracted Buildx version, commit, Linux-amd64 asset SHA-256, digest-qualified BuildKit image, and derived BuildKit version. Non-base targets must inherit the shared graph inputs without redeclaring protected fields, and consumers may use only the declared invocation overrides. The result remains built-and-gated, unpublished. | `.github/workflows/python-ci.yaml`, `images/python/docker-bake.json`, `images/python/tools/assert-reproducible.py`, and `tools/verify.py`. |
 | Multi-architecture runtime publication | The runtime target publishes as an OCI index with `linux/amd64` and `linux/arm64` children. The development target remains built-not-published. | `.github/workflows/publish-image.yaml` builds and pushes only the `runtime` target, then resolves both platform child digests. |
 | Signed publication, contract assertion, and transparency evidence | The workflow must push the OCI index before it can export and compare the registry-served child rootfs bytes, and it requires each child's canonical rootfs digest and rpmdb digest to match `contracts/image-manifest.json` before this run's signing step and before producing repository attestations, SLSA provenance, and the Rekor roll-up. Until that assertion passes, mutable tags may resolve to a digest for which this run has emitted no signature or downstream attestations. If the assertion fails, the job stops before this run's signing step, but it cannot retract the pushed manifest or tag update. | `publish-image.yaml`; `tools/assert-reproducible.py --expect-from-contract`; `tools/assert-cosign-rekor.py`. |
 | Anonymous consumer verification | A clean, unauthenticated consumer resolves one immutable index, verifies the Cosign signature on that index, verifies SPDX, CycloneDX, NIST SP 800-190, tailored STIG ARF, and any published OpenVEX attestations on each platform child, then verifies both the `slsaprovenance` attestation and `slsa-verifier` result on the index against exact identities. | The post-publish procedure in [`../reference/verify.md`](../reference/verify.md), reached through [`../how-to/verify-a-published-image.md`](../how-to/verify-a-published-image.md). The authenticated SBOM content check is summarized below; an attached-BuildKit-SBOM download path is not part of this contract. |

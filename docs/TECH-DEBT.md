@@ -72,13 +72,17 @@ behavior.
 
 ## TD-5: Builder-scoped canonical rootfs digest
 
-`canonical_rootfs_digest` currently binds to the rootfs as exported by this
-repository's CI builder path: Docker Buildx with `rewrite-timestamp=true`. It
+`canonical_rootfs_digest` is profile- and image-specific. For `base-micro`, it
+binds to the rootfs exported by the local, CI, and publish Docker Buildx paths,
+which set `rewrite-timestamp=true`. For `base-python`, it binds to the `repro`
+target's docker-tar export, which also sets `rewrite-timestamp=true`; the Python
+`ci` target uses a local Docker exporter without that policy. The digest
 includes entry metadata (`uname`, `gname`, and `mtime`) as well as content. A
 different builder, such as buildah or kaniko, can produce byte-identical file
 contents and still produce a different aggregate digest because exported layer
-metadata differs. Today the builder-portable independent checks are the per-file
-content digests in the contract: `rpmdb_sha256` and `fips_so_sha256`.
+metadata differs. The builder-portable independent checks are the per-file
+content digests recorded in each image contract, including `rpmdb_sha256` and
+`fips_so_sha256`.
 
 The Python build path now pins Buildx, its expected commit and Linux-amd64 asset
 SHA-256, and a versioned digest-qualified BuildKit driver image in
@@ -86,12 +90,15 @@ SHA-256, and a versioned digest-qualified BuildKit driver image in
 two each in `.github/workflows/build.yaml`, `publish-image.yaml`, `nightly.yaml`,
 and `rpm-lock-refresh.yaml`. Those sites still allow the setup action to select
 Buildx `latest` and the moving default BuildKit driver image. A future toolchain
-change at one of those sites can move `canonical_rootfs_digest` and make its gate
-red without a real baseline content move. That is a fail-safe false red, not a
-release-quality baseline change. Treat that event as a reviewed step: inspect
-the toolchain change, re-derive the contract under the chosen builder, and
-update the recorded baseline only through the normal review path. A
-builder-independent rebuild proof belongs to the F3/v1 anonymous-verify work.
+change at a build-serving site can move `canonical_rootfs_digest` and make its
+gate red without a real baseline content move. The later setup site in
+`publish-image.yaml` serves imagetools rather than a rootfs build; it remains an
+unpinned toolchain surface but cannot directly change the built rootfs. A
+builder-driven digest failure is a fail-safe false red, not a release-quality
+baseline change. Treat that event as a reviewed step: inspect the toolchain
+change, re-derive the contract under the chosen builder, and update the recorded
+baseline only through the normal review path. A builder-independent rebuild
+proof belongs to the F3/v1 anonymous-verify work.
 
 ## TD-6: CMVP-held FIPS provider fixable vulnerability
 
