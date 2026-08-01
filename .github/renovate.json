@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Renovate config for NWarila/ubi9-base-micro. Extends the shared UBI9 platform preset and adds repository-local UBI input and TD-1 generator handling.",
+  "description": "Renovate config for NWarila/ubi9-base-micro. Extends the shared UBI9 platform preset and adds repository-local UBI inputs, Python builder pins, and TD-1 generator handling.",
   "extends": [
     "github>NWarila/.github"
   ],
@@ -67,6 +67,34 @@
       "currentValueTemplate": "latest",
       "versioningTemplate": "docker",
       "autoReplaceStringTemplate": "{{{linePrefix}}}image: docker.io/tonistiigi/binfmt@{{{newDigest}}}\n"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the Python Buildx release version; the paired Linux-amd64 asset checksum requires independent verification.",
+      "managerFilePatterns": [
+        "/^images/python/docker-bake\\.json$/"
+      ],
+      "matchStrings": [
+        "(?<linePrefix>\"BUILDX_VERSION\": \\{\\n[ \\t]+\"default\": \")(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)(?<lineSuffix>\"\\n[ \\t]+\\})"
+      ],
+      "datasourceTemplate": "github-releases",
+      "packageNameTemplate": "docker/buildx",
+      "versioningTemplate": "semver",
+      "autoReplaceStringTemplate": "{{{linePrefix}}}{{{newValue}}}{{{lineSuffix}}}"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the version-plus-digest Python BuildKit driver image reference.",
+      "managerFilePatterns": [
+        "/^images/python/docker-bake\\.json$/"
+      ],
+      "matchStrings": [
+        "(?<linePrefix>\"BUILDKIT_IMAGE\": \\{\\n[ \\t]+\"default\": \")(?<depName>docker\\.io/moby/buildkit):(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)@(?<currentDigest>sha256:[a-f0-9]{64})(?<lineSuffix>\"\\n[ \\t]+\\})"
+      ],
+      "datasourceTemplate": "docker",
+      "packageNameTemplate": "{{{depName}}}",
+      "versioningTemplate": "docker",
+      "autoReplaceStringTemplate": "{{{linePrefix}}}{{{depName}}}:{{{newValue}}}@{{{newDigest}}}{{{lineSuffix}}}"
     }
   ],
   "packageRules": [
@@ -125,6 +153,30 @@
       "versioning": "docker",
       "semanticCommitType": "build",
       "semanticCommitScope": "deps"
+    },
+    {
+      "description": "Keep Python Buildx release updates gated for independent asset-checksum review.",
+      "matchDatasources": [
+        "github-releases"
+      ],
+      "matchPackageNames": [
+        "docker/buildx"
+      ],
+      "automerge": false,
+      "semanticCommitType": "build",
+      "semanticCommitScope": "python-buildx"
+    },
+    {
+      "description": "Keep Python BuildKit driver image updates gated for both-architecture byte review.",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "docker.io/moby/buildkit"
+      ],
+      "automerge": false,
+      "semanticCommitType": "build",
+      "semanticCommitScope": "python-buildkit"
     }
   ]
 }

@@ -12,6 +12,7 @@ import ast
 import copy
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -112,6 +113,26 @@ BINFMT_DIGEST_SITES = {
     ".github/workflows/python-ci.yaml": 2,
     ".github/workflows/rpm-lock-refresh.yaml": 2,
 }
+PYTHON_BAKE_FILE = "images/python/docker-bake.json"
+PYTHON_BAKE_VARIABLES = {
+    "BUILDX_VERSION",
+    "BUILDX_COMMIT",
+    "BUILDX_ASSET_SHA256",
+    "BUILDKIT_IMAGE",
+    "REPRO_DEST",
+    "UBI_MINIMAL_IMAGE",
+    "BASE_MICRO_IMAGE",
+}
+PYTHON_BAKE_TARGETS = {"base", "ci", "repro"}
+PYTHON_BAKE_PROTECTED_FIELDS = {"context", "dockerfile", "target", "platforms"}
+PYTHON_BAKE_PROTECTED_ARGS = {"SOURCE_DATE_EPOCH", "OCI_CREATED"}
+PYTHON_BUILD_CONSUMERS = {
+    ".github/workflows/python-ci.yaml",
+    "images/python/tools/assert-reproducible.py",
+}
+PYTHON_BUILDKIT_REFERENCE = re.compile(
+    r"^docker\.io/moby/buildkit:(?P<version>v\d+\.\d+\.\d+)@sha256:(?P<digest>[0-9a-f]{64})$"
+)
 OPENSSL_FIPS_PROVIDER_RPM_BASE_URL = "https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9"
 OPENSSL_FIPS_PROVIDER_RPM_SHA256_AMD64 = "bbf25303def8e1270675531c47bdad432f6ad8ef4c327556ae65bd6abaf8edb5"
 OPENSSL_FIPS_PROVIDER_RPM_SHA256_ARM64 = "0cfe7b281ae2ca3cb0ceaa1a0b84f8c087c4ac16662ebb9c19b5681cf39f99a9"
@@ -1171,6 +1192,7 @@ def check_required_files() -> None:
         "images/python/.dockerignore",
         "images/python/README.md",
         "images/python/VERSION",
+        "images/python/docker-bake.json",
         "images/python/contracts/image-manifest.json",
         "images/python/contracts/image-manifest.schema.json",
         "images/python/rpm-lock/builder.amd64.txt",
@@ -1458,6 +1480,702 @@ def check_community_profile() -> None:
         require(marker in pr_template, f"pull request template missing marker: {marker}")
 
 
+def python_bake_contract_error(contract: Any) -> str | None:
+    if not isinstance(contract, dict):
+        return "python Bake contract must be a JSON object"
+    if set(contract) != {"variable", "target"}:
+        return "python Bake contract top-level keys must be exactly variable and target"
+
+    variables = contract.get("variable")
+    if not isinstance(variables, dict) or set(variables) != PYTHON_BAKE_VARIABLES:
+        return "python Bake variable key set mismatch"
+    for name, entry in variables.items():
+        if not isinstance(entry, dict) or set(entry) != {"default"}:
+            return f"python Bake variable {name} must contain only a formal default"
+
+    buildx_version = variables["BUILDX_VERSION"]["default"]
+    if not isinstance(buildx_version, str) or VERSION_LITERAL.fullmatch(buildx_version) is None:
+        return "Buildx version variable is not a semantic version"
+    buildx_commit = variables["BUILDX_COMMIT"]["default"]
+    if not isinstance(buildx_commit, str) or SHA40.fullmatch(buildx_commit) is None:
+        return "Buildx commit variable is not a 40-character commit"
+    buildx_asset = variables["BUILDX_ASSET_SHA256"]["default"]
+    if not isinstance(buildx_asset, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", buildx_asset) is None:
+        return "Buildx Linux-amd64 asset SHA-256 variable is not digest-shaped"
+    buildkit_image = variables["BUILDKIT_IMAGE"]["default"]
+    if not isinstance(buildkit_image, str) or PYTHON_BUILDKIT_REFERENCE.fullmatch(buildkit_image) is None:
+        return "BuildKit driver image is not digest-pinned"
+    repro_dest = variables["REPRO_DEST"]["default"]
+    if not isinstance(repro_dest, str) or not repro_dest:
+        return "repro destination variable must have a non-empty default"
+    for name in ("UBI_MINIMAL_IMAGE", "BASE_MICRO_IMAGE"):
+        if variables[name]["default"] is not None:
+            return f"python Bake variable {name} must be nullable"
+
+    targets = contract.get("target")
+    if not isinstance(targets, dict) or set(targets) != PYTHON_BAKE_TARGETS:
+        return "python Bake target key set must be exactly base, ci, and repro"
+    base = targets.get("base")
+    if not isinstance(base, dict) or set(base) != {
+        "context",
+        "dockerfile",
+        "target",
+        "platforms",
+        "args",
+    }:
+        return "python Bake base target key set mismatch"
+    if base.get("context") != "images/python":
+        return "python Bake base context mismatch"
+    if base.get("dockerfile") != "Dockerfile":
+        return "python Bake base dockerfile mismatch"
+    if base.get("target") != "runtime":
+        return "python Bake base build target mismatch"
+    if base.get("platforms") != ["linux/amd64", "linux/arm64"]:
+        return "python Bake base platforms mismatch"
+    if base.get("args") != {
+        "SOURCE_DATE_EPOCH": "1704067200",
+        "OCI_CREATED": "2024-01-01T00:00:00Z",
+    }:
+        return "python Bake base fixed build args mismatch"
+
+    for name in sorted(set(targets) - {"base"}):
+        target = targets[name]
+        if not isinstance(target, dict):
+            return f"python Bake target {name} must be an object"
+        protected_fields = sorted(set(target) & PYTHON_BAKE_PROTECTED_FIELDS)
+        if protected_fields:
+            return f"python Bake target {name} must not redeclare protected field: {protected_fields[0]}"
+        args = target.get("args")
+        if isinstance(args, dict):
+            protected_args = sorted(set(args) & PYTHON_BAKE_PROTECTED_ARGS)
+            if protected_args:
+                return f"python Bake target {name} must not redeclare protected field: {protected_args[0]}"
+        if target.get("inherits") != ["base"]:
+            return f"python Bake target {name} must inherit only base"
+
+    ci = targets["ci"]
+    if set(ci) != {"inherits", "output"}:
+        return "python Bake ci target key set mismatch"
+    if ci.get("output") != ["type=docker"]:
+        return "python Bake ci output policy mismatch: expected type=docker"
+
+    repro = targets["repro"]
+    if set(repro) != {"inherits", "args", "no-cache", "attest", "output"}:
+        return "python Bake repro target key set mismatch"
+    if repro.get("args") != {
+        "OCI_REVISION": "reproducibility-harness",
+        "OCI_VERSION": "dev",
+        "UBI_MINIMAL_IMAGE": "${UBI_MINIMAL_IMAGE}",
+        "BASE_MICRO_IMAGE": "${BASE_MICRO_IMAGE}",
+    }:
+        return "python Bake repro build args mismatch"
+    if repro.get("no-cache") is not True:
+        return "python Bake repro cache policy mismatch: no-cache must be true"
+    if repro.get("attest") != ["type=provenance,disabled=true", "type=sbom,disabled=true"]:
+        return "python Bake repro attestation policy mismatch"
+    output = repro.get("output")
+    if output == ["type=docker,dest=${REPRO_DEST},rewrite-timestamp=false"]:
+        return "python Bake repro output policy mismatch: rewrite-timestamp must be true"
+    if output != ["type=docker,dest=${REPRO_DEST},rewrite-timestamp=true"]:
+        return "python Bake repro output policy mismatch"
+    return None
+
+
+def python_buildkit_version(contract: Mapping[str, Any]) -> str:
+    reference = contract["variable"]["BUILDKIT_IMAGE"]["default"]
+    match = PYTHON_BUILDKIT_REFERENCE.fullmatch(reference)
+    if match is None:
+        raise VerifyError("BuildKit version cannot be derived from the driver reference")
+    return match.group("version")
+
+
+def python_build_consumer_error(contract: Mapping[str, Any], workflow: str, harness: str) -> str | None:
+    changes = _workflow_job_block(workflow, "changes")
+    if not changes:
+        return "python workflow is missing the changes job"
+    outputs = {
+        "buildx_version": "BUILDX_VERSION",
+        "buildx_commit": "BUILDX_COMMIT",
+        "buildx_asset_sha256": "BUILDX_ASSET_SHA256",
+        "buildkit_image": "BUILDKIT_IMAGE",
+        "buildkit_version": None,
+    }
+    for output in outputs:
+        marker = f"      {output}: ${{{{ steps.build-inputs.outputs.{output} }}}}"
+        if changes.count(marker) != 1:
+            return f"python changes job must expose contract-derived output: {output}"
+    if changes.count('json.loads(Path("images/python/docker-bake.json").read_text(encoding="utf-8"))') != 1:
+        return "python changes job must parse the Bake contract exactly once"
+    if 'variables = json.loads(Path("images/python/docker-bake.json")' not in changes:
+        return "python changes job must read raw Bake variable defaults"
+
+    pin_values = {
+        "BUILDX_VERSION": contract["variable"]["BUILDX_VERSION"]["default"],
+        "BUILDX_COMMIT": contract["variable"]["BUILDX_COMMIT"]["default"],
+        "BUILDX_ASSET_SHA256": contract["variable"]["BUILDX_ASSET_SHA256"]["default"],
+        "BUILDKIT_IMAGE": contract["variable"]["BUILDKIT_IMAGE"]["default"],
+        "BUILDKIT_VERSION": python_buildkit_version(contract),
+    }
+    for job_name, build_step_name in (
+        ("build", "Build the python image"),
+        ("reproducibility", "Double-build byte-identical reproducibility gate"),
+    ):
+        job = _workflow_job_block(workflow, job_name)
+        if not job:
+            return f"python workflow is missing the {job_name} job"
+        for name, value in pin_values.items():
+            if value in job:
+                return f"python builder job {job_name} hard-codes {name}"
+        setup = _workflow_named_step(job, "Set up Docker Buildx")
+        if not setup:
+            return f"python builder job {job_name} must contain one Buildx setup step"
+        for marker in (
+            "        id: buildx",
+            "          version: ${{ needs.changes.outputs.buildx_version }}",
+            "          driver-opts: image=${{ needs.changes.outputs.buildkit_image }}",
+        ):
+            if marker not in setup:
+                return f"python Buildx setup in {job_name} is not contract-derived: {marker.strip()}"
+        identity = _workflow_named_step(job, "Assert python builder identity")
+        if not identity:
+            return f"python builder job {job_name} must contain one identity step"
+        identity_outputs = {
+            "EXPECTED_BUILDX_VERSION": "buildx_version",
+            "EXPECTED_BUILDX_COMMIT": "buildx_commit",
+            "EXPECTED_BUILDX_ASSET_SHA256": "buildx_asset_sha256",
+            "EXPECTED_BUILDKIT_IMAGE": "buildkit_image",
+            "EXPECTED_BUILDKIT_VERSION": "buildkit_version",
+        }
+        for environment_name, output in identity_outputs.items():
+            marker = f"          {environment_name}: ${{{{ needs.changes.outputs.{output} }}}}"
+            if marker not in identity:
+                return f"python identity step in {job_name} is not contract-derived: {environment_name}"
+        for marker in (
+            "${DOCKER_CONFIG:-${HOME}/.docker}/cli-plugins/docker-buildx",
+            'sha256sum "${buildx_plugin}"',
+            "docker buildx version",
+            "docker inspect --format '{{.Config.Image}}'",
+            "${{ steps.buildx.outputs.nodes }}",
+            "python3 tools/verify.py --check-python-builder-identity",
+        ):
+            if marker not in identity:
+                return f"python identity step in {job_name} is missing observation: {marker}"
+        build_step = _workflow_named_step(job, build_step_name)
+        if not build_step:
+            return f"python builder job {job_name} is missing step: {build_step_name}"
+        if not (job.index(setup) < job.index(identity) < job.index(build_step)):
+            return f"python builder identity in {job_name} must run after setup and before the build"
+
+    build_job = _workflow_job_block(workflow, "build")
+    build_step = _workflow_named_step(build_job, "Build the python image")
+    if "docker buildx bake --file images/python/docker-bake.json ci" not in build_step:
+        return "python CI build must invoke the ci Bake target"
+    ci_overrides = set(re.findall(r'--set "(?P<field>ci\.[A-Za-z0-9_.-]+)=', build_step))
+    expected_ci_overrides = {
+        "ci.platform",
+        "ci.tags",
+        "ci.args.OCI_REVISION",
+        "ci.args.OCI_SOURCE",
+        "ci.args.OCI_VERSION",
+    }
+    if ci_overrides != expected_ci_overrides:
+        return "python CI Bake override allowlist mismatch"
+    for forbidden in ("--load", "--output", "--provenance", "--sbom", "--no-cache", "cache-from", "cache-to"):
+        if forbidden in build_step:
+            return f"python CI consumer must not override contract policy: {forbidden}"
+
+    for marker in (
+        "class BakeInvocation:",
+        '"docker",\n            "buildx",\n            "bake",',
+        'DEFAULT_BAKE_FILE_RELATIVE = "images/python/docker-bake.json"',
+        "target=BAKE_TARGET",
+        'variables = [("REPRO_DEST", str(image_tar))]',
+        '("UBI_MINIMAL_IMAGE", args.ubi_minimal_image)',
+        '("BASE_MICRO_IMAGE", args.base_micro_image)',
+        "resolved_target = resolve_bake_target(invocation, repo_root=repo_root)",
+        "run(invocation.command(), cwd=repo_root, environment=invocation.environment())",
+        "left_build = build_image(left_tag, args, left_image_tar)",
+        "right_build = build_image(right_tag, args, right_image_tar)",
+        '"resolved_target": resolved_target',
+    ):
+        if marker not in harness:
+            return f"python reproducibility harness is missing canonical Bake descriptor marker: {marker}"
+    repro_overrides = set(re.findall(r'f"(?P<field>repro\.[A-Za-z0-9_.-]+)=', harness))
+    if repro_overrides != {"repro.platform", "repro.tags"}:
+        return "python repro Bake override allowlist mismatch"
+    for forbidden in (
+        '"--context"',
+        '"--dockerfile"',
+        '"--source-date-epoch"',
+        '"--oci-created"',
+        '"--load"',
+        '"--output"',
+        '"--provenance"',
+        '"--sbom"',
+        '"--no-cache"',
+    ):
+        if forbidden in harness:
+            return f"python repro consumer retains a contract-owned CLI override: {forbidden}"
+    return None
+
+
+def python_consumer_sources() -> dict[str, str]:
+    listed = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+    )
+    require(listed.returncode == 0, "git ls-files failed during python build consumer discovery")
+    sources: dict[str, str] = {}
+    for raw_path in listed.stdout.split(b"\0"):
+        if not raw_path:
+            continue
+        relative_path = raw_path.decode("utf-8", errors="surrogateescape")
+        if relative_path == "tools/verify.py" or Path(relative_path).suffix not in {".py", ".sh", ".yaml", ".yml"}:
+            continue
+        path = ROOT / relative_path
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="surrogateescape")
+        if "docker" in text and "buildx" in text:
+            sources[relative_path] = text
+    return sources
+
+
+def python_consumer_discovery_error(sources: Mapping[str, str]) -> str | None:
+    bake_consumers: set[str] = set()
+    direct_consumers: set[str] = set()
+    list_bake = re.compile(r'["\']docker["\']\s*,\s*["\']buildx["\']\s*,\s*["\']bake["\']')
+    list_build = re.compile(r'["\']docker["\']\s*,\s*["\']buildx["\']\s*,\s*["\']build["\']')
+    for relative_path, text in sources.items():
+        is_bake = "docker buildx bake" in text or list_bake.search(text) is not None
+        if is_bake and PYTHON_BAKE_FILE in text:
+            bake_consumers.add(relative_path)
+        is_direct = "docker buildx build" in text or list_build.search(text) is not None
+        if is_direct and ("images/python/Dockerfile" in text or "images/python" in text):
+            direct_consumers.add(relative_path)
+    if direct_consumers:
+        return "undeclared direct python build consumer: " + ", ".join(sorted(direct_consumers))
+    if bake_consumers != PYTHON_BUILD_CONSUMERS:
+        return (
+            "python build consumer set mismatch: expected "
+            + ", ".join(sorted(PYTHON_BUILD_CONSUMERS))
+            + "; found "
+            + ", ".join(sorted(bake_consumers))
+        )
+    return None
+
+
+def python_builder_identity_errors(expected: Mapping[str, str], observed: Mapping[str, str]) -> list[str]:
+    version_output = observed.get("buildx_version_output", "")
+    version_match = re.search(r"\b(v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\b", version_output)
+    commit_match = re.search(r"\b([0-9a-f]{40})\b", version_output)
+    actual_version = version_match.group(1) if version_match is not None else "<unparseable>"
+    actual_commit = commit_match.group(1) if commit_match is not None else "<unparseable>"
+
+    try:
+        nodes = json.loads(observed.get("buildx_nodes", ""))
+    except json.JSONDecodeError:
+        nodes = None
+    if isinstance(nodes, list) and nodes and all(isinstance(node, dict) for node in nodes):
+        node_versions = [node.get("buildkit") for node in nodes]
+        if all(isinstance(version, str) for version in node_versions) and len(set(node_versions)) == 1:
+            actual_buildkit_version = cast("str", node_versions[0])
+        else:
+            actual_buildkit_version = json.dumps(node_versions, sort_keys=True)
+    else:
+        actual_buildkit_version = "<unparseable>"
+
+    comparisons = [
+        ("Buildx version", expected.get("buildx_version", ""), actual_version),
+        ("Buildx commit", expected.get("buildx_commit", ""), actual_commit),
+        (
+            "Buildx asset SHA-256",
+            expected.get("buildx_asset_sha256", ""),
+            observed.get("buildx_asset_sha256", ""),
+        ),
+        (
+            "BuildKit driver Config.Image",
+            expected.get("buildkit_image", ""),
+            observed.get("buildkit_image", ""),
+        ),
+        ("BuildKit node version", expected.get("buildkit_version", ""), actual_buildkit_version),
+    ]
+    return [
+        f"{name} mismatch: expected {wanted}, observed {actual}"
+        for name, wanted, actual in comparisons
+        if wanted != actual
+    ]
+
+
+def check_python_builder_identity_environment() -> int:
+    expected = {
+        "buildx_version": os.environ.get("EXPECTED_BUILDX_VERSION", ""),
+        "buildx_commit": os.environ.get("EXPECTED_BUILDX_COMMIT", ""),
+        "buildx_asset_sha256": os.environ.get("EXPECTED_BUILDX_ASSET_SHA256", ""),
+        "buildkit_image": os.environ.get("EXPECTED_BUILDKIT_IMAGE", ""),
+        "buildkit_version": os.environ.get("EXPECTED_BUILDKIT_VERSION", ""),
+    }
+    observed = {
+        "buildx_version_output": os.environ.get("ACTUAL_BUILDX_VERSION_OUTPUT", ""),
+        "buildx_asset_sha256": os.environ.get("ACTUAL_BUILDX_ASSET_SHA256", ""),
+        "buildkit_image": os.environ.get("ACTUAL_BUILDKIT_IMAGE", ""),
+        "buildx_nodes": os.environ.get("BUILDX_NODES", ""),
+    }
+    errors = python_builder_identity_errors(expected, observed)
+    if errors:
+        for error in errors:
+            print(f"python builder identity failed: {error}", file=sys.stderr)
+        return 1
+    version_output = observed["buildx_version_output"]
+    version = re.search(r"\b(v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\b", version_output)
+    commit = re.search(r"\b([0-9a-f]{40})\b", version_output)
+    if version is None or commit is None:
+        print("python builder identity failed: accepted output could not be parsed", file=sys.stderr)
+        return 1
+    nodes = json.loads(observed["buildx_nodes"])
+    print(f"Buildx version identity: expected={expected['buildx_version']} observed={version.group(1)}")
+    print(f"Buildx commit identity: expected={expected['buildx_commit']} observed={commit.group(1)}")
+    print(
+        "Buildx asset SHA-256 identity: "
+        f"expected={expected['buildx_asset_sha256']} observed={observed['buildx_asset_sha256']}"
+    )
+    print(
+        "BuildKit driver Config.Image identity: "
+        f"expected={expected['buildkit_image']} observed={observed['buildkit_image']}"
+    )
+    print(
+        "BuildKit node version identity: "
+        f"expected={expected['buildkit_version']} observed={nodes[0]['buildkit']} nodes={len(nodes)}"
+    )
+    return 0
+
+
+def python_pin_renovate_error(config: Any) -> str | None:
+    if not isinstance(config, dict):
+        return "Renovate config must be an object"
+    description = config.get("description")
+    if not isinstance(description, str) or "Python builder pins" not in description:
+        return "Renovate description must mention Python builder pins"
+    managers = config.get("customManagers")
+    if not isinstance(managers, list):
+        return "Renovate config must declare customManagers"
+
+    buildx_description = (
+        "Track the Python Buildx release version; the paired Linux-amd64 asset checksum requires independent "
+        "verification."
+    )
+    buildx_manager = {
+        "customType": "regex",
+        "description": buildx_description,
+        "managerFilePatterns": [r"/^images/python/docker-bake\.json$/"],
+        "matchStrings": [
+            r'(?<linePrefix>"BUILDX_VERSION": \{\n[ \t]+"default": ")'
+            r'(?<currentValue>v[0-9]+\.[0-9]+\.[0-9]+)(?<lineSuffix>"\n[ \t]+\})'
+        ],
+        "datasourceTemplate": "github-releases",
+        "packageNameTemplate": "docker/buildx",
+        "versioningTemplate": "semver",
+        "autoReplaceStringTemplate": "{{{linePrefix}}}{{{newValue}}}{{{lineSuffix}}}",
+    }
+    buildx_matches = [manager for manager in managers if manager.get("description") == buildx_description]
+    if len(buildx_matches) != 1 or buildx_matches[0] != buildx_manager:
+        return "Renovate config must keep one complete Python Buildx github-releases manager"
+
+    buildkit_description = "Track the version-plus-digest Python BuildKit driver image reference."
+    buildkit_manager = {
+        "customType": "regex",
+        "description": buildkit_description,
+        "managerFilePatterns": [r"/^images/python/docker-bake\.json$/"],
+        "matchStrings": [
+            r'(?<linePrefix>"BUILDKIT_IMAGE": \{\n[ \t]+"default": ")'
+            r"(?<depName>docker\.io/moby/buildkit):(?<currentValue>v[0-9]+\.[0-9]+\.[0-9]+)@"
+            r'(?<currentDigest>sha256:[a-f0-9]{64})(?<lineSuffix>"\n[ \t]+\})'
+        ],
+        "datasourceTemplate": "docker",
+        "packageNameTemplate": "{{{depName}}}",
+        "versioningTemplate": "docker",
+        "autoReplaceStringTemplate": "{{{linePrefix}}}{{{depName}}}:{{{newValue}}}@{{{newDigest}}}{{{lineSuffix}}}",
+    }
+    buildkit_matches = [manager for manager in managers if manager.get("description") == buildkit_description]
+    if len(buildkit_matches) != 1 or buildkit_matches[0] != buildkit_manager:
+        return "Renovate config must keep one complete Python BuildKit docker manager"
+
+    rules = config.get("packageRules")
+    if not isinstance(rules, list):
+        return "Renovate config must declare packageRules"
+    rule_contracts = {
+        "Buildx": {
+            "description": "Keep Python Buildx release updates gated for independent asset-checksum review.",
+            "matchDatasources": ["github-releases"],
+            "matchPackageNames": ["docker/buildx"],
+            "semanticCommitType": "build",
+            "semanticCommitScope": "python-buildx",
+        },
+        "BuildKit": {
+            "description": "Keep Python BuildKit driver image updates gated for both-architecture byte review.",
+            "matchDatasources": ["docker"],
+            "matchPackageNames": ["docker.io/moby/buildkit"],
+            "semanticCommitType": "build",
+            "semanticCommitScope": "python-buildkit",
+        },
+    }
+    for name, contract in rule_contracts.items():
+        matching = [rule for rule in rules if rule.get("description") == contract["description"]]
+        if len(matching) != 1:
+            return f"Renovate config must keep one Python {name} matching rule"
+        rule = matching[0]
+        for key, value in contract.items():
+            if rule.get(key) != value:
+                return f"Python {name} Renovate rule mismatch: {key}"
+        if rule.get("automerge") is not False:
+            return f"Python {name} Renovate rule must set automerge: false"
+        if set(rule) != {*contract, "automerge"}:
+            return f"Python {name} Renovate rule key set mismatch"
+    return None
+
+
+def check_python_build_input_contract() -> None:
+    try:
+        contract = json.loads(read(PYTHON_BAKE_FILE))
+    except json.JSONDecodeError as exc:
+        raise VerifyError(f"{PYTHON_BAKE_FILE} is not valid JSON: {exc}") from exc
+    contract_error = python_bake_contract_error(contract)
+    require(contract_error is None, contract_error or "python Bake contract failed")
+    workflow = read(".github/workflows/python-ci.yaml")
+    harness = read("images/python/tools/assert-reproducible.py")
+    consumer_error = python_build_consumer_error(contract, workflow, harness)
+    require(consumer_error is None, consumer_error or "python build consumer contract failed")
+    discovery_error = python_consumer_discovery_error(python_consumer_sources())
+    require(discovery_error is None, discovery_error or "python build consumer discovery failed")
+    require(f"!/{PYTHON_BAKE_FILE}" in read(".gitignore"), ".gitignore must allowlist the Python Bake contract")
+    require(
+        PYTHON_BAKE_FILE not in read("images/python/.dockerignore"),
+        "python .dockerignore must keep the Bake control file out of the build context",
+    )
+
+
+def check_python_build_input_contract_self_test() -> None:
+    contract = json.loads(read(PYTHON_BAKE_FILE))
+    workflow = read(".github/workflows/python-ci.yaml")
+    harness = read("images/python/tools/assert-reproducible.py")
+    sources = python_consumer_sources()
+    renovate = json.loads(read(".github/renovate.json"))
+
+    require(python_bake_contract_error(contract) is None, "python Bake contract positive control failed")
+    print("python build input positive control [a,b,d]: Bake contract accepted")
+    require(
+        python_build_consumer_error(contract, workflow, harness) is None,
+        "python build consumer positive control failed",
+    )
+    require(python_consumer_discovery_error(sources) is None, "python consumer discovery positive control failed")
+    print("python build input positive control [c,e]: two declared consumers accepted")
+
+    identity_expected = {
+        "buildx_version": "v1.2.3",
+        "buildx_commit": "b" * 40,
+        "buildx_asset_sha256": "sha256:" + "c" * 64,
+        "buildkit_image": "docker.io/moby/buildkit:v4.5.6@sha256:" + "d" * 64,
+        "buildkit_version": "v4.5.6",
+    }
+    identity_observed = {
+        "buildx_version_output": f"github.com/docker/buildx v1.2.3 {'b' * 40}",
+        "buildx_asset_sha256": "sha256:" + "c" * 64,
+        "buildkit_image": "docker.io/moby/buildkit:v4.5.6@sha256:" + "d" * 64,
+        "buildx_nodes": json.dumps([{"buildkit": "v4.5.6"}]),
+    }
+    require(
+        not python_builder_identity_errors(identity_expected, identity_observed),
+        "python builder identity positive control failed",
+    )
+    print("python build input positive control [f]: all five identity observations accepted")
+    require(python_pin_renovate_error(renovate) is None, "python pin Renovate positive control failed")
+    print("python build input positive control [g]: both managers and non-automerge rules accepted")
+
+    harness_positive = subprocess.run(
+        [sys.executable, str(ROOT / "images/python/tools/assert-reproducible.py"), "--self-test"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    require(harness_positive.returncode == 0, "python harness CLI positive control failed")
+    print("python build input positive control [h]: default self-test invocation accepted")
+
+    rejected = 0
+
+    def reject(label: str, changed: bool, actual: str | None, expected: str) -> None:
+        nonlocal rejected
+        require(changed, f"python build input mutation is a no-op: {label}")
+        require(actual == expected, f"python build input mutation {label} returned unexpected diagnostic: {actual!r}")
+        rejected += 1
+        print(f"python build input mutation rejected [{label}] changed=true reason={actual}")
+
+    unpinned = copy.deepcopy(contract)
+    original_buildkit = unpinned["variable"]["BUILDKIT_IMAGE"]["default"]
+    unpinned["variable"]["BUILDKIT_IMAGE"]["default"] = original_buildkit.split("@", 1)[0]
+    reject(
+        "a/buildkit-digest",
+        unpinned != contract,
+        python_bake_contract_error(unpinned),
+        "BuildKit driver image is not digest-pinned",
+    )
+
+    timestamp = copy.deepcopy(contract)
+    timestamp["target"]["repro"]["output"][0] = timestamp["target"]["repro"]["output"][0].replace(
+        "rewrite-timestamp=true", "rewrite-timestamp=false"
+    )
+    reject(
+        "b/rewrite-timestamp",
+        timestamp != contract,
+        python_bake_contract_error(timestamp),
+        "python Bake repro output policy mismatch: rewrite-timestamp must be true",
+    )
+
+    literal_workflow = workflow.replace(
+        "          version: ${{ needs.changes.outputs.buildx_version }}",
+        "          version: v0.35.0",
+        1,
+    )
+    reject(
+        "c/hard-coded-consumer",
+        literal_workflow != workflow,
+        python_build_consumer_error(contract, literal_workflow, harness),
+        "python builder job build hard-codes BUILDX_VERSION",
+    )
+
+    protected = copy.deepcopy(contract)
+    protected["target"]["ci"]["context"] = "images/python"
+    reject(
+        "d/protected-context",
+        protected != contract,
+        python_bake_contract_error(protected),
+        "python Bake target ci must not redeclare protected field: context",
+    )
+
+    third_consumer = dict(sources)
+    third_consumer["synthetic-third.py"] = (
+        'subprocess.run(["docker", "buildx", "build", "--file", "images/python/Dockerfile", "images/python"])\n'
+    )
+    reject(
+        "e/consumer-discovery",
+        third_consumer != sources,
+        python_consumer_discovery_error(third_consumer),
+        "undeclared direct python build consumer: synthetic-third.py",
+    )
+
+    identity_mutations = [
+        (
+            "f/buildx-version",
+            "buildx_version_output",
+            f"github.com/docker/buildx v1.2.4 {'b' * 40}",
+            "Buildx version mismatch: expected v1.2.3, observed v1.2.4",
+        ),
+        (
+            "f/buildx-commit",
+            "buildx_version_output",
+            f"github.com/docker/buildx v1.2.3 {'e' * 40}",
+            f"Buildx commit mismatch: expected {'b' * 40}, observed {'e' * 40}",
+        ),
+        (
+            "f/buildx-asset-sha256",
+            "buildx_asset_sha256",
+            "sha256:" + "f" * 64,
+            f"Buildx asset SHA-256 mismatch: expected sha256:{'c' * 64}, observed sha256:{'f' * 64}",
+        ),
+        (
+            "f/buildkit-config-image",
+            "buildkit_image",
+            "docker.io/moby/buildkit:v4.5.6@sha256:" + "a" * 64,
+            "BuildKit driver Config.Image mismatch: expected docker.io/moby/buildkit:v4.5.6@sha256:"
+            + "d" * 64
+            + ", observed docker.io/moby/buildkit:v4.5.6@sha256:"
+            + "a" * 64,
+        ),
+        (
+            "f/buildkit-node-version",
+            "buildx_nodes",
+            json.dumps([{"buildkit": "v4.5.7"}]),
+            "BuildKit node version mismatch: expected v4.5.6, observed v4.5.7",
+        ),
+    ]
+    for label, key, value, expected_error in identity_mutations:
+        mutated = dict(identity_observed)
+        mutated[key] = value
+        errors = python_builder_identity_errors(identity_expected, mutated)
+        reject(label, mutated != identity_observed, errors[0] if len(errors) == 1 else repr(errors), expected_error)
+
+    manager_mutations: list[tuple[str, Any, str]] = []
+    without_buildx_manager = copy.deepcopy(renovate)
+    without_buildx_manager["customManagers"] = [
+        manager
+        for manager in without_buildx_manager["customManagers"]
+        if not str(manager.get("description", "")).startswith("Track the Python Buildx release version")
+    ]
+    manager_mutations.append(
+        (
+            "g/buildx-manager",
+            without_buildx_manager,
+            "Renovate config must keep one complete Python Buildx github-releases manager",
+        )
+    )
+    buildx_automerge = copy.deepcopy(renovate)
+    next(rule for rule in buildx_automerge["packageRules"] if rule.get("matchPackageNames") == ["docker/buildx"])[
+        "automerge"
+    ] = True
+    manager_mutations.append(
+        ("g/buildx-automerge", buildx_automerge, "Python Buildx Renovate rule must set automerge: false")
+    )
+    without_buildkit_manager = copy.deepcopy(renovate)
+    without_buildkit_manager["customManagers"] = [
+        manager
+        for manager in without_buildkit_manager["customManagers"]
+        if not str(manager.get("description", "")).startswith("Track the version-plus-digest Python BuildKit")
+    ]
+    manager_mutations.append(
+        (
+            "g/buildkit-manager",
+            without_buildkit_manager,
+            "Renovate config must keep one complete Python BuildKit docker manager",
+        )
+    )
+    buildkit_automerge = copy.deepcopy(renovate)
+    next(
+        rule
+        for rule in buildkit_automerge["packageRules"]
+        if rule.get("matchPackageNames") == ["docker.io/moby/buildkit"]
+    )["automerge"] = True
+    manager_mutations.append(
+        ("g/buildkit-automerge", buildkit_automerge, "Python BuildKit Renovate rule must set automerge: false")
+    )
+    for label, mutated, expected_error in manager_mutations:
+        reject(label, mutated != renovate, python_pin_renovate_error(mutated), expected_error)
+
+    harness_negative = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "images/python/tools/assert-reproducible.py"),
+            "--self-test",
+            "--source-date-epoch",
+            "1704067201",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    harness_reason = harness_negative.stderr.strip().splitlines()[-1] if harness_negative.stderr.strip() else ""
+    reject(
+        "h/harness-cli-resolution",
+        harness_negative.returncode != harness_positive.returncode,
+        harness_reason,
+        "assert-reproducible.py: error: unrecognized arguments: --source-date-epoch 1704067201",
+    )
+    require(rejected == 15, f"python build input mutation inventory mismatch: expected 15, got {rejected}")
+    print("python build input mutation probes: 8 classes, 15/15 rejected")
+
+
 def check_renovate_config() -> None:
     relative_path = ".github/renovate.json"
     path = ROOT / relative_path
@@ -1629,6 +2347,8 @@ def check_renovate_config() -> None:
     )
     require(ubi_rule_found, "Renovate config must group UBI minimal and micro digest refreshes")
     require(binfmt_rule_found, "Renovate config must group and label QEMU/binfmt digest refreshes")
+    python_pin_error = python_pin_renovate_error(config)
+    require(python_pin_error is None, python_pin_error or "Python pin Renovate contract failed")
 
 
 def collect_dockerfile_forbidden_sources(root: Path = ROOT) -> list[tuple[str, str]]:
@@ -7525,6 +8245,7 @@ def check_docs() -> None:
         )
     docs_index = read("docs/README.md")
     verify = read("docs/reference/verify.md")
+    adr_0001 = read("docs/decision-records/repo/0001-byte-for-byte-rootfs-reproducibility.md")
     adr_0006 = read("docs/decision-records/repo/0006-rpm-lock-cve-absorption-loop.md")
     adr_0007 = read("docs/decision-records/repo/0007-dual-scanner-openvex-default-deny.md")
     gates = read("docs/reference/gates.md")
@@ -7542,6 +8263,38 @@ def check_docs() -> None:
     gate_howto = read("docs/how-to/run-a-gate-locally.md")
     consume_howto = read("docs/how-to/consume-base-micro-as-from-base.md")
     tutorial = read("docs/tutorials/getting-started-build-and-verify.md")
+    for marker in [
+        "The builder is also an image input",
+        "images/python/docker-bake.json",
+        "independently verified Linux-amd64 release-asset",
+        "built-and-gated, unpublished `base-python`",
+        "non-Python Buildx and BuildKit paths remain",
+    ]:
+        require(marker in adr_0001, f"ADR-0001 missing Python builder-toolchain decision marker: {marker}")
+    for marker in [
+        "The Python build path now pins Buildx",
+        "Eight non-Python setup sites remain unpinned",
+        ".github/workflows/build.yaml",
+        "publish-image.yaml",
+        "nightly.yaml",
+        "rpm-lock-refresh.yaml",
+    ]:
+        require(marker in tech_debt, f"docs/TECH-DEBT.md TD-5 missing builder-scope marker: {marker}")
+    for marker in [
+        "`base-python` is a separate pre-publication image path",
+        "no publisher",
+        "does not pin the micro build path",
+        "Pre-publication base-python build identity",
+        "built-and-gated, unpublished",
+    ]:
+        require(marker in acceptance, f"acceptance.md missing pre-publication Python marker: {marker}")
+    for marker in [
+        "Micro's Buildx and BuildKit remain unpinned",
+        "Base-python's `repro` target",
+        "Base-python has no publish",
+        "shared target owns the graph inputs",
+    ]:
+        require(marker in reproducibility_doc, f"reproducibility.md missing profile-specific marker: {marker}")
     verify_lines = verify.splitlines()
     verify_summary_marker = "gates fixable MEDIUM, HIGH, and CRITICAL findings with both Trivy and Grype"
     require(
@@ -8427,13 +9180,21 @@ def check_no_internal_process_residue() -> None:
     assert_no_internal_process_residue(collect_internal_process_docs())
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    arguments = sys.argv[1:] if argv is None else argv
+    if arguments == ["--check-python-builder-identity"]:
+        return check_python_builder_identity_environment()
+    if arguments:
+        print(f"verify failed: unsupported arguments: {' '.join(arguments)}", file=sys.stderr)
+        return 2
     checks = [
         check_required_files,
         check_gitattributes_archive_visibility,
         check_image_contract_files,
         check_community_profile,
         check_renovate_config,
+        check_python_build_input_contract,
+        check_python_build_input_contract_self_test,
         check_ubi_digest_equality,
         check_ubi_digest_equality_self_test,
         check_binfmt_digest_equality,

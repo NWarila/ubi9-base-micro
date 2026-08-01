@@ -1,0 +1,67 @@
+{
+  "variable": {
+    "BUILDX_VERSION": {
+      "default": "v0.35.0"
+    },
+    "BUILDX_COMMIT": {
+      "default": "a319e5b15052cf6557ceb666eb8ff6e32380b782"
+    },
+    "BUILDX_ASSET_SHA256": {
+      "default": "sha256:d41ece72044243b4f58b343441ae37446d9c29a7d6b5e11c61847bbcf8f7dfda"
+    },
+    "BUILDKIT_IMAGE": {
+      "default": "docker.io/moby/buildkit:v0.31.2@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec"
+    },
+    "REPRO_DEST": {
+      "default": "dist/reproducibility/base-python.repro.tar"
+    },
+    "UBI_MINIMAL_IMAGE": {
+      "default": null
+    },
+    "BASE_MICRO_IMAGE": {
+      "default": null
+    }
+  },
+  "target": {
+    "base": {
+      "context": "images/python",
+      "dockerfile": "Dockerfile",
+      "target": "runtime",
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "args": {
+        "SOURCE_DATE_EPOCH": "1704067200",
+        "OCI_CREATED": "2024-01-01T00:00:00Z"
+      }
+    },
+    "ci": {
+      "inherits": [
+        "base"
+      ],
+      "output": [
+        "type=docker"
+      ]
+    },
+    "repro": {
+      "inherits": [
+        "base"
+      ],
+      "args": {
+        "OCI_REVISION": "reproducibility-harness",
+        "OCI_VERSION": "dev",
+        "UBI_MINIMAL_IMAGE": "${UBI_MINIMAL_IMAGE}",
+        "BASE_MICRO_IMAGE": "${BASE_MICRO_IMAGE}"
+      },
+      "no-cache": true,
+      "attest": [
+        "type=provenance,disabled=true",
+        "type=sbom,disabled=true"
+      ],
+      "output": [
+        "type=docker,dest=${REPRO_DEST},rewrite-timestamp=true"
+      ]
+    }
+  }
+}

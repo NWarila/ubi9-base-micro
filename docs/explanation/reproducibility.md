@@ -18,15 +18,19 @@ field is octal, and the final field is empty for entries without file or link
 content. This keeps the digest tied to rootfs content and metadata rather than
 Python `tarfile` archive encoding.
 
-`canonical_rootfs_digest` is asserted at the scope of this repository's Docker
-Buildx path with `rewrite-timestamp=true`. The setup action is SHA-pinned, but it
-installs Buildx `latest`, so the Buildx version itself is not pinned. Because
-the line format includes entry metadata (`uname`, `gname`, and `mtime`) along
-with file content, a different builder such as buildah or kaniko can export
-byte-identical file contents while producing a different
-`canonical_rootfs_digest`. The builder-portable checks available today are the
-per-file content digests recorded in the contract, specifically `rpmdb_sha256`
-for `/var/lib/rpm/rpmdb.sqlite` and `fips_so_sha256` for
+`canonical_rootfs_digest` is asserted at the scope of each image's reviewed
+Docker Buildx profile. The non-Python workflows pin the setup action SHA but
+still let it select Buildx `latest` and the default moving BuildKit driver image.
+The built-and-gated, unpublished `base-python` path instead pins Buildx by
+version, expected commit, and Linux-amd64 asset SHA-256 and pins its BuildKit
+driver with a versioned digest-qualified reference in
+`images/python/docker-bake.json`. Micro's Buildx and BuildKit remain unpinned by
+that Python-only contract. Because the line format includes entry metadata
+(`uname`, `gname`, and `mtime`) along with file content, a different builder such
+as buildah or kaniko can export byte-identical file contents while producing a
+different `canonical_rootfs_digest`. The builder-portable checks available today
+are the per-file content digests recorded in the contract, specifically
+`rpmdb_sha256` for `/var/lib/rpm/rpmdb.sqlite` and `fips_so_sha256` for
 `/usr/lib64/ossl-modules/fips.so`.
 
 The arm64 proof intentionally uses QEMU on the GitHub-hosted amd64 runner because
@@ -61,7 +65,14 @@ scope.
 ## Determinism Controls
 
 - `SOURCE_DATE_EPOCH=1704067200` is the committed timestamp input.
-- Buildx uses `rewrite-timestamp=true` on local, CI, and publish image exporters.
+- The base-micro local, CI, and publish exporter paths use
+  `rewrite-timestamp=true`. Base-python's `repro` target uses it for the
+  docker-tar double-build gate; its `ci` target uses a local Docker exporter
+  without claiming that timestamp-rewrite policy. Base-python has no publish
+  exporter or publisher.
+- `images/python/docker-bake.json` is the base-python build definition. Its
+  shared target owns the graph inputs, while the `ci` and `repro` targets own
+  their distinct exporter, cache, provenance, and SBOM policies.
 - `docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8` pins
   the setup-action code for the cross-architecture `linux/arm64` build path on
   GitHub-hosted amd64 runners. Its emulator image is immutably pinned to

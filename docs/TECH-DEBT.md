@@ -80,14 +80,18 @@ contents and still produce a different aggregate digest because exported layer
 metadata differs. Today the builder-portable independent checks are the per-file
 content digests in the contract: `rpmdb_sha256` and `fips_so_sha256`.
 
-The workflows pin `docker/setup-buildx-action` by SHA, but that action installs
-buildx `latest`. A future buildx release that changes layer-tar metadata can
-move `canonical_rootfs_digest` and make CI red without a real baseline content
-move. That is a fail-safe false red, not a release-quality baseline change.
-Treat that event as a reviewed step: inspect the toolchain change, re-derive the
-contract under the chosen builder, and update the recorded baseline only through
-the normal review path. A builder-independent rebuild proof belongs to the F3/v1
-anonymous-verify work.
+The Python build path now pins Buildx, its expected commit and Linux-amd64 asset
+SHA-256, and a versioned digest-qualified BuildKit driver image in
+`images/python/docker-bake.json`. Eight non-Python setup sites remain unpinned:
+two each in `.github/workflows/build.yaml`, `publish-image.yaml`, `nightly.yaml`,
+and `rpm-lock-refresh.yaml`. Those sites still allow the setup action to select
+Buildx `latest` and the moving default BuildKit driver image. A future toolchain
+change at one of those sites can move `canonical_rootfs_digest` and make its gate
+red without a real baseline content move. That is a fail-safe false red, not a
+release-quality baseline change. Treat that event as a reviewed step: inspect
+the toolchain change, re-derive the contract under the chosen builder, and
+update the recorded baseline only through the normal review path. A
+builder-independent rebuild proof belongs to the F3/v1 anonymous-verify work.
 
 ## TD-6: CMVP-held FIPS provider fixable vulnerability
 

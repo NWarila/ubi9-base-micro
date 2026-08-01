@@ -12,6 +12,11 @@ metadata, or the scanner-visible RPM database. Normalizing away the rpmdb would
 make the image easier to compare but would also remove the evidence source used
 by SBOM and vulnerability scanners.
 
+The builder is also an image input. A moving Buildx executable or BuildKit
+driver image can change exported rootfs bytes even when the Dockerfile and RPM
+inputs do not change, so action-SHA pinning alone is not a complete input
+contract.
+
 ## Decision
 
 `ubi9-base-micro` enforces a build-failing, per-architecture exported-rootfs
@@ -25,6 +30,16 @@ workflow's QEMU/binfmt path, with both the setup action SHA and the binfmt index
 digest immutably pinned, so its current proof is emulator-relative to those
 pinned inputs.
 
+The built-and-gated, unpublished `base-python` path additionally defines its
+build graph in `images/python/docker-bake.json`. That native Bake contract owns
+the context, Dockerfile, runtime target, platforms, fixed timestamp arguments,
+and the distinct CI and double-build exporter policies. It pins Buildx by
+version, expected commit, and independently verified Linux-amd64 release-asset
+SHA-256, and pins the BuildKit driver by a versioned digest-qualified image
+reference. Both Python builder jobs assert those identities before building.
+The non-Python Buildx and BuildKit paths remain outside this decision's new pin
+and are not made reproducible by the Python contract.
+
 ## Consequences
 
 - The rpmdb remains present and valid for SBOM and scanner truthfulness.
@@ -34,10 +49,13 @@ pinned inputs.
   they do not replace the current fail-closed gate.
 - Any image-input change must preserve the both-architecture byte-identity proof
   or be treated as an image change requiring a fresh proof.
+- A Python Buildx or BuildKit update fails closed until its executable/image
+  identity and both-architecture byte evidence are reviewed together.
 
 ## References
 
 - Reproducible Builds documentation: <https://reproducible-builds.org/docs/>
 - SLSA security levels: <https://slsa.dev/spec/v1.0/levels>
 - Repository details: `docs/explanation/reproducibility.md`, `tools/assert-reproducible.py`,
+  `images/python/docker-bake.json`, `images/python/tools/assert-reproducible.py`,
   `rpm-lock/runtime.amd64.txt`, `rpm-lock/runtime.arm64.txt`
