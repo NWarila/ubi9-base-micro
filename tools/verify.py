@@ -14,6 +14,7 @@ import io
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tarfile
@@ -129,6 +130,13 @@ PYTHON_BAKE_PROTECTED_ARGS = {"SOURCE_DATE_EPOCH", "OCI_CREATED"}
 PYTHON_BUILD_CONSUMERS = {
     ".github/workflows/python-ci.yaml",
     "images/python/tools/assert-reproducible.py",
+}
+PYTHON_CI_BAKE_OVERRIDES = {
+    "ci.platform",
+    "ci.tags",
+    "ci.args.OCI_REVISION",
+    "ci.args.OCI_SOURCE",
+    "ci.args.OCI_VERSION",
 }
 PYTHON_BUILDKIT_REFERENCE = re.compile(
     r"^docker\.io/moby/buildkit:(?P<version>v\d+\.\d+\.\d+)@sha256:(?P<digest>[0-9a-f]{64})$"
@@ -1589,6 +1597,291 @@ def python_buildkit_version(contract: Mapping[str, Any]) -> str:
     return match.group("version")
 
 
+def _shell_logical_lines(source: str) -> list[str]:
+    logical_lines: list[str] = []
+    pending = ""
+    for raw_line in source.splitlines():
+        stripped = raw_line.strip()
+        if pending:
+            pending += stripped
+        else:
+            pending = stripped
+        if pending.endswith("\\"):
+            pending = pending[:-1] + " "
+            continue
+        logical_lines.append(pending)
+        pending = ""
+    if pending:
+        logical_lines.append(pending)
+    return logical_lines
+
+
+def _shell_docker_buildx_commands(source: str) -> tuple[list[list[str]], str | None]:
+    commands: list[list[str]] = []
+    operators = {";", "&&", "||", "|", "&"}
+    assignment = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
+    for line in _shell_logical_lines(source):
+        if "docker" not in line or "buildx" not in line:
+            continue
+        try:
+            lexer = shlex.shlex(line, posix=True, punctuation_chars=";&|")
+            lexer.whitespace_split = True
+            lexer.commenters = "#"
+            tokens = list(lexer)
+        except ValueError as exc:
+            return [], f"cannot parse docker buildx command: {exc}"
+        start = 0
+        while start < len(tokens):
+            end = start
+            while end < len(tokens) and tokens[end] not in operators:
+                end += 1
+            segment = tokens[start:end]
+            command_start = 0
+            while command_start < len(segment) and assignment.fullmatch(segment[command_start]):
+                command_start += 1
+            if segment[command_start : command_start + 2] == ["docker", "buildx"]:
+                commands.append(segment[command_start:])
+            start = end + 1
+    return commands, None
+
+
+def _python_list_docker_buildx_commands(source: str) -> list[list[str | None]]:
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return []
+    commands: list[list[str | None]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.List, ast.Tuple)):
+            continue
+        tokens = [
+            item.value if isinstance(item, ast.Constant) and isinstance(item.value, str) else None for item in node.elts
+        ]
+        if tokens[:2] == ["docker", "buildx"]:
+            commands.append(tokens)
+    return commands
+
+
+def _buildx_subcommand(tokens: list[str] | list[str | None]) -> str | None:
+    for token in tokens[2:]:
+        if token in {"bake", "build"}:
+            return token
+    return None
+
+
+def _bake_override_error(value: str, *, target: str, allowed: set[str], consumer: str) -> str | None:
+    if "=" not in value:
+        return f"{consumer} Bake override target cannot be statically resolved: {value}"
+    field, _value = value.split("=", 1)
+    if re.fullmatch(rf"{re.escape(target)}\.[A-Za-z0-9_.-]+", field) is None:
+        return f"{consumer} Bake override target cannot be statically resolved: {value}"
+    if field in allowed:
+        return None
+    relative_field = field.removeprefix(f"{target}.")
+    if relative_field in PYTHON_BAKE_PROTECTED_FIELDS or relative_field in {
+        f"args.{name}" for name in PYTHON_BAKE_PROTECTED_ARGS
+    }:
+        return f"{consumer} Bake override field is protected: {field}"
+    if relative_field == "output" or relative_field.startswith(("output.", "attest", "cache-", "no-cache")):
+        return f"{consumer} Bake override changes exporter or policy: {field}"
+    return f"{consumer} Bake override field is not permitted: {field}"
+
+
+def _bake_invocation_error(
+    tokens: list[str],
+    *,
+    target: str,
+    allowed_overrides: set[str],
+    consumer: str,
+    allow_print: bool = False,
+) -> str | None:
+    if tokens[:2] != ["docker", "buildx"]:
+        return f"{consumer} Bake invocation must start with docker buildx"
+    index = 2
+    if index >= len(tokens):
+        return f"{consumer} Bake invocation is missing the bake subcommand"
+    if tokens[index] in {"--builder", "-b"} or tokens[index].startswith("--builder="):
+        return f"{consumer} Bake invocation must not select a builder: {tokens[index]}"
+    if tokens[index] != "bake":
+        return f"{consumer} Bake invocation has unrecognised token before bake: {tokens[index]}"
+    index += 1
+    file_count = 0
+    target_count = 0
+    progress_count = 0
+    seen_overrides: set[str] = set()
+    while index < len(tokens):
+        token = tokens[index]
+        if token in {"--builder", "-b"} or token.startswith("--builder="):
+            return f"{consumer} Bake invocation must not select a builder: {token}"
+        if token in {"--push", "--load", "--output", "-o"} or token.startswith(("--output=", "-o=")):
+            return f"{consumer} Bake invocation must not override exporter/output policy: {token}"
+        if token == "--file":
+            if index + 1 >= len(tokens):
+                return f"{consumer} Bake invocation --file is missing its value"
+            if tokens[index + 1] != PYTHON_BAKE_FILE:
+                return f"{consumer} Bake invocation must select {PYTHON_BAKE_FILE}"
+            file_count += 1
+            index += 2
+            continue
+        if token == "--progress":
+            if index + 1 >= len(tokens) or tokens[index + 1].startswith("--"):
+                return f"{consumer} Bake invocation --progress is missing its value"
+            progress_count += 1
+            index += 2
+            continue
+        if token == "--set":
+            if index + 1 >= len(tokens):
+                return f"{consumer} Bake invocation --set is missing its value"
+            override_error = _bake_override_error(
+                tokens[index + 1],
+                target=target,
+                allowed=allowed_overrides,
+                consumer=consumer,
+            )
+            if override_error is not None:
+                return override_error
+            seen_overrides.add(tokens[index + 1].split("=", 1)[0])
+            index += 2
+            continue
+        if token == "--print" and allow_print:
+            index += 1
+            continue
+        if token == target:
+            target_count += 1
+            index += 1
+            continue
+        return f"{consumer} Bake invocation contains unrecognised token: {token}"
+    if file_count != 1:
+        return f"{consumer} Bake invocation must select its file exactly once"
+    if target_count != 1:
+        return f"{consumer} Bake invocation must select target {target} exactly once"
+    if progress_count != 1:
+        return f"{consumer} Bake invocation must set progress exactly once"
+    if seen_overrides != allowed_overrides:
+        return f"{consumer} Bake override allowlist mismatch"
+    return None
+
+
+def _ast_shape(node: ast.AST | list[ast.stmt]) -> str:
+    if isinstance(node, list):
+        node = ast.Module(body=node, type_ignores=[])
+    return ast.dump(node, include_attributes=False)
+
+
+def _python_harness_bake_error(harness: str) -> str | None:
+    try:
+        tree = ast.parse(harness)
+    except SyntaxError as exc:
+        return f"python reproducibility harness cannot be parsed: {exc.msg}"
+
+    classes = [node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "BakeInvocation"]
+    if len(classes) != 1:
+        return "python reproducibility harness must define one BakeInvocation descriptor"
+    methods = [
+        node
+        for node in classes[0].body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "command"
+    ]
+    expected_method = ast.parse(
+        """\
+def command(self, *, print_only: bool = False) -> list[str]:
+    command = [
+        "docker",
+        "buildx",
+        "bake",
+        "--file",
+        str(self.bake_file),
+        self.target,
+        "--progress",
+        self.progress,
+    ]
+    for override in self.overrides:
+        command.extend(["--set", override])
+    if print_only:
+        command.append("--print")
+    return command
+"""
+    ).body[0]
+    if len(methods) != 1 or _ast_shape(methods[0]) != _ast_shape(expected_method):
+        return "python repro Bake command contains a token outside the command allowlist"
+
+    environments = [
+        node
+        for node in classes[0].body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "environment"
+    ]
+    expected_environment = ast.parse(
+        """\
+def environment(self) -> dict[str, str]:
+    return dict(self.variables)
+"""
+    ).body[0]
+    if len(environments) != 1 or _ast_shape(environments[0]) != _ast_shape(expected_environment):
+        return "python repro Bake environment contains an undeclared derivation"
+
+    constants = {
+        node.targets[0].id: node.value.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    }
+    if constants.get("DEFAULT_BAKE_FILE_RELATIVE") != PYTHON_BAKE_FILE or constants.get("BAKE_TARGET") != "repro":
+        return "python repro Bake descriptor must select the contracted file and repro target"
+
+    build_functions = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "build_image"
+    ]
+    if len(build_functions) != 1:
+        return "python reproducibility harness must define one build_image function"
+    build_body = build_functions[0].body
+    variable_starts = [
+        index
+        for index, node in enumerate(build_body)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target_node, ast.Name) and target_node.id == "variables" for target_node in node.targets)
+    ]
+    invocation_ends = [
+        index
+        for index, node in enumerate(build_body)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target_node, ast.Name) and target_node.id == "invocation" for target_node in node.targets)
+    ]
+    expected_derivations = ast.parse(
+        """\
+variables = [("REPRO_DEST", str(image_tar))]
+if args.ubi_minimal_image is not None:
+    variables.append(("UBI_MINIMAL_IMAGE", args.ubi_minimal_image))
+if args.base_micro_image is not None:
+    variables.append(("BASE_MICRO_IMAGE", args.base_micro_image))
+invocation = BakeInvocation(
+    bake_file=bake_file,
+    target=BAKE_TARGET,
+    variables=tuple(variables),
+    overrides=(
+        f"repro.platform={args.platform}",
+        f"repro.tags={tag}",
+    ),
+    progress=args.progress,
+)
+"""
+    ).body
+    if (
+        len(variable_starts) != 1
+        or len(invocation_ends) != 1
+        or invocation_ends[0] < variable_starts[0]
+        or _ast_shape(build_body[variable_starts[0] : invocation_ends[0] + 1]) != _ast_shape(expected_derivations)
+    ):
+        return "python repro Bake descriptor derivation allowlist mismatch"
+    if "BUILDX_BUILDER" in harness:
+        return "python repro Bake invocation must not select a builder through BUILDX_BUILDER"
+    return None
+
+
 def python_build_consumer_error(contract: Mapping[str, Any], workflow: str, harness: str) -> str | None:
     changes = _workflow_job_block(workflow, "changes")
     if not changes:
@@ -1668,21 +1961,22 @@ def python_build_consumer_error(contract: Mapping[str, Any], workflow: str, harn
 
     build_job = _workflow_job_block(workflow, "build")
     build_step = _workflow_named_step(build_job, "Build the python image")
-    if "docker buildx bake --file images/python/docker-bake.json ci" not in build_step:
+    if re.search(r"(?m)^\s*(?:export\s+)?BUILDX_BUILDER(?:\s*=|\s*:|\s+)", workflow):
+        return "python CI Bake invocation must not select a builder through BUILDX_BUILDER"
+    ci_commands, command_parse_error = _shell_docker_buildx_commands(build_step)
+    if command_parse_error is not None:
+        return f"python CI Bake invocation {command_parse_error}"
+    ci_bake_commands = [command for command in ci_commands if _buildx_subcommand(command) == "bake"]
+    if len(ci_bake_commands) != 1:
         return "python CI build must invoke the ci Bake target"
-    ci_overrides = set(re.findall(r'--set "(?P<field>ci\.[A-Za-z0-9_.-]+)=', build_step))
-    expected_ci_overrides = {
-        "ci.platform",
-        "ci.tags",
-        "ci.args.OCI_REVISION",
-        "ci.args.OCI_SOURCE",
-        "ci.args.OCI_VERSION",
-    }
-    if ci_overrides != expected_ci_overrides:
-        return "python CI Bake override allowlist mismatch"
-    for forbidden in ("--load", "--output", "--provenance", "--sbom", "--no-cache", "cache-from", "cache-to"):
-        if forbidden in build_step:
-            return f"python CI consumer must not override contract policy: {forbidden}"
+    ci_invocation_error = _bake_invocation_error(
+        ci_bake_commands[0],
+        target="ci",
+        allowed_overrides=PYTHON_CI_BAKE_OVERRIDES,
+        consumer="python CI",
+    )
+    if ci_invocation_error is not None:
+        return ci_invocation_error
 
     for marker in (
         "class BakeInvocation:",
@@ -1700,9 +1994,9 @@ def python_build_consumer_error(contract: Mapping[str, Any], workflow: str, harn
     ):
         if marker not in harness:
             return f"python reproducibility harness is missing canonical Bake descriptor marker: {marker}"
-    repro_overrides = set(re.findall(r'f"(?P<field>repro\.[A-Za-z0-9_.-]+)=', harness))
-    if repro_overrides != {"repro.platform", "repro.tags"}:
-        return "python repro Bake override allowlist mismatch"
+    harness_bake_error = _python_harness_bake_error(harness)
+    if harness_bake_error is not None:
+        return harness_bake_error
     for forbidden in (
         '"--context"',
         '"--dockerfile"',
@@ -1721,7 +2015,7 @@ def python_build_consumer_error(contract: Mapping[str, Any], workflow: str, harn
 
 def python_consumer_sources() -> dict[str, str]:
     listed = subprocess.run(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        ["git", "ls-files", "--cached", "-z"],
         cwd=ROOT,
         capture_output=True,
         check=False,
@@ -1732,7 +2026,7 @@ def python_consumer_sources() -> dict[str, str]:
         if not raw_path:
             continue
         relative_path = raw_path.decode("utf-8", errors="surrogateescape")
-        if relative_path == "tools/verify.py" or Path(relative_path).suffix not in {".py", ".sh", ".yaml", ".yml"}:
+        if relative_path == "tools/verify.py":
             continue
         path = ROOT / relative_path
         if not path.is_file():
@@ -1746,15 +2040,25 @@ def python_consumer_sources() -> dict[str, str]:
 def python_consumer_discovery_error(sources: Mapping[str, str]) -> str | None:
     bake_consumers: set[str] = set()
     direct_consumers: set[str] = set()
-    list_bake = re.compile(r'["\']docker["\']\s*,\s*["\']buildx["\']\s*,\s*["\']bake["\']')
-    list_build = re.compile(r'["\']docker["\']\s*,\s*["\']buildx["\']\s*,\s*["\']build["\']')
     for relative_path, text in sources.items():
-        is_bake = "docker buildx bake" in text or list_bake.search(text) is not None
-        if is_bake and PYTHON_BAKE_FILE in text:
-            bake_consumers.add(relative_path)
-        is_direct = "docker buildx build" in text or list_build.search(text) is not None
-        if is_direct and ("images/python/Dockerfile" in text or "images/python" in text):
-            direct_consumers.add(relative_path)
+        shell_commands, parse_error = _shell_docker_buildx_commands(text)
+        if parse_error is not None:
+            return f"{relative_path}: {parse_error}"
+        commands: list[list[str] | list[str | None]] = [*shell_commands, *_python_list_docker_buildx_commands(text)]
+        for command in commands:
+            subcommand = _buildx_subcommand(command)
+            if subcommand == "bake" and PYTHON_BAKE_FILE in text:
+                bake_consumers.add(relative_path)
+            if subcommand != "build":
+                continue
+            literal_tokens = [token for token in command if token is not None]
+            mentions_dockerfile = any(
+                token == "images/python/Dockerfile" or token.endswith("=images/python/Dockerfile")
+                for token in literal_tokens
+            )
+            mentions_context = any(token.rstrip("/").removeprefix("./") == "images/python" for token in literal_tokens)
+            if mentions_dockerfile or mentions_context:
+                direct_consumers.add(relative_path)
     if direct_consumers:
         return "undeclared direct python build consumer: " + ", ".join(sorted(direct_consumers))
     if bake_consumers != PYTHON_BUILD_CONSUMERS:
@@ -1970,7 +2274,11 @@ def check_python_build_input_contract_self_test() -> None:
         "python build consumer positive control failed",
     )
     require(python_consumer_discovery_error(sources) is None, "python consumer discovery positive control failed")
-    print("python build input positive control [c,e]: two declared consumers accepted")
+    print(
+        "python build input positive control [c,d,e]: two declared consumers accepted; "
+        "CI derivations=platform,tags,OCI_REVISION,OCI_SOURCE,OCI_VERSION,progress; "
+        "repro derivations=platform,tags,UBI_MINIMAL_IMAGE,BASE_MICRO_IMAGE,REPRO_DEST,progress"
+    )
 
     identity_expected = {
         "buildx_version": "v1.2.3",
@@ -2054,6 +2362,36 @@ def check_python_build_input_contract_self_test() -> None:
         "python Bake target ci must not redeclare protected field: context",
     )
 
+    ci_command = "          docker buildx bake --file images/python/docker-bake.json ci \\\n"
+    dynamic_workflow = workflow.replace(
+        "          oci_version=\"$(tr -d '[:space:]' < images/python/VERSION)\"\n",
+        "          oci_version=\"$(tr -d '[:space:]' < images/python/VERSION)\"\n"
+        '          fork_override="ci.context=."\n',
+        1,
+    ).replace(ci_command, ci_command + '            --set "${fork_override}" \\\n', 1)
+    reject(
+        "d/dynamic-protected-set",
+        dynamic_workflow != workflow,
+        python_build_consumer_error(contract, dynamic_workflow, harness),
+        "python CI Bake override target cannot be statically resolved: ${fork_override}",
+    )
+
+    builder_workflow = workflow.replace(ci_command, ci_command + "            --builder default \\\n", 1)
+    reject(
+        "d/builder-selection",
+        builder_workflow != workflow,
+        python_build_consumer_error(contract, builder_workflow, harness),
+        "python CI Bake invocation must not select a builder: --builder",
+    )
+
+    push_workflow = workflow.replace(ci_command, ci_command + "            --push \\\n", 1)
+    reject(
+        "d/exporter-push",
+        push_workflow != workflow,
+        python_build_consumer_error(contract, push_workflow, harness),
+        "python CI Bake invocation must not override exporter/output policy: --push",
+    )
+
     third_consumer = dict(sources)
     third_consumer["synthetic-third.py"] = (
         'subprocess.run(["docker", "buildx", "build", "--file", "images/python/Dockerfile", "images/python"])\n'
@@ -2063,6 +2401,17 @@ def check_python_build_input_contract_self_test() -> None:
         third_consumer != sources,
         python_consumer_discovery_error(third_consumer),
         "undeclared direct python build consumer: synthetic-third.py",
+    )
+
+    intervening_flag_consumer = dict(sources)
+    intervening_flag_consumer["synthetic-third.consumer"] = (
+        "docker buildx --builder default build --file images/python/Dockerfile images/python\n"
+    )
+    reject(
+        "e/intervening-buildx-flag",
+        intervening_flag_consumer != sources,
+        python_consumer_discovery_error(intervening_flag_consumer),
+        "undeclared direct python build consumer: synthetic-third.consumer",
     )
 
     identity_mutations = [
@@ -2172,8 +2521,8 @@ def check_python_build_input_contract_self_test() -> None:
         harness_reason,
         "assert-reproducible.py: error: unrecognized arguments: --source-date-epoch 1704067201",
     )
-    require(rejected == 15, f"python build input mutation inventory mismatch: expected 15, got {rejected}")
-    print("python build input mutation probes: 8 classes, 15/15 rejected")
+    require(rejected == 19, f"python build input mutation inventory mismatch: expected 19, got {rejected}")
+    print("python build input mutation probes: 8 classes, 19/19 rejected")
 
 
 def check_renovate_config() -> None:

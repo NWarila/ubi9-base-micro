@@ -32,9 +32,12 @@ registry write, signature, attestation, or published digest. Its Python-only
 Bake contract fixes the graph-affecting inputs and the distinct CI and
 double-build policies, while the workflow pins and observes the Buildx
 executable and BuildKit driver identities. The verifier limits this claim to the
-two existing Python build consumers and rejects protected-field or policy
-overrides. The contract has no release target and does not pin the micro build path;
-it does not make the Python reducer a claimed merge-blocking context.
+two existing tracked Python build consumers. For their approved Bake commands it
+allows only the declared per-call derivations, rejects unresolved fields,
+builder selection, exporter/output changes, and other unrecognised tokens, and
+discovers direct Python `docker buildx ... build` commands across tracked files.
+The contract has no release target and does not pin the micro build path; it does
+not make the Python reducer a claimed merge-blocking context.
 
 ## Criteria and gates
 
