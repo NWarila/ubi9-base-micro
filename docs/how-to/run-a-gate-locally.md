@@ -12,9 +12,10 @@ python tools/verify.py
 
 The verifier checks a duplicate-free required-file manifest, pinned workflow
 inputs, the committed Python Bake target shape, contract-derived Python builder
-pin inputs, and the fail-governing shape of each named identity step: strict
-shell mode stays enabled, `continue-on-error` is absent, and the checker is the
-final unwrapped command. It also checks Renovate managers, deny-all ignore
+pin inputs, and the statically checked shape of each named identity step: the
+run body starts with `set -euo pipefail`, contains no later `set +...`, omits
+step-level `continue-on-error`, and ends with the checker as its final unwrapped
+command. It also checks Renovate managers, deny-all ignore
 allowlists, documentation markers, Diataxis layout, ADR inventory, lint setup,
 helper self-tests, attribution-residue denial, and a separate
 internal-process-residue denial. The Python build-input self-test runs the
@@ -29,12 +30,18 @@ The internal-process check reads only Markdown in the current checkout at
 outside this check.
 
 For a Python builder-pin or Bake-contract change, the normal verifier proves
-the static contract, including the fail-governing identity-step shape, and runs
+the static contract, including the checked identity-step shape, and runs
 the seven-class/fifteen-case mutation inventory, but does not create a live
 Buildx builder. The live five-observation identity assertion runs in the Python
 workflow after setup and before either build. Require non-skipped `python build
 and gates` and `python reproducibility` results for both architectures; these
 are pre-publication gates and do not publish the image.
+
+The shell-text check is defence-in-depth against accidental regression, not an
+exhaustive defence against a hostile workflow edit. See
+[TD-8](../TECH-DEBT.md#td-8-python-builder-identity-workflow-static-analysis-boundary)
+for the free-form shell limitation and the repository controls that govern that
+threat.
 
 ## Runtime Hardening
 

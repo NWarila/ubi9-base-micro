@@ -44,11 +44,19 @@ targets inherit the base without redeclaring a protected graph field. It also
 requires the two workflow builder setups and their five-observation identity
 steps to derive the pins from the contract before building. Each named identity
 step must keep `set -euo pipefail` enabled, omit `continue-on-error`, and end in
-the identity checker as its final unwrapped command, so its result cannot be
-discarded by trailing shell. The verifier does not inspect how caller command
-lines apply Bake overrides and does not discover or count build callers. The
-current per-side descriptor is harness behavior, not a repository-wide
-invocation guarantee or a claim about a future publisher.
+the identity checker as its final unwrapped command. These static shape checks
+catch accidental changes such as disabling strict mode, wrapping the assertion,
+or following it with another command; they are not exhaustive analysis of the
+free-form shell body. Function shadowing, an `ERR` trap, and a job-level shell
+wrapper can still swallow status while passing the text checks. The live
+assertion compares the Buildx version, commit, installed plugin SHA-256, BuildKit
+container image, and BuildKit node version, and any mismatch fails the CI job
+before building. [TD-8](../TECH-DEBT.md#td-8-python-builder-identity-workflow-static-analysis-boundary)
+records why this is an accepted trust boundary and the compensating controls.
+The verifier does not inspect how caller command lines apply Bake overrides and
+does not discover or count build callers. The current per-side descriptor is
+harness behavior, not a repository-wide invocation guarantee or a claim about a
+future publisher.
 
 Renovate has two non-automerge Python builder surfaces. The Buildx manager
 updates the release version only; the independently owned expected commit and

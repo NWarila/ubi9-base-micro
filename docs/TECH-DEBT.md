@@ -146,3 +146,29 @@ packages; they do not claim repository-wide RPM payload verification.
 Widening this check requires a separate security-gate change with positive and
 negative oracles across every retained package. Until then, do not describe the
 current assertion as complete verification of all retained RPM payloads.
+
+## TD-8: Python builder identity workflow static-analysis boundary
+
+The `Assert python builder identity` steps in the Python build and
+reproducibility jobs run the identity assertion before building. Repository
+verification statically requires each step to contain only its environment and
+multiline run body, start with the exact `set -euo pipefail` preamble, contain no
+later `set +...`, omit step-level `continue-on-error`, and place
+`python3 tools/verify.py --check-python-builder-identity` as the final unwrapped
+command. In CI, that assertion compares the contracted Buildx version, commit,
+installed plugin SHA-256, BuildKit driver image, and BuildKit node version with
+the five live observations. A mismatch returns failure and, under the current
+workflow configuration, fails the job before its build.
+
+Static analysis of a free-form `run:` block cannot detect every
+status-swallowing construct. Function shadowing (`python3() { return 0; }`), an
+`ERR` trap (`trap 'exit 0' ERR`), and job-level shell wrappers are known examples
+that pass the text checks. Enumerating more shell spellings would not close this
+open-ended class and would give the workflow checker a misleading security
+scope.
+
+This is an accepted trust boundary. A committer able to insert one of those
+constructs can, in the same change, alter the verifier or remove the identity
+step. The workflow checks are therefore defence-in-depth against accidental
+regression, not an adversarial control over a hostile committer. Code review,
+CODEOWNERS, and required status checks are the controls for that threat.

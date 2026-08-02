@@ -26,7 +26,7 @@ Documentation for this repository follows the Diataxis framework.
 ## Reference
 
 - [`verify.md`](reference/verify.md) - published digest verification contract.
-- [`gates.md`](reference/gates.md) - what each local assertion and generation helper enforces, including the pre-build Python builder identity, its fail-governing workflow-step shape, and the committed Bake contract shape.
+- [`gates.md`](reference/gates.md) - what each local assertion and generation helper enforces, including the pre-build Python builder identity, its statically checked workflow-step shape, and the committed Bake contract shape.
 - [`verification-contract.md`](reference/verification-contract.md) - summary of PR, publish, and post-publish verification boundaries.
 - [`../../contracts/image-manifest.json`](../../contracts/image-manifest.json) - schema-validated image contract values consumers can verify.
 - [`../../contracts/examples/README.md`](../../contracts/examples/README.md) - worked example for checking a pulled digest against the manifest.
@@ -49,4 +49,5 @@ Documentation for this repository follows the Diataxis framework.
 ## Maintenance Ledgers
 
 - [`TECH-DEBT.md`](TECH-DEBT.md) - tracked repository debt and scoped exceptions,
-  including the retained-RPM payload-verification limitation.
+  including the retained-RPM payload-verification limitation and the Python
+  identity-step static-analysis boundary.
