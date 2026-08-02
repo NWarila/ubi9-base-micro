@@ -46,12 +46,53 @@ does not bind the two reports to each other. The adjacent `tools/assert-vex.py`
 invocation owns product, image, architecture, distro, and repository-digest
 binding before findings are evaluated against OpenVEX.
 
+## Build input contract
+
+`docker-bake.json` is the one native build definition used by both existing
+Python image build sites. Its shared target owns the context, Dockerfile,
+runtime build target, two supported platforms, `SOURCE_DATE_EPOCH`, and
+`OCI_CREATED`. The `ci` target selects the local Docker exporter; the `repro`
+target selects no-cache double builds, disables BuildKit provenance and SBOM,
+and keeps `rewrite-timestamp=true` on its docker-tar exporter. There is no
+release target.
+
+The same file carries the Buildx version, expected commit, Linux-amd64 release
+asset SHA-256, and version-plus-digest BuildKit driver reference. Before either
+CI profile builds, the workflow checks the installed Buildx version and commit,
+hashes the selected plugin binary, checks the builder container's
+`Config.Image`, and checks the BuildKit version reported by the setup action.
+Any missing or mismatched observation stops the job; there is no fallback to a
+moving tag or nearby version.
+
+Repository verification enforces the contract shape and fails closed if a
+`ci` or `repro` target redeclares a protected graph field. It also requires both
+workflow builder setups and their five-observation identity steps to derive the
+pins from this file before building. Each named identity step must keep
+`set -euo pipefail` enabled, omit `continue-on-error`, and end with the identity
+checker as its final unwrapped command.
+Repository verification does not inspect Bake command-line overrides, reject
+alternate direct-build spellings, or discover and count build callers. The
+double-build harness continues to use one per-side Bake descriptor for both
+resolved-report data and execution; that is the current harness behavior, not a
+repository-wide invocation guarantee or a claim about a future publisher.
+
+Renovate tracks the Buildx release version and the BuildKit
+version-plus-digest reference through separate managers with automerge disabled.
+A Buildx version update deliberately leaves the independently established
+commit and asset SHA-256 untouched, so it fails the identity gate until all
+three values identify the same release. Builder-pin changes remain
+image-affecting and must preserve both architectures' rootfs and rpmdb
+baselines. See
+[`../../docs/explanation/reproducibility.md`](../../docs/explanation/reproducibility.md)
+for the complete scope.
+
 **Status: built and gated in CI, unpublished.** The evidence machinery is in
-place and exercised on every change — a tailored RHEL9 STIG profile evaluated
-fail-closed, rpmdb-derived SPDX and CycloneDX SBOMs, dual CVE scanners with
-OpenVEX default-deny, a rootfs secret gate, and a NIST SP 800-190 image-control
-predicate — but it runs against locally built images. Nothing is signed,
-attested, or pushed. No registry package, tag, or
+place and exercised for every Python-tree or shared-gate change selected by the
+Python workflow — a tailored RHEL9 STIG profile evaluated fail-closed,
+rpmdb-derived SPDX and CycloneDX SBOMs, dual CVE scanners with OpenVEX
+default-deny, a rootfs secret gate, and a NIST SP 800-190 image-control predicate
+— but it runs against locally built images. Nothing is signed, attested, or
+pushed. No registry package, tag, or
 publish workflow exists for this image yet; publication requires the full
 `base-micro` evidence-parity set (signature, SPDX and CycloneDX SBOMs, OpenVEX,
 NIST SP 800-190 evidence, tailored STIG ARF, SLSA provenance) and will arrive

@@ -24,15 +24,13 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
-DEFAULT_SOURCE_DATE_EPOCH = "1704067200"
-DEFAULT_OCI_CREATED = "2024-01-01T00:00:00Z"
 DEFAULT_IMAGE_PREFIX = "local/ubi9-base-python-repro"
 DEFAULT_REPORT_RELATIVE_TEMPLATE = "dist/reproducibility/base-python.{arch}.reproducibility.json"
 DEFAULT_SUMMARY_RELATIVE_TEMPLATE = "dist/reproducibility/base-python.{arch}.reproducibility.txt"
 DEFAULT_WORKDIR_RELATIVE = "dist/reproducibility/work"
-DEFAULT_DOCKERFILE_RELATIVE = "images/python/Dockerfile"
-DEFAULT_CONTEXT_RELATIVE = "images/python"
+DEFAULT_BAKE_FILE_RELATIVE = "images/python/docker-bake.json"
 DEFAULT_CONTRACT_RELATIVE = "images/python/contracts/image-manifest.json"
+BAKE_TARGET = "repro"
 CONTRACT_DEFAULT = Path("@base-python-contract-default@")
 RPMDB_PATH = "var/lib/rpm/rpmdb.sqlite"
 FIPS_SO_PATH = "usr/lib64/ossl-modules/fips.so"
@@ -42,6 +40,35 @@ SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 
 class ReproError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class BakeInvocation:
+    bake_file: Path
+    target: str
+    variables: tuple[tuple[str, str], ...]
+    overrides: tuple[str, ...]
+    progress: str
+
+    def command(self, *, print_only: bool = False) -> list[str]:
+        command = [
+            "docker",
+            "buildx",
+            "bake",
+            "--file",
+            str(self.bake_file),
+            self.target,
+            "--progress",
+            self.progress,
+        ]
+        for override in self.overrides:
+            command.extend(["--set", override])
+        if print_only:
+            command.append("--print")
+        return command
+
+    def environment(self) -> dict[str, str]:
+        return dict(self.variables)
 
 
 @dataclass(frozen=True)
@@ -63,9 +90,25 @@ class Entry:
     xattr_pairs: tuple[tuple[str, str], ...]
 
 
-def run(command: list[str], *, cwd: Path, capture: bool = False) -> str:
+def run(
+    command: list[str],
+    *,
+    cwd: Path,
+    capture: bool = False,
+    environment: Mapping[str, str] | None = None,
+) -> str:
+    process_environment = os.environ.copy()
+    if environment is not None:
+        process_environment.update(environment)
     if capture:
-        result = subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=False)
+        result = subprocess.run(
+            command,
+            cwd=cwd,
+            env=process_environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
         if result.returncode != 0:
             raise ReproError(
                 f"command failed ({result.returncode}): {' '.join(command)}\n"
@@ -73,7 +116,7 @@ def run(command: list[str], *, cwd: Path, capture: bool = False) -> str:
             )
         return result.stdout.strip()
 
-    result = subprocess.run(command, cwd=cwd, text=True, check=False)
+    result = subprocess.run(command, cwd=cwd, env=process_environment, text=True, check=False)
     if result.returncode != 0:
         raise ReproError(f"command failed ({result.returncode}): {' '.join(command)}")
     return ""
@@ -583,55 +626,69 @@ def resolve_report_paths(args: argparse.Namespace) -> tuple[Path, Path]:
     return report, summary
 
 
-def build_image(tag: str, args: argparse.Namespace, image_tar: Path, *, dockerfile: Path, context: Path) -> None:
+def resolve_bake_target(invocation: BakeInvocation, *, repo_root: Path) -> dict[str, Any]:
+    raw = run(
+        invocation.command(print_only=True),
+        cwd=repo_root,
+        capture=True,
+        environment=invocation.environment(),
+    )
+    try:
+        resolved = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ReproError(f"bake --print returned invalid JSON: {exc}") from exc
+    targets = resolved.get("target")
+    if not isinstance(targets, dict):
+        raise ReproError("bake --print output has no target object")
+    target = targets.get(invocation.target)
+    if not isinstance(target, dict):
+        raise ReproError(f"bake --print output has no resolved {invocation.target!r} target")
+    return cast("dict[str, Any]", target)
+
+
+def bake_report(invocation: BakeInvocation, resolved_target: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "file": str(invocation.bake_file),
+        "target": invocation.target,
+        "variables": invocation.environment(),
+        "overrides": list(invocation.overrides),
+        "progress": invocation.progress,
+        "resolved_target": resolved_target,
+    }
+
+
+def build_image(tag: str, args: argparse.Namespace, image_tar: Path) -> dict[str, Any]:
     image_tar.parent.mkdir(parents=True, exist_ok=True)
     if image_tar.exists():
         image_tar.unlink()
-    output = f"type=docker,dest={image_tar},rewrite-timestamp=true"
-    command = [
-        "docker",
-        "buildx",
-        "build",
-        "--progress",
-        args.progress,
-        "--no-cache",
-        "--platform",
-        args.platform,
-        "--target",
-        "runtime",
-        "--build-arg",
-        f"SOURCE_DATE_EPOCH={args.source_date_epoch}",
-        "--build-arg",
-        f"OCI_CREATED={args.oci_created}",
-        "--build-arg",
-        "OCI_REVISION=reproducibility-harness",
-        "--build-arg",
-        "OCI_VERSION=dev",
-    ]
+    repo_root = args.repo_root if args.repo_root is not None else Path.cwd()
+    bake_file = resolve_default(None, args.repo_root, DEFAULT_BAKE_FILE_RELATIVE, "Bake file")
+    variables = [("REPRO_DEST", str(image_tar))]
     if args.ubi_minimal_image is not None:
-        command.extend(["--build-arg", f"UBI_MINIMAL_IMAGE={args.ubi_minimal_image}"])
+        variables.append(("UBI_MINIMAL_IMAGE", args.ubi_minimal_image))
     if args.base_micro_image is not None:
-        command.extend(["--build-arg", f"BASE_MICRO_IMAGE={args.base_micro_image}"])
-    command.extend(
-        [
-            "--provenance=false",
-            "--sbom=false",
-            "--file",
-            str(dockerfile),
-            "--tag",
-            tag,
-            "--output",
-            output,
-            str(context),
-        ]
+        variables.append(("BASE_MICRO_IMAGE", args.base_micro_image))
+    invocation = BakeInvocation(
+        bake_file=bake_file,
+        target=BAKE_TARGET,
+        variables=tuple(variables),
+        overrides=(
+            f"repro.platform={args.platform}",
+            f"repro.tags={tag}",
+        ),
+        progress=args.progress,
     )
-    run(command, cwd=args.repo_root if args.repo_root is not None else Path.cwd())
+    resolved_target = resolve_bake_target(invocation, repo_root=repo_root)
+    run(invocation.command(), cwd=repo_root, environment=invocation.environment())
+    return {
+        "image": tag,
+        "image_tar": str(image_tar),
+        "bake": bake_report(invocation, resolved_target),
+    }
 
 
 def build_and_export(args: argparse.Namespace) -> tuple[Path, Path, list[dict[str, object]]]:
     workdir = resolve_default(args.workdir, args.repo_root, DEFAULT_WORKDIR_RELATIVE, "--workdir")
-    dockerfile = resolve_default(args.dockerfile, args.repo_root, DEFAULT_DOCKERFILE_RELATIVE, "--dockerfile")
-    context = resolve_default(args.context, args.repo_root, DEFAULT_CONTEXT_RELATIVE, "--context")
     workdir.mkdir(parents=True, exist_ok=True)
     left_tag = f"{args.image_prefix}:a"
     right_tag = f"{args.image_prefix}:b"
@@ -644,16 +701,18 @@ def build_and_export(args: argparse.Namespace) -> tuple[Path, Path, list[dict[st
         if tar_path.exists():
             tar_path.unlink()
 
-    build_image(left_tag, args, left_image_tar, dockerfile=dockerfile, context=context)
+    left_build = build_image(left_tag, args, left_image_tar)
     write_rootfs_tar(load_image_rootfs(left_image_tar), left_tar)
-    build_image(right_tag, args, right_image_tar, dockerfile=dockerfile, context=context)
+    right_build = build_image(right_tag, args, right_image_tar)
     write_rootfs_tar(load_image_rootfs(right_image_tar), right_tar)
+    left_build["rootfs_tar"] = str(left_tar)
+    right_build["rootfs_tar"] = str(right_tar)
     return (
         left_tar,
         right_tar,
         [
-            {"image": left_tag, "image_tar": str(left_image_tar), "rootfs_tar": str(left_tar)},
-            {"image": right_tag, "image_tar": str(right_image_tar), "rootfs_tar": str(right_tar)},
+            left_build,
+            right_build,
         ],
     )
 
@@ -701,6 +760,38 @@ def write_reports(report: dict[str, Any], output: Path, summary_path: Path) -> N
     print(text, end="")
     print(f"wrote JSON report: {output}")
     print(f"wrote text summary: {summary_path}")
+
+
+def resolved_report_fields(builds: list[dict[str, object]], fallback_platform: str) -> dict[str, object]:
+    if not builds or "bake" not in builds[0]:
+        return {
+            "platform": fallback_platform,
+            "source_date_epoch": None,
+            "oci_created": None,
+        }
+    bake = builds[0]["bake"]
+    if not isinstance(bake, dict):
+        raise ReproError("first build has malformed Bake report data")
+    resolved = bake.get("resolved_target")
+    if not isinstance(resolved, dict):
+        raise ReproError("first build has no resolved Bake target")
+    platforms = resolved.get("platforms")
+    args = resolved.get("args")
+    if not isinstance(platforms, list) or len(platforms) != 1 or not isinstance(platforms[0], str):
+        raise ReproError("resolved repro target must contain exactly one platform")
+    if not isinstance(args, dict):
+        raise ReproError("resolved repro target has no args object")
+    source_date_epoch = args.get("SOURCE_DATE_EPOCH")
+    oci_created = args.get("OCI_CREATED")
+    if not isinstance(source_date_epoch, str) or not source_date_epoch.isdigit():
+        raise ReproError("resolved repro target has an invalid SOURCE_DATE_EPOCH")
+    if not isinstance(oci_created, str):
+        raise ReproError("resolved repro target has an invalid OCI_CREATED")
+    return {
+        "platform": platforms[0],
+        "source_date_epoch": int(source_date_epoch),
+        "oci_created": oci_created,
+    }
 
 
 FixtureEntry = tuple[str, bytes | None, str, int, int, int, int, str, dict[str, str]]
@@ -1023,23 +1114,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help=f"working directory for rootfs exports (default {DEFAULT_WORKDIR_RELATIVE} under --repo-root)",
     )
     parser.add_argument(
-        "--context",
-        type=Path,
-        help=f"Docker build context (default {DEFAULT_CONTEXT_RELATIVE} under --repo-root)",
-    )
-    parser.add_argument(
-        "--dockerfile",
-        type=Path,
-        help=f"Dockerfile path (default {DEFAULT_DOCKERFILE_RELATIVE} under --repo-root)",
-    )
-    parser.add_argument(
         "--platform", default=os.environ.get("PLATFORM", "linux/amd64"), help="single platform to build and export"
     )
     parser.add_argument("--image-prefix", default=DEFAULT_IMAGE_PREFIX, help="temporary local image name prefix")
     parser.add_argument("--ubi-minimal-image", help="forwarded to the build as --build-arg UBI_MINIMAL_IMAGE")
     parser.add_argument("--base-micro-image", help="forwarded to the build as --build-arg BASE_MICRO_IMAGE")
-    parser.add_argument("--source-date-epoch", default=os.environ.get("SOURCE_DATE_EPOCH", DEFAULT_SOURCE_DATE_EPOCH))
-    parser.add_argument("--oci-created", default=os.environ.get("OCI_CREATED", DEFAULT_OCI_CREATED))
     parser.add_argument("--progress", default=os.environ.get("BUILDKIT_PROGRESS", "plain"))
     return parser.parse_args(argv)
 
@@ -1091,10 +1170,8 @@ def main(argv: list[str]) -> int:
         report: dict[str, Any] = {
             "schema_version": 1,
             "mode": "assert" if args.assert_byte_identical else "report",
-            "platform": args.platform,
-            "source_date_epoch": int(args.source_date_epoch),
-            "oci_created": args.oci_created,
             "builds": builds,
+            **resolved_report_fields(builds, args.platform),
             **comparison,
         }
         write_reports(report, report_path, summary_path)

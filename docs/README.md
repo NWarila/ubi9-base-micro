@@ -26,21 +26,21 @@ Documentation for this repository follows the Diataxis framework.
 ## Reference
 
 - [`verify.md`](reference/verify.md) - published digest verification contract.
-- [`gates.md`](reference/gates.md) - what each local assertion and generation helper enforces.
+- [`gates.md`](reference/gates.md) - what each local assertion and generation helper enforces, including the pre-build Python builder identity, its statically checked workflow-step shape, and the committed Bake contract shape.
 - [`verification-contract.md`](reference/verification-contract.md) - summary of PR, publish, and post-publish verification boundaries.
 - [`../../contracts/image-manifest.json`](../../contracts/image-manifest.json) - schema-validated image contract values consumers can verify.
 - [`../../contracts/examples/README.md`](../../contracts/examples/README.md) - worked example for checking a pulled digest against the manifest.
 
 ## Explanation
 
-- [`reproducibility.md`](explanation/reproducibility.md) - F3 byte-for-byte harness, deterministic epoch, direct-CDN runtime RPM sourcing, rpmdb determinism, refresh loop, and build-failing hard gate.
+- [`reproducibility.md`](explanation/reproducibility.md) - F3 byte-for-byte harnesses, deterministic epoch, image-specific builder scope, the Python Bake and builder-pin contract, direct-CDN runtime RPM sourcing, rpmdb determinism, refresh loop, and build-failing hard gates.
 - [`footprint.md`](explanation/footprint.md) - runtime footprint measurement contract, the 25 MiB ceiling rationale, and current amd64 evidence.
 - [`fips-mechanism.md`](explanation/fips-mechanism.md) - config-only approved-mode mechanism and per-architecture #4857 scope.
 
 ## Compliance
 
 - [`README.md`](compliance/README.md) - compliance documentation index.
-- [`acceptance.md`](compliance/acceptance.md) - repository-native runtime-image acceptance criteria and their enforcement boundaries.
+- [`acceptance.md`](compliance/acceptance.md) - published-micro acceptance criteria, the pre-publication Python build-identity gate, and their enforcement boundaries.
 - [`fips.md`](compliance/fips.md) - OpenSSL FIPS-provider ledger, family CMVP context, out-of-scope certificates, approved-mode mechanism, per-architecture validation scope, and non-FIPS-host scope.
 - [`nist-800-190.md`](compliance/nist-800-190.md) - section 4.1 image-control predicate URI, control mapping, and not-CIS-Docker scope.
 - [`stig.md`](compliance/stig.md) - image-scoped RHEL9 STIG tailoring, mass-N/A guard, ARF predicate type, and scan scope.
@@ -49,4 +49,5 @@ Documentation for this repository follows the Diataxis framework.
 ## Maintenance Ledgers
 
 - [`TECH-DEBT.md`](TECH-DEBT.md) - tracked repository debt and scoped exceptions,
-  including the retained-RPM payload-verification limitation.
+  including the retained-RPM payload-verification limitation and the Python
+  identity-step static-analysis boundary.

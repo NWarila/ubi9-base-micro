@@ -20,6 +20,17 @@ consumer check lives in
 | Publish | `push` to `main` and `v*` tags | Multi-arch publish, Cosign keyless signature, Syft rpmdb-derived SPDX and CycloneDX attestations, NIST SP 800-190 and STIG ARF predicates, OpenVEX attestations when needed, SLSA L3 provenance, and Rekor roll-up. | The one-time public package visibility change required before anonymous GHCR verification can pass. |
 | Post-publish audit | Clean unauthenticated verifier | Anonymous pull by digest and the full `cosign` plus `slsa-verifier` contract in [`verify.md`](verify.md). | Future rebuild currency or downstream family-coherence status. |
 
+The path-selected Python workflow adds a pre-publication-only boundary for the
+unpublished `base-python` image. When selected, its build and reproducibility
+matrices run for both architectures, assert five contracted Buildx/BuildKit
+identities before building, and compare the double-build rootfs and rpmdb values
+with `images/python/contracts/image-manifest.json`. Repository verification
+requires the identity checker to be the final unwrapped command in its
+strict-shell step and rejects `continue-on-error` on that step. The Python path
+produces no publisher, registry write, signature, attestation, provenance, or
+published digest, and its `python / required` reducer is not a required
+repository status context.
+
 The publish path uses exact certificate identities. The repository workflow
 identity signs image signatures and repository-generated predicates; the SLSA
 generator identity signs provenance:

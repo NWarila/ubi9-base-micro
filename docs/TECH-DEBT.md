@@ -72,22 +72,33 @@ behavior.
 
 ## TD-5: Builder-scoped canonical rootfs digest
 
-`canonical_rootfs_digest` currently binds to the rootfs as exported by this
-repository's CI builder path: Docker Buildx with `rewrite-timestamp=true`. It
+`canonical_rootfs_digest` is profile- and image-specific. For `base-micro`, it
+binds to the rootfs exported by the local, CI, and publish Docker Buildx paths,
+which set `rewrite-timestamp=true`. For `base-python`, it binds to the `repro`
+target's docker-tar export, which also sets `rewrite-timestamp=true`; the Python
+`ci` target uses a local Docker exporter without that policy. The digest
 includes entry metadata (`uname`, `gname`, and `mtime`) as well as content. A
 different builder, such as buildah or kaniko, can produce byte-identical file
 contents and still produce a different aggregate digest because exported layer
-metadata differs. Today the builder-portable independent checks are the per-file
-content digests in the contract: `rpmdb_sha256` and `fips_so_sha256`.
+metadata differs. The builder-portable independent checks are the per-file
+content digests recorded in each image contract, including `rpmdb_sha256` and
+`fips_so_sha256`.
 
-The workflows pin `docker/setup-buildx-action` by SHA, but that action installs
-buildx `latest`. A future buildx release that changes layer-tar metadata can
-move `canonical_rootfs_digest` and make CI red without a real baseline content
-move. That is a fail-safe false red, not a release-quality baseline change.
-Treat that event as a reviewed step: inspect the toolchain change, re-derive the
-contract under the chosen builder, and update the recorded baseline only through
-the normal review path. A builder-independent rebuild proof belongs to the F3/v1
-anonymous-verify work.
+The Python build path now pins Buildx, its expected commit and Linux-amd64 asset
+SHA-256, and a versioned digest-qualified BuildKit driver image in
+`images/python/docker-bake.json`. Eight non-Python setup sites remain unpinned:
+two each in `.github/workflows/build.yaml`, `publish-image.yaml`, `nightly.yaml`,
+and `rpm-lock-refresh.yaml`. Those sites still allow the setup action to select
+Buildx `latest` and the moving default BuildKit driver image. A future toolchain
+change at a build-serving site can move `canonical_rootfs_digest` and make its
+gate red without a real baseline content move. The later setup site in
+`publish-image.yaml` serves imagetools rather than a rootfs build; it remains an
+unpinned toolchain surface but cannot directly change the built rootfs. A
+builder-driven digest failure is a fail-safe false red, not a release-quality
+baseline change. Treat that event as a reviewed step: inspect the toolchain
+change, re-derive the contract under the chosen builder, and update the recorded
+baseline only through the normal review path. A builder-independent rebuild
+proof belongs to the F3/v1 anonymous-verify work.
 
 ## TD-6: CMVP-held FIPS provider fixable vulnerability
 
@@ -135,3 +146,29 @@ packages; they do not claim repository-wide RPM payload verification.
 Widening this check requires a separate security-gate change with positive and
 negative oracles across every retained package. Until then, do not describe the
 current assertion as complete verification of all retained RPM payloads.
+
+## TD-8: Python builder identity workflow static-analysis boundary
+
+The `Assert python builder identity` steps in the Python build and
+reproducibility jobs run the identity assertion before building. Repository
+verification statically requires each step to contain only its environment and
+multiline run body, start with the exact `set -euo pipefail` preamble, contain no
+later `set +...`, omit step-level `continue-on-error`, and place
+`python3 tools/verify.py --check-python-builder-identity` as the final unwrapped
+command. In CI, that assertion compares the contracted Buildx version, commit,
+installed plugin SHA-256, BuildKit driver image, and BuildKit node version with
+the five live observations. A mismatch returns failure and, under the current
+workflow configuration, fails the job before its build.
+
+Static analysis of a free-form `run:` block cannot detect every
+status-swallowing construct. Function shadowing (`python3() { return 0; }`), an
+`ERR` trap (`trap 'exit 0' ERR`), and job-level shell wrappers are known examples
+that pass the text checks. Enumerating more shell spellings would not close this
+open-ended class and would give the workflow checker a misleading security
+scope.
+
+This is an accepted trust boundary. A committer able to insert one of those
+constructs can, in the same change, alter the verifier or remove the identity
+step. The workflow checks are therefore defence-in-depth against accidental
+regression, not an adversarial control over a hostile committer. Code review,
+CODEOWNERS, and required status checks are the controls for that threat.

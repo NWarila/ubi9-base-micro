@@ -49,6 +49,17 @@ and this project adheres to
 
 ### Changed
 
+- Pinned the unpublished `base-python` builder input chain through one native
+  Bake contract used by its CI and double-build paths. Python builders now
+  fail before building unless the Buildx version, commit, Linux-amd64 asset
+  SHA-256, BuildKit driver image, and derived BuildKit version match; repository
+  checks also require the exact `base`/`ci`/`repro` target set, base-only
+  inheritance, no protected-field redeclaration in the committed non-base
+  targets, and contract-derived workflow pin inputs. Each named identity step
+  must keep strict shell mode, omit `continue-on-error`, and end with the
+  identity checker as its final unwrapped command. The verifier does not validate
+  Bake command-line overrides or discover and count build callers. The new
+  Buildx and BuildKit Renovate surfaces cannot automerge.
 - Hardened repository self-verification: the required-file manifest is
   duplicate-free and its rejection fixture checks the exact reason; twelve
   `assert-vex.py` JSON/OpenVEX loader and parser probes, the raw-scanner marker's

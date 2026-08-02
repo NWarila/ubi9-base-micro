@@ -18,16 +18,54 @@ field is octal, and the final field is empty for entries without file or link
 content. This keeps the digest tied to rootfs content and metadata rather than
 Python `tarfile` archive encoding.
 
-`canonical_rootfs_digest` is asserted at the scope of this repository's Docker
-Buildx path with `rewrite-timestamp=true`. The setup action is SHA-pinned, but it
-installs Buildx `latest`, so the Buildx version itself is not pinned. Because
-the line format includes entry metadata (`uname`, `gname`, and `mtime`) along
-with file content, a different builder such as buildah or kaniko can export
-byte-identical file contents while producing a different
-`canonical_rootfs_digest`. The builder-portable checks available today are the
-per-file content digests recorded in the contract, specifically `rpmdb_sha256`
-for `/var/lib/rpm/rpmdb.sqlite` and `fips_so_sha256` for
+`canonical_rootfs_digest` is asserted at the scope of each image's reviewed
+Docker Buildx profile. The non-Python workflows pin the setup action SHA but
+still let it select Buildx `latest` and the default moving BuildKit driver image.
+The built-and-gated, unpublished `base-python` path instead pins Buildx by
+version, expected commit, and Linux-amd64 asset SHA-256 and pins its BuildKit
+driver with a versioned digest-qualified reference in
+`images/python/docker-bake.json`. Micro's Buildx and BuildKit remain unpinned by
+that Python-only contract. Because the line format includes entry metadata
+(`uname`, `gname`, and `mtime`) along with file content, a different builder such
+as buildah or kaniko can export byte-identical file contents while producing a
+different `canonical_rootfs_digest`. The builder-portable checks available today
+are the per-file content digests recorded in the contract, specifically
+`rpmdb_sha256` for `/var/lib/rpm/rpmdb.sqlite` and `fips_so_sha256` for
 `/usr/lib64/ossl-modules/fips.so`.
+
+The Python reproducibility matrix runs the `repro` target twice with no cache
+for each architecture, compares both exported rootfs trees, and asserts the
+image-specific `canonical_rootfs_digest` and `rpmdb_sha256` baselines. Each side
+is represented by one immutable Bake invocation descriptor; the same file,
+target, variable environment, and overrides drive both `bake --print`
+and the build that the report describes. Repository verification fails closed
+unless the exact `base`/`ci`/`repro` target set is present and the two non-base
+targets inherit the base without redeclaring a protected graph field. It also
+requires the two workflow builder setups and their five-observation identity
+steps to derive the pins from the contract before building. Each named identity
+step must keep `set -euo pipefail` enabled, omit `continue-on-error`, and end in
+the identity checker as its final unwrapped command. These static shape checks
+catch accidental changes such as disabling strict mode, wrapping the assertion,
+or following it with another command; they are not exhaustive analysis of the
+free-form shell body. Function shadowing, an `ERR` trap, and a job-level shell
+wrapper can still swallow status while passing the text checks. The live
+assertion compares the Buildx version, commit, installed plugin SHA-256, BuildKit
+container image, and BuildKit node version, and any mismatch fails the CI job
+before building. [TD-8](../TECH-DEBT.md#td-8-python-builder-identity-workflow-static-analysis-boundary)
+records why this is an accepted trust boundary and the compensating controls.
+The verifier does not inspect how caller command lines apply Bake overrides and
+does not discover or count build callers. The current per-side descriptor is
+harness behavior, not a repository-wide invocation guarantee or a claim about a
+future publisher.
+
+Renovate has two non-automerge Python builder surfaces. The Buildx manager
+updates the release version only; the independently owned expected commit and
+Linux-amd64 asset SHA-256 must be paired with that version before the pre-build
+identity gate can pass. The BuildKit manager updates the version-plus-digest
+driver reference together, and the expected BuildKit version is derived from
+that reference. Either update still has to pass all five live identity
+observations and the both-architecture byte gates. Neither manager creates a
+release target, publisher, registry write, or published Python digest.
 
 The arm64 proof intentionally uses QEMU on the GitHub-hosted amd64 runner because
 that is the same architecture path used by the publish workflow. Native arm64
@@ -61,7 +99,14 @@ scope.
 ## Determinism Controls
 
 - `SOURCE_DATE_EPOCH=1704067200` is the committed timestamp input.
-- Buildx uses `rewrite-timestamp=true` on local, CI, and publish image exporters.
+- The base-micro local, CI, and publish exporter paths use
+  `rewrite-timestamp=true`. Base-python's `repro` target uses it for the
+  docker-tar double-build gate; its `ci` target uses a local Docker exporter
+  without claiming that timestamp-rewrite policy. Base-python has no publish
+  exporter or publisher.
+- `images/python/docker-bake.json` is the base-python build definition. Its
+  shared target owns the graph inputs, while the `ci` and `repro` targets own
+  their distinct exporter, cache, provenance, and SBOM policies.
 - `docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8` pins
   the setup-action code for the cross-architecture `linux/arm64` build path on
   GitHub-hosted amd64 runners. Its emulator image is immutably pinned to

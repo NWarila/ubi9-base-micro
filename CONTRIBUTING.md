@@ -80,6 +80,27 @@ hardening`, and the amd64 and arm64 reproducibility gates. The publish-only
 signature, SBOM attestation, SLSA provenance, and Rekor roll-up jobs run only on
 `push` to `main` or `v*` tags.
 
+### Base-python builder inputs
+
+A change to `images/python/docker-bake.json`, including a dependency update to
+its Buildx or BuildKit pins, is image-affecting. Run `python tools/verify.py`,
+then require real, non-skipped `python build and gates` and `python
+reproducibility` results for both architectures. Those jobs assert the five
+builder identities before building and re-prove the rootfs and rpmdb baselines.
+The `python / required` reducer is evidence aggregation, not a required
+repository status context, and the image remains unpublished.
+
+Repository verification also requires each named builder-identity step to keep
+`set -euo pipefail` enabled, omit `continue-on-error`, and end with the
+unwrapped identity checker. It rejects a later `set +...`, a wrapped or trailing
+command, and step-level `continue-on-error`.
+
+Renovate proposes the Buildx release version and the BuildKit
+version-plus-digest reference through separate managers; neither manager
+automerge is enabled. A Buildx version proposal must be paired with the matching
+expected commit and independently established Linux-amd64 asset SHA-256. An
+unpaired change is expected to fail the pre-build identity gate.
+
 ## Pull requests
 
 Before opening a pull request:
@@ -101,4 +122,3 @@ This repository uses a deny-all `.gitignore`: `**` ignores everything until a
 path is explicitly allowlisted. When adding a tracked file or directory, add the
 narrowest allowlist entry that covers it. Generated outputs stay under ignored
 paths such as `dist/`.
-
