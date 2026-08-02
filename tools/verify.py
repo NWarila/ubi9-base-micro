@@ -1925,6 +1925,203 @@ def check_python_build_input_contract_self_test() -> None:
         rejected += 1
         print(f"python build input mutation rejected [{label}] changed=true reason={actual}")
 
+    def reject_bake_path(
+        label: str,
+        path: tuple[str, ...],
+        replacement: Any,
+        expected: str,
+        *,
+        delete: bool = False,
+    ) -> None:
+        mutated = copy.deepcopy(contract)
+        parent = mutated
+        for component in path[:-1]:
+            parent = parent[component]
+        if delete:
+            del parent[path[-1]]
+        else:
+            parent[path[-1]] = replacement
+        reject(label, mutated != contract, python_bake_contract_error(mutated), expected)
+
+    def mutate_named_workflow_step(
+        source: str,
+        job_name: str,
+        step_name: str,
+        old: str,
+        new: str,
+    ) -> str:
+        job = _workflow_job_block(source, job_name)
+        step = _workflow_named_step(job, step_name)
+        mutated_step = step.replace(old, new, 1)
+        return source.replace(step, mutated_step, 1)
+
+    non_object_contract: Any = []
+    reject(
+        "a/contract-object",
+        non_object_contract != contract,
+        python_bake_contract_error(non_object_contract),
+        "python Bake contract must be a JSON object",
+    )
+    reject_bake_path(
+        "a/top-level-key-set",
+        ("unexpected",),
+        {},
+        "python Bake contract top-level keys must be exactly variable and target",
+    )
+    reject_bake_path(
+        "a/variable-key-set",
+        ("variable", "REPRO_DEST"),
+        None,
+        "python Bake variable key set mismatch",
+        delete=True,
+    )
+    reject_bake_path(
+        "a/variable-entry-shape",
+        ("variable", "BUILDX_VERSION", "unexpected"),
+        True,
+        "python Bake variable BUILDX_VERSION must contain only a formal default",
+    )
+    reject_bake_path(
+        "a/buildx-version-shape",
+        ("variable", "BUILDX_VERSION", "default"),
+        "latest",
+        "Buildx version variable is not a semantic version",
+    )
+    reject_bake_path(
+        "a/buildx-commit-shape",
+        ("variable", "BUILDX_COMMIT", "default"),
+        "deadbeef",
+        "Buildx commit variable is not a 40-character commit",
+    )
+    reject_bake_path(
+        "a/buildx-asset-shape",
+        ("variable", "BUILDX_ASSET_SHA256", "default"),
+        "f" * 64,
+        "Buildx Linux-amd64 asset SHA-256 variable is not digest-shaped",
+    )
+    reject_bake_path(
+        "a/repro-destination",
+        ("variable", "REPRO_DEST", "default"),
+        "",
+        "repro destination variable must have a non-empty default",
+    )
+    reject_bake_path(
+        "a/nullable-parent-input",
+        ("variable", "UBI_MINIMAL_IMAGE", "default"),
+        "override",
+        "python Bake variable UBI_MINIMAL_IMAGE must be nullable",
+    )
+    reject_bake_path(
+        "d/base-key-set",
+        ("target", "base", "unexpected"),
+        True,
+        "python Bake base target key set mismatch",
+    )
+    reject_bake_path(
+        "d/base-context",
+        ("target", "base", "context"),
+        ".",
+        "python Bake base context mismatch",
+    )
+    reject_bake_path(
+        "d/base-dockerfile",
+        ("target", "base", "dockerfile"),
+        "Containerfile",
+        "python Bake base dockerfile mismatch",
+    )
+    reject_bake_path(
+        "d/base-build-target",
+        ("target", "base", "target"),
+        "build",
+        "python Bake base build target mismatch",
+    )
+    reject_bake_path(
+        "d/base-platforms",
+        ("target", "base", "platforms"),
+        ["linux/amd64"],
+        "python Bake base platforms mismatch",
+    )
+    reject_bake_path(
+        "d/base-fixed-args",
+        ("target", "base", "args", "SOURCE_DATE_EPOCH"),
+        "1704067201",
+        "python Bake base fixed build args mismatch",
+    )
+    reject_bake_path(
+        "d/non-base-object",
+        ("target", "ci"),
+        [],
+        "python Bake target ci must be an object",
+    )
+    reject_bake_path(
+        "d/protected-arg",
+        ("target", "ci", "args"),
+        {"SOURCE_DATE_EPOCH": "1704067200"},
+        "python Bake target ci must not redeclare protected field: SOURCE_DATE_EPOCH",
+    )
+    reject_bake_path(
+        "d/base-only-inheritance",
+        ("target", "ci", "inherits"),
+        ["base", "other"],
+        "python Bake target ci must inherit only base",
+    )
+    reject_bake_path(
+        "d/ci-key-set",
+        ("target", "ci", "tags"),
+        ["local/test"],
+        "python Bake ci target key set mismatch",
+    )
+    reject_bake_path(
+        "d/ci-output",
+        ("target", "ci", "output"),
+        ["type=oci"],
+        "python Bake ci output policy mismatch: expected type=docker",
+    )
+    reject_bake_path(
+        "d/repro-key-set",
+        ("target", "repro", "tags"),
+        ["local/test"],
+        "python Bake repro target key set mismatch",
+    )
+    reject_bake_path(
+        "d/repro-args",
+        ("target", "repro", "args", "OCI_VERSION"),
+        "release",
+        "python Bake repro build args mismatch",
+    )
+    reject_bake_path(
+        "d/repro-no-cache",
+        ("target", "repro", "no-cache"),
+        False,
+        "python Bake repro cache policy mismatch: no-cache must be true",
+    )
+    reject_bake_path(
+        "d/repro-attest",
+        ("target", "repro", "attest"),
+        ["type=provenance,disabled=false", "type=sbom,disabled=true"],
+        "python Bake repro attestation policy mismatch",
+    )
+    reject_bake_path(
+        "b/repro-output",
+        ("target", "repro", "output"),
+        ["type=oci"],
+        "python Bake repro output policy mismatch",
+    )
+
+    invalid_buildkit_version = copy.deepcopy(contract)
+    invalid_buildkit_version["variable"]["BUILDKIT_IMAGE"]["default"] = "not-a-buildkit-reference"
+    buildkit_version_reason: str | None = None
+    try:
+        python_buildkit_version(invalid_buildkit_version)
+    except VerifyError as exc:
+        buildkit_version_reason = str(exc)
+    reject(
+        "a/buildkit-version-derivation",
+        invalid_buildkit_version != contract,
+        buildkit_version_reason,
+        "BuildKit version cannot be derived from the driver reference",
+    )
+
     unpinned = copy.deepcopy(contract)
     original_buildkit = unpinned["variable"]["BUILDKIT_IMAGE"]["default"]
     unpinned["variable"]["BUILDKIT_IMAGE"]["default"] = original_buildkit.split("@", 1)[0]
@@ -1956,6 +2153,250 @@ def check_python_build_input_contract_self_test() -> None:
         literal_workflow != workflow,
         python_builder_workflow_error(contract, literal_workflow),
         "python builder job build hard-codes BUILDX_VERSION",
+    )
+
+    missing_changes_job = workflow.replace("  changes:\n", "  changes-missing:\n", 1)
+    reject(
+        "c/missing-changes-job",
+        missing_changes_job != workflow,
+        python_builder_workflow_error(contract, missing_changes_job),
+        "python workflow is missing the changes job",
+    )
+
+    missing_changes_output = workflow.replace(
+        "      buildx_commit: ${{ steps.build-inputs.outputs.buildx_commit }}",
+        "      buildx_commit_missing: ${{ steps.build-inputs.outputs.buildx_commit }}",
+        1,
+    )
+    reject(
+        "c/changes-output",
+        missing_changes_output != workflow,
+        python_builder_workflow_error(contract, missing_changes_output),
+        "python changes job must expose contract-derived output: buildx_commit",
+    )
+
+    duplicate_contract_parse = workflow.replace(
+        'json.loads(Path("images/python/docker-bake.json").read_text(encoding="utf-8"))',
+        'json.loads(Path("images/python/docker-bake.json").read_text())',
+        1,
+    )
+    reject(
+        "c/contract-parse-count",
+        duplicate_contract_parse != workflow,
+        python_builder_workflow_error(contract, duplicate_contract_parse),
+        "python changes job must parse the Bake contract exactly once",
+    )
+
+    indirect_variable_defaults = workflow.replace(
+        'variables = json.loads(Path("images/python/docker-bake.json")',
+        'parsed = json.loads(Path("images/python/docker-bake.json")',
+        1,
+    )
+    reject(
+        "c/raw-variable-defaults",
+        indirect_variable_defaults != workflow,
+        python_builder_workflow_error(contract, indirect_variable_defaults),
+        "python changes job must read raw Bake variable defaults",
+    )
+
+    missing_builder_job = workflow.replace("  reproducibility:\n", "  reproducibility-missing:\n", 1)
+    reject(
+        "c/missing-builder-job",
+        missing_builder_job != workflow,
+        python_builder_workflow_error(contract, missing_builder_job),
+        "python workflow is missing the reproducibility job",
+    )
+
+    missing_setup = mutate_named_workflow_step(
+        workflow,
+        "build",
+        "Set up Docker Buildx",
+        "      - name: Set up Docker Buildx\n",
+        "      - name: Set up Docker Buildx missing\n",
+    )
+    reject(
+        "c/buildx-setup-step",
+        missing_setup != workflow,
+        python_builder_workflow_error(contract, missing_setup),
+        "python builder job build must contain one Buildx setup step",
+    )
+
+    duplicate_setup = workflow.replace(
+        "      - name: Set up Docker Buildx\n",
+        "      - name: Set up Docker Buildx\n      - name: Set up Docker Buildx\n",
+        1,
+    )
+    reject(
+        "c/buildx-setup-step-count",
+        duplicate_setup != workflow,
+        python_builder_workflow_error(contract, duplicate_setup),
+        "python builder job build must contain one Buildx setup step",
+    )
+
+    setup_without_id = mutate_named_workflow_step(
+        workflow,
+        "build",
+        "Set up Docker Buildx",
+        "        id: buildx",
+        "        id: missing",
+    )
+    reject(
+        "c/buildx-setup-input",
+        setup_without_id != workflow,
+        python_builder_workflow_error(contract, setup_without_id),
+        "python Buildx setup in build is not contract-derived: id: buildx",
+    )
+
+    missing_identity = mutate_named_workflow_step(
+        workflow,
+        "build",
+        "Assert python builder identity",
+        "      - name: Assert python builder identity\n",
+        "      - name: Assert python builder identity missing\n",
+    )
+    reject(
+        "c/identity-step",
+        missing_identity != workflow,
+        python_builder_workflow_error(contract, missing_identity),
+        "python builder job build must contain one identity step",
+    )
+
+    identity_continue_on_error = mutate_named_workflow_step(
+        workflow,
+        "build",
+        "Assert python builder identity",
+        "      - name: Assert python builder identity\n",
+        "      - name: Assert python builder identity\n        continue-on-error: true\n",
+    )
+    reject(
+        "c/identity-continue-on-error",
+        identity_continue_on_error != workflow,
+        python_builder_workflow_error(contract, identity_continue_on_error),
+        "python identity step in build must not set continue-on-error",
+    )
+
+    identity_extra_configuration = mutate_named_workflow_step(
+        workflow,
+        "build",
+        "Assert python builder identity",
+        "      - name: Assert python builder identity\n",
+        "      - name: Assert python builder identity\n        timeout-minutes: 5\n",
+    )
+    reject(
+        "c/identity-step-configuration",
+        identity_extra_configuration != workflow,
+        python_builder_workflow_error(contract, identity_extra_configuration),
+        "python identity step in build must contain only env and run configuration",
+    )
+
+    identity_duplicate_run = mutate_named_workflow_step(
+        workflow,
+        "build",
+        "Assert python builder identity",
+        "        env:\n",
+        "        env:\n          run: |\n",
+    )
+    reject(
+        "c/identity-run-body-count",
+        identity_duplicate_run != workflow,
+        python_builder_workflow_error(contract, identity_duplicate_run),
+        "python identity step in build must contain one multiline run body",
+    )
+
+    identity_without_strict_start = mutate_named_workflow_step(
+        workflow,
+        "build",
+        "Assert python builder identity",
+        "          set -euo pipefail",
+        "          set -eu",
+    )
+    reject(
+        "c/identity-strict-start",
+        identity_without_strict_start != workflow,
+        python_builder_workflow_error(contract, identity_without_strict_start),
+        "python identity step in build must start under set -euo pipefail",
+    )
+
+    identity_disables_strict_mode = mutate_named_workflow_step(
+        workflow,
+        "build",
+        "Assert python builder identity",
+        "          set -euo pipefail\n",
+        "          set -euo pipefail\n          set +e\n",
+    )
+    reject(
+        "c/identity-strict-mode-disabled",
+        identity_disables_strict_mode != workflow,
+        python_builder_workflow_error(contract, identity_disables_strict_mode),
+        "python identity step in build must keep set -euo pipefail enabled",
+    )
+
+    identity_wrapped_assertion = mutate_named_workflow_step(
+        workflow,
+        "build",
+        "Assert python builder identity",
+        "          python3 tools/verify.py --check-python-builder-identity\n",
+        "          python3 tools/verify.py --check-python-builder-identity\n          echo wrapped\n",
+    )
+    reject(
+        "c/identity-final-command",
+        identity_wrapped_assertion != workflow,
+        python_builder_workflow_error(contract, identity_wrapped_assertion),
+        "python identity assertion in build must be the final unwrapped command",
+    )
+
+    identity_without_output = mutate_named_workflow_step(
+        workflow,
+        "build",
+        "Assert python builder identity",
+        "          EXPECTED_BUILDX_COMMIT: ${{ needs.changes.outputs.buildx_commit }}",
+        "          EXPECTED_BUILDX_COMMIT: missing",
+    )
+    reject(
+        "c/identity-output",
+        identity_without_output != workflow,
+        python_builder_workflow_error(contract, identity_without_output),
+        "python identity step in build is not contract-derived: EXPECTED_BUILDX_COMMIT",
+    )
+
+    identity_without_observation = mutate_named_workflow_step(
+        workflow,
+        "build",
+        "Assert python builder identity",
+        "docker buildx version",
+        "docker buildx-version",
+    )
+    reject(
+        "c/identity-observation",
+        identity_without_observation != workflow,
+        python_builder_workflow_error(contract, identity_without_observation),
+        "python identity step in build is missing observation: docker buildx version",
+    )
+
+    missing_build_step = mutate_named_workflow_step(
+        workflow,
+        "build",
+        "Build the python image",
+        "      - name: Build the python image\n",
+        "      - name: Build the python image missing\n",
+    )
+    reject(
+        "c/build-step",
+        missing_build_step != workflow,
+        python_builder_workflow_error(contract, missing_build_step),
+        "python builder job build is missing step: Build the python image",
+    )
+
+    build_job = _workflow_job_block(workflow, "build")
+    setup_step = _workflow_named_step(build_job, "Set up Docker Buildx")
+    identity_step = _workflow_named_step(build_job, "Assert python builder identity")
+    out_of_order_job = build_job.replace(setup_step + identity_step, identity_step + setup_step, 1)
+    out_of_order_workflow = workflow.replace(build_job, out_of_order_job, 1)
+    reject(
+        "c/identity-order",
+        out_of_order_workflow != workflow,
+        python_builder_workflow_error(contract, out_of_order_workflow),
+        "python builder identity in build must run after setup and before the build",
     )
 
     protected = copy.deepcopy(contract)
@@ -2083,8 +2524,8 @@ def check_python_build_input_contract_self_test() -> None:
         harness_reason,
         "assert-reproducible.py: error: unrecognized arguments: --source-date-epoch 1704067201",
     )
-    require(rejected == 15, f"python build input mutation inventory mismatch: expected 15, got {rejected}")
-    print("python build input mutation probes: 7 classes, 15/15 rejected")
+    require(rejected == 60, f"python build input mutation inventory mismatch: expected 60, got {rejected}")
+    print("python build input mutation probes: 7 classes, 60/60 rejected")
 
 
 def check_renovate_config() -> None:
