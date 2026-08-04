@@ -5370,13 +5370,7 @@ PYTHON_CI_WORKFLOW_SHA256 = "1d3f2355282ba4738b077096fd82c4861605cdce9e234f8fe1c
 PYTHON_CI_WORKFLOW_BYTE_LENGTH = 30587
 PYTHON_CI_JOB_IDS = ("changes", "self-tests", "build", "reproducibility", "python-required")
 PYTHON_CI_TRIGGER_BLOCK = (
-    "on:\n"
-    "  pull_request:\n"
-    "    branches: [main]\n"
-    "  push:\n"
-    "    branches: [main]\n"
-    "  workflow_dispatch:\n"
-    "\n"
+    "on:\n  pull_request:\n    branches: [main]\n  push:\n    branches: [main]\n  workflow_dispatch:\n\n"
 )
 PYTHON_CI_SELECTOR_LINES = (
     "selector='^images/python/'",
@@ -5392,10 +5386,7 @@ PYTHON_CI_SELECTOR_LINES = (
     'selector="${selector}|^tests/fixtures/scanner-canary/log4shell\\.cdx\\.json$"',
 )
 PYTHON_CI_EVENT_CASE = (
-    'case "${EVENT_NAME}" in\n'
-    '  pull_request) range_base="${BASE_SHA}" ;;\n'
-    '  *) range_base="" ;;\n'
-    "esac\n"
+    'case "${EVENT_NAME}" in\n  pull_request) range_base="${BASE_SHA}" ;;\n  *) range_base="" ;;\nesac\n'
 )
 PYTHON_CI_ACTIVE_IF = "    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.python == 'true' }}"
 PYTHON_CI_CONTRACT_STEP = "Assert gated image contract"
@@ -5555,18 +5546,10 @@ def python_ci_preflight_errors(workflow: str) -> list[str]:
     )
     contract_invocation_invalid = bool(contract_step) and contract_step.count(contract_invocation) != 1
     same_artifact_invalid = bool(contract_step) and not (
-        producer_step.count(
-            'docker save "local/ubi9-base-python:ci-${ARCH}" -o "dist/python/final-image.${ARCH}.tar"'
-        )
+        producer_step.count('docker save "local/ubi9-base-python:ci-${ARCH}" -o "dist/python/final-image.${ARCH}.tar"')
         == 1
-        and producer_step.count(
-            'entries = module.load_image_rootfs(Path(f"dist/python/final-image.{arch}.tar"))'
-        )
-        == 1
-        and producer_step.count(
-            'module.write_rootfs_tar(entries, Path(f"dist/python/final.{arch}.tar"))'
-        )
-        == 1
+        and producer_step.count('entries = module.load_image_rootfs(Path(f"dist/python/final-image.{arch}.tar"))') == 1
+        and producer_step.count('module.write_rootfs_tar(entries, Path(f"dist/python/final.{arch}.tar"))') == 1
         and build_step.count('--set "ci.tags=local/ubi9-base-python:ci-${ARCH}"') == 1
         and build.count("docker buildx bake --file images/python/docker-bake.json ci") == 1
         and "docker buildx bake" not in contract_step
@@ -5591,7 +5574,7 @@ def python_ci_preflight_errors(workflow: str) -> list[str]:
         build_step.count('--set "ci.args.OCI_REVISION=${GITHUB_SHA}"') == 1
         and contract_step.count(
             "          actual_revision=\"$(docker image inspect --format '{{ index .Config.Labels "
-            "\"org.opencontainers.image.revision\" }}' \"${image}\")\"\n"
+            '"org.opencontainers.image.revision" }}\' "${image}")"\n'
         )
         == 1
         and contract_step.count('          test "${actual_revision}" = "${GITHUB_SHA}"\n') == 1
@@ -5601,18 +5584,18 @@ def python_ci_preflight_errors(workflow: str) -> list[str]:
         and contract_step.count('          expected_source="https://github.com/${GITHUB_REPOSITORY}"\n') == 1
         and contract_step.count(
             "          actual_source=\"$(docker image inspect --format '{{ index .Config.Labels "
-            "\"org.opencontainers.image.source\" }}' \"${image}\")\"\n"
+            '"org.opencontainers.image.source" }}\' "${image}")"\n'
         )
         == 1
         and contract_step.count('          test "${actual_source}" = "${expected_source}"\n') == 1
     )
     version_invalid = bool(contract_step) and not (
-        build_step.count('          oci_version="$(tr -d \'[:space:]\' < images/python/VERSION)"\n') == 1
+        build_step.count("          oci_version=\"$(tr -d '[:space:]' < images/python/VERSION)\"\n") == 1
         and build_step.count('--set "ci.args.OCI_VERSION=${oci_version}"') == 1
-        and contract_step.count('          expected_version="$(tr -d \'[:space:]\' < images/python/VERSION)"\n') == 1
+        and contract_step.count("          expected_version=\"$(tr -d '[:space:]' < images/python/VERSION)\"\n") == 1
         and contract_step.count(
             "          actual_version=\"$(docker image inspect --format '{{ index .Config.Labels "
-            "\"org.opencontainers.image.version\" }}' \"${image}\")\"\n"
+            '"org.opencontainers.image.version" }}\' "${image}")"\n'
         )
         == 1
         and contract_step.count('          test "${actual_version}" = "${expected_version}"\n') == 1
@@ -5625,7 +5608,7 @@ def python_ci_preflight_errors(workflow: str) -> list[str]:
         == 1
         and contract_step.count(
             "          actual_created=\"$(docker image inspect --format '{{ index .Config.Labels "
-            "\"org.opencontainers.image.created\" }}' \"${image}\")\"\n"
+            '"org.opencontainers.image.created" }}\' "${image}")"\n'
         )
         == 1
         and contract_step.count('          test "${actual_created}" = "${expected_created}"\n') == 1
@@ -5652,8 +5635,7 @@ def python_ci_preflight_errors(workflow: str) -> list[str]:
     )
     observed_permission_sites = Counter(_python_ci_permission_sites(workflow))
     permissions_invalid = (
-        observed_permission_sites != expected_permission_sites
-        or sum(observed_permission_sites.values()) != 6
+        observed_permission_sites != expected_permission_sites or sum(observed_permission_sites.values()) != 6
     )
     triggers_invalid = _python_ci_trigger_block(workflow) != PYTHON_CI_TRIGGER_BLOCK
     job_ids_invalid = _python_ci_job_ids(workflow) != list(PYTHON_CI_JOB_IDS)
@@ -5674,7 +5656,10 @@ def python_ci_preflight_errors(workflow: str) -> list[str]:
     # CHECK: python-ci-triggers
     reject(triggers_invalid, "python CI trigger set must remain pull_request, push, and workflow_dispatch only")
     # CHECK: python-ci-job-ids
-    reject(job_ids_invalid, "python CI job IDs must remain exactly changes, self-tests, build, reproducibility, python-required")
+    reject(
+        job_ids_invalid,
+        "python CI job IDs must remain exactly changes, self-tests, build, reproducibility, python-required",
+    )
     # CHECK: python-ci-reusable-job
     reject(reusable_job_invalid, "python CI must not call a reusable workflow at job level")
     # CHECK: python-ci-environment
@@ -5754,7 +5739,9 @@ def _swap_workflow_steps(source: str, first: str, second: str) -> str:
     second_end = source.find("      - name: ", second_start + len(second_marker))
     if second_end < 0:
         second_end = len(source)
-    return source[:first_start] + source[second_start:second_end] + source[first_start:second_start] + source[second_end:]
+    return (
+        source[:first_start] + source[second_start:second_end] + source[first_start:second_start] + source[second_end:]
+    )
 
 
 def _python_ci_semantic_fixtures(workflow: str) -> list[tuple[str, str, str]]:
@@ -5946,7 +5933,8 @@ def _python_ci_semantic_fixtures(workflow: str) -> list[tuple[str, str, str]]:
             workflow.replace(
                 "    runs-on: ubuntu-24.04\n    timeout-minutes: 120\n",
                 "    runs-on: ubuntu-24.04\n"
-                "    uses: example/repository/.github/workflows/reusable.yaml@1111111111111111111111111111111111111111\n"
+                "    uses: example/repository/.github/workflows/reusable.yaml@"
+                "1111111111111111111111111111111111111111\n"
                 "    timeout-minutes: 120\n",
                 1,
             ),
@@ -6012,7 +6000,7 @@ def _python_ci_semantic_fixtures(workflow: str) -> list[tuple[str, str, str]]:
             "ci Bake output override added",
             workflow.replace(
                 "            --progress plain \\\n",
-                "            --progress plain \\\n            --set \"ci.output=type=registry\" \\\n",
+                '            --progress plain \\\n            --set "ci.output=type=registry" \\\n',
                 1,
             ),
             "python CI must not override the ci Bake output",
@@ -6088,7 +6076,9 @@ def _python_ci_detect_oracle(workflow: str) -> None:
             stdout = result.stdout.decode()
             stderr = result.stderr.decode()
             output = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
-            require(result.returncode == 0, f"python CI detect oracle {event_name} exited {result.returncode}: {stderr}")
+            require(
+                result.returncode == 0, f"python CI detect oracle {event_name} exited {result.returncode}: {stderr}"
+            )
             require(not stderr, f"python CI detect oracle {event_name} wrote stderr: {stderr!r}")
             require(
                 stdout == f"python-tree change detection: python={expected}\n",
@@ -6174,7 +6164,11 @@ def check_python_ci_preflight_checker_mutation_self_test() -> None:
         ("python-ci-event-case", "reject(event_case_invalid,", "push-side range filtering restored"),
         ("python-ci-selector", "reject(selector_invalid,", "pull-request selector changed"),
         ("python-ci-contract-step", "reject(contract_step_missing,", "contract step removed"),
-        ("python-ci-contract-order", "reject(contract_step_order_invalid,", "contract step moved before rootfs production"),
+        (
+            "python-ci-contract-order",
+            "reject(contract_step_order_invalid,",
+            "contract step moved before rootfs production",
+        ),
         (
             "python-ci-contract-invocation",
             "reject(\n        contract_invocation_invalid,",
@@ -6187,7 +6181,7 @@ def check_python_ci_preflight_checker_mutation_self_test() -> None:
         ("python-ci-created-binding", "reject(created_invalid,", "created label expectation changed"),
         ("python-ci-permissions", "reject(\n        permissions_invalid,", "workflow permission removed"),
         ("python-ci-triggers", "reject(triggers_invalid,", "workflow_call trigger added"),
-        ("python-ci-job-ids", "reject(job_ids_invalid,", "unexpected job ID added"),
+        ("python-ci-job-ids", "reject(\n        job_ids_invalid,", "unexpected job ID added"),
         ("python-ci-reusable-job", "reject(reusable_job_invalid,", "job-level reusable workflow added"),
         ("python-ci-environment", "reject(environment_invalid,", "job environment added"),
         ("python-ci-secret-reference", "reject(secret_reference_invalid,", "secret reference added"),
@@ -6199,8 +6193,7 @@ def check_python_ci_preflight_checker_mutation_self_test() -> None:
     ]
     markers = re.findall(r"^    # CHECK: (python-ci-(?!surface)[a-z-]+)$", source, re.MULTILINE)
     require(
-        Counter(markers) == Counter(label for label, _, _ in guard_mutations)
-        and len(markers) == len(guard_mutations),
+        Counter(markers) == Counter(label for label, _, _ in guard_mutations) and len(markers) == len(guard_mutations),
         "python CI checker mutation list must cover every semantic rejection guard exactly once",
     )
     for guard, anchor, fixture in guard_mutations:
@@ -6265,9 +6258,7 @@ def check_python_ci_surface_lock_self_test() -> None:
     digest_prefix = "python CI executable surface SHA-256 mismatch:"
     length_prefix = "python CI executable surface byte-length mismatch:"
     substitution_errors = python_ci_surface_lock_errors(substitution)
-    expected_substitution = [
-        f"{digest_prefix} expected {PYTHON_CI_WORKFLOW_SHA256}, observed {substitution_digest}"
-    ]
+    expected_substitution = [f"{digest_prefix} expected {PYTHON_CI_WORKFLOW_SHA256}, observed {substitution_digest}"]
     if not any(error.startswith(digest_prefix) for error in substitution_errors):
         raise VerifyError("python CI surface lock mutation unexpectedly passed: same-length substitution digest")
     require(
@@ -6289,10 +6280,7 @@ def check_python_ci_surface_lock_self_test() -> None:
         "python CI surface substitution rejected: parse=ok "
         f"bytes={len(substitution)} complete_errors={substitution_errors}"
     )
-    print(
-        "python CI surface deletion rejected: parse=ok "
-        f"bytes={len(deletion)} complete_errors={deletion_errors}"
-    )
+    print(f"python CI surface deletion rejected: parse=ok bytes={len(deletion)} complete_errors={deletion_errors}")
 
 
 def check_python_ci_surface_lock_checker_mutation_self_test() -> None:
