@@ -113,7 +113,6 @@ jobs:
           range_base=""
           case "${EVENT_NAME}" in
             pull_request) range_base="${BASE_SHA}" ;;
-            push) range_base="${BEFORE_SHA}" ;;
             *) range_base="" ;;
           esac
           if [[ "${range_base}" =~ ^[0-9a-f]{40}$ ]] \
@@ -136,7 +135,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs: changes
-    if: ${{ needs.changes.outputs.python == 'true' }}
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.python == 'true' }}
     permissions:
       contents: read
     steps:
@@ -219,7 +218,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     needs: changes
-    if: ${{ needs.changes.outputs.python == 'true' }}
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.python == 'true' }}
     permissions:
       contents: read
     strategy:
@@ -335,6 +334,35 @@ jobs:
           python3 images/python/tools/assert-parent-subset.py \
             --parent-tar "dist/python/parent.${ARCH}.tar" \
             --final-tar "dist/python/final.${ARCH}.tar"
+
+      - name: Assert gated image contract
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+
+          image="local/ubi9-base-python:ci-${ARCH}"
+          expected_source="https://github.com/${GITHUB_REPOSITORY}"
+          expected_version="$(tr -d '[:space:]' < images/python/VERSION)"
+          expected_created="$(python3 -c "
+          import json
+          print(json.load(open('images/python/docker-bake.json'))['target']['base']['args']['OCI_CREATED'])
+          ")"
+          actual_revision="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${image}")"
+          actual_source="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.source" }}' "${image}")"
+          actual_version="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "${image}")"
+          actual_created="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.created" }}' "${image}")"
+          test "${actual_revision}" = "${GITHUB_SHA}"
+          test "${actual_source}" = "${expected_source}"
+          test "${actual_version}" = "${expected_version}"
+          test "${actual_created}" = "${expected_created}"
+          printf 'OCI label binding passed: revision=%s source=%s version=%s created=%s\n' \
+            "${actual_revision}" "${actual_source}" "${actual_version}" "${actual_created}"
+
+          python3 images/python/tools/assert-reproducible.py \
+            --rootfs-tar "dist/python/final.${ARCH}.tar" \
+            --arch "${ARCH}" \
+            --expect-from-contract images/python/contracts/image-manifest.json
 
       - name: Run python runtime gates
         env:
@@ -533,7 +561,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     needs: changes
-    if: ${{ needs.changes.outputs.python == 'true' }}
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.python == 'true' }}
     permissions:
       contents: read
     strategy:
