@@ -53,10 +53,33 @@ assertion compares the Buildx version, commit, installed plugin SHA-256, BuildKi
 container image, and BuildKit node version, and any mismatch fails the CI job
 before building. [TD-8](../TECH-DEBT.md#td-8-python-builder-identity-workflow-static-analysis-boundary)
 records why this is an accepted trust boundary and the compensating controls.
-The verifier does not inspect how caller command lines apply Bake overrides and
-does not discover or count build callers. The current per-side descriptor is
-harness behavior, not a repository-wide invocation guarantee or a claim about a
-future publisher.
+Except for the build job's checked revision, source, and version bindings, the
+verifier does not interpret arbitrary caller command-line overrides or discover
+and count build callers. The current per-side descriptor is harness behavior,
+not a repository-wide invocation guarantee or a claim about a future publisher.
+
+The Python build matrix is also an active CI-rootfs preflight. On pushes to
+`main` and manual dispatches it runs for both architectures independently of the
+pull-request path selector; pull requests retain that selector. Each matrix job
+builds the `ci` target once and exports a flattened rootfs from the loaded
+`local/ubi9-base-python:ci-${ARCH}` image. The contract step consumes that same
+rootfs before the remaining image gates and asserts its architecture-specific
+`canonical_rootfs_digest` and `rpmdb_sha256` against
+`images/python/contracts/image-manifest.json`. It also checks that the loaded
+image labels bind revision to `GITHUB_SHA`, source to the repository URL, version
+to the committed `images/python/VERSION`, and created time to the fixed Bake
+contract value.
+
+This preflight is scoped to the effective rootfs entry set and the rpmdb file.
+The canonical digest is produced from normalized, sorted entries; it is not an
+OCI manifest, image-config, compressed-layer, or tar-encoding digest. The
+ephemeral `ci` image is not a release-shaped artifact, and its successful check
+does not establish the manifest digest of a later release child. The workflow's
+`GITHUB_TOKEN` grants `contents: read` only and the committed workflow contains
+no configured registry credential or login surface. Repository verification
+binds every committed byte of that workflow to an expected SHA-256 and byte
+length, so changing its YAML surface requires a corresponding visible verifier
+edit; that lock does not cover separately invoked scripts or external code.
 
 Renovate has two non-automerge Python builder surfaces. The Buildx manager
 updates the release version only; the independently owned expected commit and

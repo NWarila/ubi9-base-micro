@@ -70,11 +70,29 @@ workflow builder setups and their five-observation identity steps to derive the
 pins from this file before building. Each named identity step must keep
 `set -euo pipefail` enabled, omit `continue-on-error`, and end with the identity
 checker as its final unwrapped command.
-Repository verification does not inspect Bake command-line overrides, reject
-alternate direct-build spellings, or discover and count build callers. The
-double-build harness continues to use one per-side Bake descriptor for both
-resolved-report data and execution; that is the current harness behavior, not a
-repository-wide invocation guarantee or a claim about a future publisher.
+
+The build matrix is an active CI-rootfs preflight. On pushes to `main` and manual
+dispatches it runs for both architectures independently of the pull-request path
+selector; pull requests retain that selector. Each architecture builds the `ci`
+target once. The workflow exports the effective rootfs from the same loaded image
+used by the build-job gate battery, asserts its `canonical_rootfs_digest` and
+`rpmdb_sha256` against `contracts/image-manifest.json`, and checks that the
+image's revision, source, version, and created labels match the current commit
+and committed inputs. This is an effective-rootfs and rpmdb assertion, not an OCI
+manifest or image-config identity check, and it does not determine the digest of
+a future release child.
+
+The workflow's `GITHUB_TOKEN` grants `contents: read` only and the committed YAML
+contains no configured registry credential or login surface. Repository
+verification binds every committed workflow byte to an expected SHA-256 and byte
+length, requiring a corresponding visible verifier edit when its YAML changes.
+That lock does not cover separately invoked scripts or pinned external code.
+Outside the specifically checked CI label overrides, repository verification
+does not interpret arbitrary Bake command-line overrides, reject alternate
+direct-build spellings, or discover and count build callers. The double-build
+harness continues to use one per-side Bake descriptor for both resolved-report
+data and execution; that is the current harness behavior, not a repository-wide
+invocation guarantee or a claim about a future publisher.
 
 Renovate tracks the Buildx release version and the BuildKit
 version-plus-digest reference through separate managers with automerge disabled.
@@ -87,16 +105,16 @@ baselines. See
 for the complete scope.
 
 **Status: built and gated in CI, unpublished.** The evidence machinery is in
-place and exercised for every Python-tree or shared-gate change selected by the
-Python workflow — a tailored RHEL9 STIG profile evaluated fail-closed,
-rpmdb-derived SPDX and CycloneDX SBOMs, dual CVE scanners with OpenVEX
-default-deny, a rootfs secret gate, and a NIST SP 800-190 image-control predicate
-— but it runs against locally built images. Nothing is signed, attested, or
-pushed. No registry package, tag, or
-publish workflow exists for this image yet; publication requires the full
+place and exercised by the active preflight on every push to `main` and manual
+dispatch, and for Python-tree or shared-gate changes selected on pull requests —
+a tailored RHEL9 STIG profile evaluated fail-closed, rpmdb-derived SPDX and
+CycloneDX SBOMs, dual CVE scanners with OpenVEX default-deny, a rootfs secret
+gate, and a NIST SP 800-190 image-control predicate — but it runs against locally
+built images. Nothing is signed, attested, or pushed. No registry package, tag,
+or publish workflow exists for this image yet; publication requires the full
 `base-micro` evidence-parity set (signature, SPDX and CycloneDX SBOMs, OpenVEX,
-NIST SP 800-190 evidence, tailored STIG ARF, SLSA provenance) and will arrive
-as its own change. Consumption instructions are deliberately absent until then.
+NIST SP 800-190 evidence, tailored STIG ARF, SLSA provenance) and will arrive as
+its own change. Consumption instructions are deliberately absent until then.
 
 The shipped package set is derived, not hand-picked: the lock refresh harness
 resolves the python3.12 closure against a clone of the pinned parent, records

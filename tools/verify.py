@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import hashlib
 import io
 import json
 import os
@@ -5365,6 +5366,30 @@ PYTHON_EVIDENCE_UPLOAD_PATHS = (
     "dist/python-evidence/attestations/*.json",
     "dist/python-evidence/base-python.${{ matrix.arch }}.secret-scan.json",
 )
+PYTHON_CI_WORKFLOW_SHA256 = "1d3f2355282ba4738b077096fd82c4861605cdce9e234f8fe1c877d6f22bf424"
+PYTHON_CI_WORKFLOW_BYTE_LENGTH = 30587
+PYTHON_CI_JOB_IDS = ("changes", "self-tests", "build", "reproducibility", "python-required")
+PYTHON_CI_TRIGGER_BLOCK = (
+    "on:\n  pull_request:\n    branches: [main]\n  push:\n    branches: [main]\n  workflow_dispatch:\n\n"
+)
+PYTHON_CI_SELECTOR_LINES = (
+    "selector='^images/python/'",
+    'selector="${selector}|^\\.github/workflows/python-ci\\.yaml$"',
+    'selector="${selector}|^tools/build-stig-datastream\\.sh$"',
+    'selector="${selector}|^tools/install-(openscap|syft|trivy|grype|crane)\\.sh$"',
+    'selector="${selector}|^tools/assert-(stig-tailoring|stig-arf|rootfs-identity)\\.py$"',
+    'selector="${selector}|^tools/assert-(scanner-db-freshness|scanner-canary|ignore-scope|vex)\\.py$"',
+    'selector="${selector}|^tools/assert-no-phantom-packages\\.py$"',
+    'selector="${selector}|^tools/generate-stig-arf-predicate\\.py$"',
+    'selector="${selector}|^security/cve-ignore\\.(trivyignore|grype)\\.yaml$"',
+    'selector="${selector}|^stig/(rhel9-base-micro-tailoring\\.xml|tailoring-justifications\\.json)$"',
+    'selector="${selector}|^tests/fixtures/scanner-canary/log4shell\\.cdx\\.json$"',
+)
+PYTHON_CI_EVENT_CASE = (
+    'case "${EVENT_NAME}" in\n  pull_request) range_base="${BASE_SHA}" ;;\n  *) range_base="" ;;\nesac\n'
+)
+PYTHON_CI_ACTIVE_IF = "    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.python == 'true' }}"
+PYTHON_CI_CONTRACT_STEP = "Assert gated image contract"
 
 
 def _workflow_job_block(workflow: str, job: str) -> str:
@@ -5396,6 +5421,915 @@ def _workflow_upload_paths(step_block: str) -> tuple[str, ...]:
     if path_block is None:
         return ()
     return tuple(line[12:] for line in path_block.group("paths").splitlines())
+
+
+def _workflow_run_scalar(step_block: str) -> bytes:
+    marker = "        run: |\n"
+    if step_block.count(marker) != 1:
+        return b""
+    body = step_block.split(marker, 1)[1]
+    scalar_lines: list[str] = []
+    for line in body.splitlines(keepends=True):
+        if not line.strip():
+            scalar_lines.append("\n")
+        elif line.startswith("          "):
+            scalar_lines.append(line[10:])
+        else:
+            return b""
+    scalar = "".join(scalar_lines)
+    return (scalar.rstrip("\n") + "\n").encode() if scalar else b""
+
+
+def _python_ci_permission_sites(workflow: str) -> list[tuple[str, tuple[tuple[str, str], ...]]]:
+    lines = workflow.splitlines()
+    sites: list[tuple[str, tuple[tuple[str, str], ...]]] = []
+    current_job = ""
+    in_jobs = False
+    for index, line in enumerate(lines):
+        if line == "jobs:":
+            in_jobs = True
+            current_job = ""
+            continue
+        job_match = re.fullmatch(r"  ([a-z0-9_-]+):", line) if in_jobs else None
+        if job_match is not None:
+            current_job = job_match.group(1)
+        permission_match = re.fullmatch(r"(?P<indent> *)permissions:(?P<inline>.*)", line)
+        if permission_match is None:
+            continue
+        indent = permission_match.group("indent")
+        inline = permission_match.group("inline").strip()
+        if len(indent) == 0 and not in_jobs:
+            scope = "workflow"
+        elif len(indent) == 4 and current_job:
+            scope = current_job
+        else:
+            scope = f"unexpected@{index + 1}"
+        entries: list[tuple[str, str]] = []
+        if inline:
+            entries.append(("<inline>", inline))
+        else:
+            body_indent = indent + "  "
+            for body_line in lines[index + 1 :]:
+                if not body_line.strip():
+                    continue
+                if not body_line.startswith(body_indent) or body_line.startswith(body_indent + " "):
+                    break
+                entry_match = re.fullmatch(rf"{re.escape(body_indent)}([^:]+):\s*(.*)", body_line)
+                if entry_match is None:
+                    entries.append(("<invalid>", body_line.strip()))
+                else:
+                    entries.append((entry_match.group(1), entry_match.group(2)))
+        sites.append((scope, tuple(entries)))
+    return sites
+
+
+def _python_ci_job_ids(workflow: str) -> list[str]:
+    jobs_marker = "\njobs:\n"
+    if jobs_marker not in workflow:
+        return []
+    return re.findall(r"^  ([a-z0-9_-]+):$", workflow.split(jobs_marker, 1)[1], re.MULTILINE)
+
+
+def _python_ci_trigger_block(workflow: str) -> str:
+    lines = workflow.splitlines(keepends=True)
+    try:
+        start = lines.index("on:\n")
+    except ValueError:
+        return ""
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if line.strip() and not line.startswith(" "):
+            end = index
+            break
+    return "".join(lines[start:end]).rstrip("\n") + "\n\n"
+
+
+def python_ci_preflight_errors(workflow: str) -> list[str]:
+    errors: list[str] = []
+
+    def reject(condition: object, message: str) -> None:
+        if condition:
+            errors.append(message)
+
+    changes = _workflow_job_block(workflow, "changes")
+    detect_step = _workflow_named_step(changes, "Detect python-tree changes")
+    detect_scalar = _workflow_run_scalar(detect_step).decode(errors="replace")
+    selector_lines = tuple(line.strip() for line in detect_scalar.splitlines() if line.strip().startswith("selector="))
+    active_if_invalid = any(
+        _workflow_job_block(workflow, job).count(PYTHON_CI_ACTIVE_IF) != 1
+        for job in ("self-tests", "build", "reproducibility")
+    )
+    event_case_invalid = detect_scalar.count(PYTHON_CI_EVENT_CASE) != 1
+    selector_invalid = selector_lines != PYTHON_CI_SELECTOR_LINES
+
+    # CHECK: python-ci-active-jobs
+    reject(active_if_invalid, "python CI push and dispatch jobs must run independently of the PR path selector")
+    # CHECK: python-ci-event-case
+    reject(event_case_invalid, "python CI detect logic must apply the diff range only to pull requests")
+    # CHECK: python-ci-selector
+    reject(selector_invalid, "python CI pull-request selector path list must remain exact")
+
+    build = _workflow_job_block(workflow, "build")
+    build_step = _workflow_named_step(build, "Build the python image")
+    producer_step = _workflow_named_step(build, "Assert parent-subset invariance on the exported final image")
+    contract_step = _workflow_named_step(build, PYTHON_CI_CONTRACT_STEP)
+    contract_step_missing = not contract_step
+    contract_step_order_invalid = bool(contract_step) and not (
+        build.index(producer_step) < build.index(contract_step) if producer_step else False
+    )
+    contract_invocation = (
+        "          python3 images/python/tools/assert-reproducible.py \\\n"
+        '            --rootfs-tar "dist/python/final.${ARCH}.tar" \\\n'
+        '            --arch "${ARCH}" \\\n'
+        "            --expect-from-contract images/python/contracts/image-manifest.json\n"
+    )
+    contract_invocation_invalid = bool(contract_step) and contract_step.count(contract_invocation) != 1
+    same_artifact_invalid = bool(contract_step) and not (
+        producer_step.count('docker save "local/ubi9-base-python:ci-${ARCH}" -o "dist/python/final-image.${ARCH}.tar"')
+        == 1
+        and producer_step.count('entries = module.load_image_rootfs(Path(f"dist/python/final-image.{arch}.tar"))') == 1
+        and producer_step.count('module.write_rootfs_tar(entries, Path(f"dist/python/final.{arch}.tar"))') == 1
+        and build_step.count('--set "ci.tags=local/ubi9-base-python:ci-${ARCH}"') == 1
+        and build.count("docker buildx bake --file images/python/docker-bake.json ci") == 1
+        and "docker buildx bake" not in contract_step
+    )
+
+    # CHECK: python-ci-contract-step
+    reject(contract_step_missing, "python CI build job must contain the gated-image contract step once")
+    # CHECK: python-ci-contract-order
+    reject(contract_step_order_invalid, "python CI gated-image contract step must follow final rootfs production")
+    # CHECK: python-ci-contract-invocation
+    reject(
+        contract_invocation_invalid,
+        "python CI gated-image contract step must assert the final rootfs with the committed contract",
+    )
+    # CHECK: python-ci-same-artifact
+    reject(
+        same_artifact_invalid,
+        "python CI contract rootfs must come from the loaded ci image consumed by the build-job gates",
+    )
+
+    revision_invalid = bool(contract_step) and not (
+        build_step.count('--set "ci.args.OCI_REVISION=${GITHUB_SHA}"') == 1
+        and contract_step.count(
+            "          actual_revision=\"$(docker image inspect --format '{{ index .Config.Labels "
+            '"org.opencontainers.image.revision" }}\' "${image}")"\n'
+        )
+        == 1
+        and contract_step.count('          test "${actual_revision}" = "${GITHUB_SHA}"\n') == 1
+    )
+    source_invalid = bool(contract_step) and not (
+        build_step.count('--set "ci.args.OCI_SOURCE=https://github.com/${GITHUB_REPOSITORY}"') == 1
+        and contract_step.count('          expected_source="https://github.com/${GITHUB_REPOSITORY}"\n') == 1
+        and contract_step.count(
+            "          actual_source=\"$(docker image inspect --format '{{ index .Config.Labels "
+            '"org.opencontainers.image.source" }}\' "${image}")"\n'
+        )
+        == 1
+        and contract_step.count('          test "${actual_source}" = "${expected_source}"\n') == 1
+    )
+    version_invalid = bool(contract_step) and not (
+        build_step.count("          oci_version=\"$(tr -d '[:space:]' < images/python/VERSION)\"\n") == 1
+        and build_step.count('--set "ci.args.OCI_VERSION=${oci_version}"') == 1
+        and contract_step.count("          expected_version=\"$(tr -d '[:space:]' < images/python/VERSION)\"\n") == 1
+        and contract_step.count(
+            "          actual_version=\"$(docker image inspect --format '{{ index .Config.Labels "
+            '"org.opencontainers.image.version" }}\' "${image}")"\n'
+        )
+        == 1
+        and contract_step.count('          test "${actual_version}" = "${expected_version}"\n') == 1
+    )
+    created_invalid = bool(contract_step) and not (
+        contract_step.count(
+            "          print(json.load(open('images/python/docker-bake.json'))"
+            "['target']['base']['args']['OCI_CREATED'])\n"
+        )
+        == 1
+        and contract_step.count(
+            "          actual_created=\"$(docker image inspect --format '{{ index .Config.Labels "
+            '"org.opencontainers.image.created" }}\' "${image}")"\n'
+        )
+        == 1
+        and contract_step.count('          test "${actual_created}" = "${expected_created}"\n') == 1
+    )
+
+    # CHECK: python-ci-revision-binding
+    reject(revision_invalid, "python CI gated image revision label must equal GITHUB_SHA")
+    # CHECK: python-ci-source-binding
+    reject(source_invalid, "python CI gated image source label must equal the repository URL")
+    # CHECK: python-ci-version-binding
+    reject(version_invalid, "python CI gated image version label must equal the stripped committed VERSION")
+    # CHECK: python-ci-created-binding
+    reject(created_invalid, "python CI gated image created label must equal the fixed Bake contract value")
+
+    expected_permission_sites = Counter(
+        [
+            ("workflow", (("contents", "read"),)),
+            ("changes", (("contents", "read"),)),
+            ("self-tests", (("contents", "read"),)),
+            ("build", (("contents", "read"),)),
+            ("reproducibility", (("contents", "read"),)),
+            ("python-required", (("contents", "read"),)),
+        ]
+    )
+    observed_permission_sites = Counter(_python_ci_permission_sites(workflow))
+    permissions_invalid = (
+        observed_permission_sites != expected_permission_sites or sum(observed_permission_sites.values()) != 6
+    )
+    triggers_invalid = _python_ci_trigger_block(workflow) != PYTHON_CI_TRIGGER_BLOCK
+    job_ids_invalid = _python_ci_job_ids(workflow) != list(PYTHON_CI_JOB_IDS)
+    reusable_job_invalid = re.search(r"^    uses:\s*", workflow, re.MULTILINE) is not None
+    environment_invalid = re.search(r"^    environment:\s*", workflow, re.MULTILINE) is not None
+    secret_reference_invalid = "${{ secrets." in workflow
+    credentials_invalid = re.search(r"^\s+credentials:\s*", workflow, re.MULTILINE) is not None
+    registry_login_invalid = re.search(r"^\s+uses:\s+[^\s#]*login-action@", workflow, re.MULTILINE) is not None
+    build_output_override_invalid = re.search(r"--set\s+[\"']?ci\.output(?:=|\.)", workflow) is not None
+    step_continue_invalid = re.search(r"^        continue-on-error:\s*", workflow, re.MULTILINE) is not None
+    job_continue_invalid = re.search(r"^    continue-on-error:\s*", workflow, re.MULTILINE) is not None
+
+    # CHECK: python-ci-permissions
+    reject(
+        permissions_invalid,
+        "python CI permissions must occur once at workflow and every exact job with contents read only",
+    )
+    # CHECK: python-ci-triggers
+    reject(triggers_invalid, "python CI trigger set must remain pull_request, push, and workflow_dispatch only")
+    # CHECK: python-ci-job-ids
+    reject(
+        job_ids_invalid,
+        "python CI job IDs must remain exactly changes, self-tests, build, reproducibility, python-required",
+    )
+    # CHECK: python-ci-reusable-job
+    reject(reusable_job_invalid, "python CI must not call a reusable workflow at job level")
+    # CHECK: python-ci-environment
+    reject(environment_invalid, "python CI jobs must not declare an environment")
+    # CHECK: python-ci-secret-reference
+    reject(secret_reference_invalid, "python CI must not reference repository or environment secrets")
+    # CHECK: python-ci-credentials
+    reject(credentials_invalid, "python CI containers and services must not configure credentials")
+    # CHECK: python-ci-registry-login
+    reject(registry_login_invalid, "python CI must not use a registry login action")
+    # CHECK: python-ci-build-output
+    reject(build_output_override_invalid, "python CI must not override the ci Bake output")
+    # CHECK: python-ci-step-continue
+    reject(step_continue_invalid, "python CI steps must not use continue-on-error")
+    # CHECK: python-ci-job-continue
+    reject(job_continue_invalid, "python CI jobs must not use continue-on-error")
+    return errors
+
+
+def python_ci_surface_lock_errors(workflow_bytes: bytes) -> list[str]:
+    errors: list[str] = []
+    actual_digest = hashlib.sha256(workflow_bytes).hexdigest()
+    actual_length = len(workflow_bytes)
+    digest_invalid = actual_digest != PYTHON_CI_WORKFLOW_SHA256
+    length_invalid = actual_length != PYTHON_CI_WORKFLOW_BYTE_LENGTH
+    # CHECK: python-ci-surface-digest
+    if digest_invalid:
+        errors.append(
+            "python CI executable surface SHA-256 mismatch: "
+            f"expected {PYTHON_CI_WORKFLOW_SHA256}, observed {actual_digest}"
+        )
+    # CHECK: python-ci-surface-length
+    if length_invalid:
+        errors.append(
+            "python CI executable surface byte-length mismatch: "
+            f"expected {PYTHON_CI_WORKFLOW_BYTE_LENGTH}, observed {actual_length}"
+        )
+    return errors
+
+
+def _python_ci_yaml_parse_error(workflow: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["ruby", "--disable-gems", "-ryaml", "-e", "YAML.parse_stream(STDIN.read)"],
+            cwd=ROOT,
+            input=workflow,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except OSError as exc:
+        return str(exc)
+    if result.returncode != 0:
+        return result.stderr.strip() or result.stdout.strip() or f"ruby exited {result.returncode}"
+    return None
+
+
+def _replace_nth(source: str, old: str, new: str, occurrence: int) -> str:
+    require(occurrence > 0, "replacement occurrence must be positive")
+    start = 0
+    found = -1
+    for _ in range(occurrence):
+        found = source.find(old, start)
+        require(found >= 0, f"replacement occurrence {occurrence} is missing")
+        start = found + len(old)
+    return source[:found] + new + source[found + len(old) :]
+
+
+def _swap_workflow_steps(source: str, first: str, second: str) -> str:
+    first_marker = f"      - name: {first}\n"
+    second_marker = f"      - name: {second}\n"
+    first_start = source.find(first_marker)
+    second_start = source.find(second_marker)
+    require(first_start >= 0 and second_start > first_start, "workflow step-swap anchors missing or reversed")
+    first_end = source.find("      - name: ", first_start + len(first_marker))
+    require(first_end == second_start, "workflow step-swap fixtures must be adjacent")
+    second_end = source.find("      - name: ", second_start + len(second_marker))
+    if second_end < 0:
+        second_end = len(source)
+    return (
+        source[:first_start] + source[second_start:second_end] + source[first_start:second_start] + source[second_end:]
+    )
+
+
+def _python_ci_semantic_fixtures(workflow: str) -> list[tuple[str, str, str]]:
+    permission_error = "python CI permissions must occur once at workflow and every exact job with contents read only"
+    top_permission = "permissions:\n  contents: read\n"
+    job_permission = "    permissions:\n      contents: read\n"
+    extra_top_permission = "permissions:\n  contents: read\n  packages: write\n"
+    extra_job_permission = "    permissions:\n      contents: read\n      packages: write\n"
+    contract_block = _workflow_named_step(_workflow_job_block(workflow, "build"), PYTHON_CI_CONTRACT_STEP)
+    require(bool(contract_block), "python CI semantic fixtures require the contract step")
+    without_contract = workflow.replace(contract_block, "", 1)
+    same_artifact_mutant = workflow.replace(
+        'docker save "local/ubi9-base-python:ci-${ARCH}" -o "dist/python/final-image.${ARCH}.tar"',
+        'docker save "local/ubi9-base-python:other-${ARCH}" -o "dist/python/final-image.${ARCH}.tar"',
+        1,
+    )
+    login_step = (
+        "      - name: Log in to registry\n"
+        "        uses: docker/login-action@1111111111111111111111111111111111111111\n\n"
+    )
+    fixtures = [
+        (
+            "push job path condition restored",
+            workflow.replace(PYTHON_CI_ACTIVE_IF, "    if: ${{ needs.changes.outputs.python == 'true' }}", 1),
+            "python CI push and dispatch jobs must run independently of the PR path selector",
+        ),
+        (
+            "push-side range filtering restored",
+            workflow.replace(
+                '            pull_request) range_base="${BASE_SHA}" ;;\n            *) range_base="" ;;',
+                '            pull_request) range_base="${BASE_SHA}" ;;\n'
+                '            push) range_base="${BEFORE_SHA}" ;;\n'
+                '            *) range_base="" ;;',
+                1,
+            ),
+            "python CI detect logic must apply the diff range only to pull requests",
+        ),
+        (
+            "pull-request selector changed",
+            workflow.replace("selector='^images/python/'", "selector='^images/other/'", 1),
+            "python CI pull-request selector path list must remain exact",
+        ),
+        (
+            "contract step removed",
+            without_contract,
+            "python CI build job must contain the gated-image contract step once",
+        ),
+        (
+            "contract step moved before rootfs production",
+            _swap_workflow_steps(
+                workflow,
+                "Assert parent-subset invariance on the exported final image",
+                PYTHON_CI_CONTRACT_STEP,
+            ),
+            "python CI gated-image contract step must follow final rootfs production",
+        ),
+        (
+            "contract expectation flag dropped",
+            workflow.replace("            --expect-from-contract images/python/contracts/image-manifest.json\n", "", 1),
+            "python CI gated-image contract step must assert the final rootfs with the committed contract",
+        ),
+        (
+            "contract rootfs retagged",
+            same_artifact_mutant,
+            "python CI contract rootfs must come from the loaded ci image consumed by the build-job gates",
+        ),
+        (
+            "revision label expectation changed",
+            workflow.replace(
+                '          test "${actual_revision}" = "${GITHUB_SHA}"\n',
+                '          test "${actual_revision}" = "${BEFORE_SHA}"\n',
+                1,
+            ),
+            "python CI gated image revision label must equal GITHUB_SHA",
+        ),
+        (
+            "source label expectation changed",
+            workflow.replace(
+                '          test "${actual_source}" = "${expected_source}"\n',
+                '          test "${actual_source}" = "https://example.invalid/repository"\n',
+                1,
+            ),
+            "python CI gated image source label must equal the repository URL",
+        ),
+        (
+            "version label expectation changed",
+            workflow.replace(
+                '          test "${actual_version}" = "${expected_version}"\n',
+                '          test "${actual_version}" = "dev"\n',
+                1,
+            ),
+            "python CI gated image version label must equal the stripped committed VERSION",
+        ),
+        (
+            "created label expectation changed",
+            workflow.replace(
+                '          test "${actual_created}" = "${expected_created}"\n',
+                '          test "${actual_created}" = "1970-01-01T00:00:00Z"\n',
+                1,
+            ),
+            "python CI gated image created label must equal the fixed Bake contract value",
+        ),
+        (
+            "workflow permission removed",
+            workflow.replace(top_permission, "", 1),
+            permission_error,
+        ),
+        (
+            "changes permission removed",
+            _replace_nth(workflow, job_permission, "", 1),
+            permission_error,
+        ),
+        (
+            "self-tests permission removed",
+            _replace_nth(workflow, job_permission, "", 2),
+            permission_error,
+        ),
+        (
+            "build permission removed",
+            _replace_nth(workflow, job_permission, "", 3),
+            permission_error,
+        ),
+        (
+            "reproducibility permission removed",
+            _replace_nth(workflow, job_permission, "", 4),
+            permission_error,
+        ),
+        (
+            "python-required permission removed",
+            _replace_nth(workflow, job_permission, "", 5),
+            permission_error,
+        ),
+        (
+            "workflow write grant added",
+            workflow.replace(top_permission, extra_top_permission, 1),
+            permission_error,
+        ),
+        (
+            "changes write grant added",
+            _replace_nth(workflow, job_permission, extra_job_permission, 1),
+            permission_error,
+        ),
+        (
+            "self-tests write grant added",
+            _replace_nth(workflow, job_permission, extra_job_permission, 2),
+            permission_error,
+        ),
+        (
+            "build write grant added",
+            _replace_nth(workflow, job_permission, extra_job_permission, 3),
+            permission_error,
+        ),
+        (
+            "reproducibility write grant added",
+            _replace_nth(workflow, job_permission, extra_job_permission, 4),
+            permission_error,
+        ),
+        (
+            "python-required write grant added",
+            _replace_nth(workflow, job_permission, extra_job_permission, 5),
+            permission_error,
+        ),
+        (
+            "workflow permission site emptied",
+            workflow.replace(top_permission, "permissions: {}\n", 1),
+            permission_error,
+        ),
+        (
+            "workflow permission site duplicated",
+            workflow.replace(top_permission, top_permission + top_permission, 1),
+            permission_error,
+        ),
+        (
+            "workflow_call trigger added",
+            workflow.replace("  workflow_dispatch:\n", "  workflow_dispatch:\n  workflow_call:\n", 1),
+            "python CI trigger set must remain pull_request, push, and workflow_dispatch only",
+        ),
+        (
+            "unexpected job ID added",
+            workflow.replace(
+                "  python-required:\n",
+                "  unexpected-job:\n    runs-on: ubuntu-24.04\n    steps: []\n\n  python-required:\n",
+                1,
+            ),
+            "python CI job IDs must remain exactly changes, self-tests, build, reproducibility, python-required",
+        ),
+        (
+            "job-level reusable workflow added",
+            workflow.replace(
+                "    runs-on: ubuntu-24.04\n    timeout-minutes: 120\n",
+                "    runs-on: ubuntu-24.04\n"
+                "    uses: example/repository/.github/workflows/reusable.yaml@"
+                "1111111111111111111111111111111111111111\n"
+                "    timeout-minutes: 120\n",
+                1,
+            ),
+            "python CI must not call a reusable workflow at job level",
+        ),
+        (
+            "job environment added",
+            workflow.replace(
+                "    runs-on: ubuntu-24.04\n    timeout-minutes: 120\n",
+                "    runs-on: ubuntu-24.04\n    environment: preflight\n    timeout-minutes: 120\n",
+                1,
+            ),
+            "python CI jobs must not declare an environment",
+        ),
+        (
+            "secret reference added",
+            workflow.replace(
+                "          ARCH: ${{ matrix.arch }}\n        run: |\n",
+                "          ARCH: ${{ matrix.arch }}\n"
+                "          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}\n"
+                "        run: |\n",
+                1,
+            ),
+            "python CI must not reference repository or environment secrets",
+        ),
+        (
+            "container credentials added",
+            workflow.replace(
+                "    strategy:\n      fail-fast: false\n",
+                "    container:\n"
+                "      image: registry.example.invalid/build:latest\n"
+                "      credentials:\n"
+                "        username: fixture\n"
+                "        password: fixture\n"
+                "    strategy:\n"
+                "      fail-fast: false\n",
+                1,
+            ),
+            "python CI containers and services must not configure credentials",
+        ),
+        (
+            "service credentials added",
+            workflow.replace(
+                "    strategy:\n      fail-fast: false\n",
+                "    services:\n"
+                "      registry:\n"
+                "        image: registry.example.invalid/service:latest\n"
+                "        credentials:\n"
+                "          username: fixture\n"
+                "          password: fixture\n"
+                "    strategy:\n"
+                "      fail-fast: false\n",
+                1,
+            ),
+            "python CI containers and services must not configure credentials",
+        ),
+        (
+            "registry login action added",
+            workflow.replace("      - name: Install Crane\n", login_step + "      - name: Install Crane\n", 1),
+            "python CI must not use a registry login action",
+        ),
+        (
+            "ci Bake output override added",
+            workflow.replace(
+                "            --progress plain \\\n",
+                '            --progress plain \\\n            --set "ci.output=type=registry" \\\n',
+                1,
+            ),
+            "python CI must not override the ci Bake output",
+        ),
+        (
+            "step continue-on-error added",
+            workflow.replace(
+                "      - name: Run python runtime gates\n",
+                "      - name: Run python runtime gates\n        continue-on-error: true\n",
+                1,
+            ),
+            "python CI steps must not use continue-on-error",
+        ),
+        (
+            "job continue-on-error added",
+            workflow.replace(
+                "  build:\n    name: python build and gates\n",
+                "  build:\n    name: python build and gates\n    continue-on-error: true\n",
+                1,
+            ),
+            "python CI jobs must not use continue-on-error",
+        ),
+    ]
+    for label, mutated, _ in fixtures:
+        require(mutated != workflow, f"python CI semantic mutation is a no-op: {label}")
+    return fixtures
+
+
+def _python_ci_detect_oracle(workflow: str) -> None:
+    changes = _workflow_job_block(workflow, "changes")
+    scalar = _workflow_run_scalar(_workflow_named_step(changes, "Detect python-tree changes"))
+    require(bool(scalar), "python CI detect oracle could not parse the committed run scalar")
+    base_result = subprocess.run(
+        ["git", "rev-parse", "79726ed^"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    tip_result = subprocess.run(
+        ["git", "rev-parse", "79726ed"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    require(base_result.returncode == 0 and tip_result.returncode == 0, "python CI detect oracle history is missing")
+    base = base_result.stdout.strip()
+    tip = tip_result.stdout.strip()
+    require(SHA40.fullmatch(base) is not None and SHA40.fullmatch(tip) is not None, "python CI oracle range is invalid")
+    digest = hashlib.sha256(scalar).hexdigest()
+    for event_name, expected in (("push", "true"), ("pull_request", "false")):
+        with tempfile.TemporaryDirectory(prefix=".verify-python-detect-", dir=ROOT) as tmp:
+            output_path = Path(tmp) / "github-output"
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "EVENT_NAME": event_name,
+                    "BASE_SHA": base,
+                    "BEFORE_SHA": base,
+                    "GITHUB_SHA": tip,
+                    "GITHUB_OUTPUT": str(output_path),
+                }
+            )
+            result = subprocess.run(
+                ["bash"],
+                cwd=ROOT,
+                env=environment,
+                input=scalar,
+                capture_output=True,
+                check=False,
+            )
+            stdout = result.stdout.decode()
+            stderr = result.stderr.decode()
+            output = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
+            require(
+                result.returncode == 0, f"python CI detect oracle {event_name} exited {result.returncode}: {stderr}"
+            )
+            require(not stderr, f"python CI detect oracle {event_name} wrote stderr: {stderr!r}")
+            require(
+                stdout == f"python-tree change detection: python={expected}\n",
+                f"python CI detect oracle {event_name} stdout mismatch: {stdout!r}",
+            )
+            require(
+                output == f"python={expected}\n",
+                f"python CI detect oracle {event_name} GITHUB_OUTPUT mismatch: {output!r}",
+            )
+            print(
+                f"python detect oracle: scalar_sha256={digest} scalar_bytes={len(scalar)} "
+                f"range={base}..{tip} event={event_name} exit=0 "
+                f"stdout={stdout.strip()!r} GITHUB_OUTPUT={output.strip()!r}"
+            )
+
+
+def check_python_ci_preflight_semantic_self_test(only_label: str | None = None) -> None:
+    workflow = read(".github/workflows/python-ci.yaml")
+    baseline = python_ci_preflight_errors(workflow)
+    require(not baseline, "python CI preflight semantic baseline failed: " + "; ".join(baseline))
+    require(_python_ci_yaml_parse_error(workflow) is None, "python CI committed workflow must parse as YAML")
+    if only_label is None:
+        committed = subprocess.run(
+            ["git", "show", "HEAD:.github/workflows/python-ci.yaml"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        require(committed.returncode == 0, "python CI detect oracle could not read the committed workflow")
+        require(committed.stdout == workflow, "python CI detect oracle requires the working workflow to equal HEAD")
+        _python_ci_detect_oracle(committed.stdout)
+
+    selected = 0
+    for label, mutated, expected_error in _python_ci_semantic_fixtures(workflow):
+        if only_label is not None and label != only_label:
+            continue
+        selected += 1
+        parse_error = _python_ci_yaml_parse_error(mutated)
+        require(parse_error is None, f"python CI semantic mutation is not valid YAML [{label}]: {parse_error}")
+        errors = python_ci_preflight_errors(mutated)
+        if expected_error not in errors:
+            raise VerifyError(f"python CI semantic mutation unexpectedly passed: {label}")
+        require(
+            errors == [expected_error],
+            f"python CI semantic mutation returned an unexpected error set [{label}]: {errors}",
+        )
+        print(f"python CI semantic mutation rejected [{label}] parse=ok diagnostic={expected_error}")
+    if only_label is not None:
+        require(selected == 1, f"unknown python CI semantic fixture: {only_label}")
+    else:
+        fixture_count = len(_python_ci_semantic_fixtures(workflow))
+        require(selected == fixture_count, "python CI semantic fixture count mismatch")
+        print(f"python CI semantic mutation probes: {selected}/{fixture_count} rejected")
+
+
+def _run_mutated_python_verifier(source: str, arguments: list[str]) -> subprocess.CompletedProcess[str]:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        prefix=".verify-python-mutant-",
+        suffix=".py",
+        dir=ROOT / "tools",
+    ) as mutant:
+        mutant.write(source)
+        mutant.flush()
+        return subprocess.run(
+            [sys.executable, mutant.name, *arguments],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+
+def check_python_ci_preflight_checker_mutation_self_test() -> None:
+    source = read("tools/verify.py")
+    semantic_start = source.index("def python_ci_preflight_errors(")
+    semantic_end = source.index("\ndef python_ci_surface_lock_errors(", semantic_start)
+    semantic_source = source[semantic_start:semantic_end]
+    guard_mutations = [
+        ("python-ci-active-jobs", "reject(active_if_invalid,", "push job path condition restored"),
+        ("python-ci-event-case", "reject(event_case_invalid,", "push-side range filtering restored"),
+        ("python-ci-selector", "reject(selector_invalid,", "pull-request selector changed"),
+        ("python-ci-contract-step", "reject(contract_step_missing,", "contract step removed"),
+        (
+            "python-ci-contract-order",
+            "reject(contract_step_order_invalid,",
+            "contract step moved before rootfs production",
+        ),
+        (
+            "python-ci-contract-invocation",
+            "reject(\n        contract_invocation_invalid,",
+            "contract expectation flag dropped",
+        ),
+        ("python-ci-same-artifact", "reject(\n        same_artifact_invalid,", "contract rootfs retagged"),
+        ("python-ci-revision-binding", "reject(revision_invalid,", "revision label expectation changed"),
+        ("python-ci-source-binding", "reject(source_invalid,", "source label expectation changed"),
+        ("python-ci-version-binding", "reject(version_invalid,", "version label expectation changed"),
+        ("python-ci-created-binding", "reject(created_invalid,", "created label expectation changed"),
+        ("python-ci-permissions", "reject(\n        permissions_invalid,", "workflow permission removed"),
+        ("python-ci-triggers", "reject(triggers_invalid,", "workflow_call trigger added"),
+        ("python-ci-job-ids", "reject(\n        job_ids_invalid,", "unexpected job ID added"),
+        ("python-ci-reusable-job", "reject(reusable_job_invalid,", "job-level reusable workflow added"),
+        ("python-ci-environment", "reject(environment_invalid,", "job environment added"),
+        ("python-ci-secret-reference", "reject(secret_reference_invalid,", "secret reference added"),
+        ("python-ci-credentials", "reject(credentials_invalid,", "container credentials added"),
+        ("python-ci-registry-login", "reject(registry_login_invalid,", "registry login action added"),
+        ("python-ci-build-output", "reject(build_output_override_invalid,", "ci Bake output override added"),
+        ("python-ci-step-continue", "reject(step_continue_invalid,", "step continue-on-error added"),
+        ("python-ci-job-continue", "reject(job_continue_invalid,", "job continue-on-error added"),
+    ]
+    markers = re.findall(r"^    # CHECK: (python-ci-(?!surface)[a-z-]+)$", source, re.MULTILINE)
+    require(
+        Counter(markers) == Counter(label for label, _, _ in guard_mutations) and len(markers) == len(guard_mutations),
+        "python CI checker mutation list must cover every semantic rejection guard exactly once",
+    )
+    for guard, anchor, fixture in guard_mutations:
+        require(semantic_source.count(anchor) == 1, f"python CI checker mutation anchor count changed: {guard}")
+        replacement = "reject(\n        False," if "\n" in anchor else "reject(False,"
+        mutated_semantic = semantic_source.replace(anchor, replacement, 1)
+        mutated = source[:semantic_start] + mutated_semantic + source[semantic_end:]
+        try:
+            ast.parse(mutated, filename="tools/verify.py")
+        except SyntaxError as exc:
+            raise VerifyError(f"python CI checker mutation did not parse [{guard}]: {exc}") from exc
+        result = _run_mutated_python_verifier(
+            mutated,
+            ["--check-python-preflight-semantic-fixture", fixture],
+        )
+        expected = f"verify failed: python CI semantic mutation unexpectedly passed: {fixture}"
+        require(result.returncode == 1, f"python CI checker mutation {guard} returned {result.returncode}")
+        require(
+            result.stderr.strip() == expected,
+            f"python CI checker mutation {guard} returned unexpected diagnostic: {result.stderr.strip()!r}",
+        )
+        location = source[: source.index(f"# CHECK: {guard}")].count("\n") + 1
+        print(
+            f"python CI checker mutation rejected [guard={guard} location=tools/verify.py:{location} "
+            f"fixture={fixture} parse=ok import=ok run=ok diagnostic={expected}]"
+        )
+    print(f"python CI checker mutation probes: {len(guard_mutations)}/{len(guard_mutations)} rejected")
+
+
+def _python_ci_surface_mutations(workflow_bytes: bytes) -> tuple[bytes, bytes]:
+    workflow = workflow_bytes.decode()
+    build = _workflow_job_block(workflow, "build")
+    contract_step = _workflow_named_step(build, PYTHON_CI_CONTRACT_STEP)
+    require(bool(contract_step), "python CI surface mutations require the contract step")
+    step_offset = workflow.index(contract_step)
+    marker = "          set -euo pipefail\n"
+    marker_offset = workflow.index(marker, step_offset, step_offset + len(contract_step))
+    content_offset = len(workflow[:marker_offset].encode()) + 10
+    substitution = workflow_bytes[:content_offset] + b"S" + workflow_bytes[content_offset + 1 :]
+    deletion_offset = content_offset + 2
+    deletion = workflow_bytes[:deletion_offset] + workflow_bytes[deletion_offset + 1 :]
+    require(len(substitution) == len(workflow_bytes), "python CI substitution fixture length changed")
+    require(len(deletion) == len(workflow_bytes) - 1, "python CI deletion fixture length did not change by one")
+    return substitution, deletion
+
+
+def check_python_ci_surface_lock_self_test() -> None:
+    workflow_bytes = (ROOT / ".github/workflows/python-ci.yaml").read_bytes()
+    baseline = python_ci_surface_lock_errors(workflow_bytes)
+    require(not baseline, "python CI surface lock baseline failed: " + "; ".join(baseline))
+    substitution, deletion = _python_ci_surface_mutations(workflow_bytes)
+    require(
+        _python_ci_yaml_parse_error(substitution.decode()) is None,
+        "python CI same-length surface mutation must still parse as YAML",
+    )
+    require(
+        _python_ci_yaml_parse_error(deletion.decode()) is None,
+        "python CI one-byte deletion surface mutation must still parse as YAML",
+    )
+    substitution_digest = hashlib.sha256(substitution).hexdigest()
+    deletion_digest = hashlib.sha256(deletion).hexdigest()
+    digest_prefix = "python CI executable surface SHA-256 mismatch:"
+    length_prefix = "python CI executable surface byte-length mismatch:"
+    substitution_errors = python_ci_surface_lock_errors(substitution)
+    expected_substitution = [f"{digest_prefix} expected {PYTHON_CI_WORKFLOW_SHA256}, observed {substitution_digest}"]
+    if not any(error.startswith(digest_prefix) for error in substitution_errors):
+        raise VerifyError("python CI surface lock mutation unexpectedly passed: same-length substitution digest")
+    require(
+        substitution_errors == expected_substitution,
+        f"python CI same-length substitution returned an unexpected complete error set: {substitution_errors}",
+    )
+    deletion_errors = python_ci_surface_lock_errors(deletion)
+    expected_deletion = [
+        f"{digest_prefix} expected {PYTHON_CI_WORKFLOW_SHA256}, observed {deletion_digest}",
+        f"{length_prefix} expected {PYTHON_CI_WORKFLOW_BYTE_LENGTH}, observed {len(deletion)}",
+    ]
+    if not any(error.startswith(length_prefix) for error in deletion_errors):
+        raise VerifyError("python CI surface lock mutation unexpectedly passed: one-byte deletion length")
+    require(
+        deletion_errors == expected_deletion,
+        f"python CI one-byte deletion returned an unexpected complete error set: {deletion_errors}",
+    )
+    print(
+        "python CI surface substitution rejected: parse=ok "
+        f"bytes={len(substitution)} complete_errors={substitution_errors}"
+    )
+    print(f"python CI surface deletion rejected: parse=ok bytes={len(deletion)} complete_errors={deletion_errors}")
+
+
+def check_python_ci_surface_lock_checker_mutation_self_test() -> None:
+    source = read("tools/verify.py")
+    lock_start = source.index("def python_ci_surface_lock_errors(")
+    lock_end = source.index("\ndef _python_ci_yaml_parse_error(", lock_start)
+    lock_source = source[lock_start:lock_end]
+    mutations = [
+        (
+            "python-ci-surface-digest",
+            "if digest_invalid:\n",
+            "if False:\n",
+            "verify failed: python CI surface lock mutation unexpectedly passed: same-length substitution digest",
+        ),
+        (
+            "python-ci-surface-length",
+            "if length_invalid:\n",
+            "if False:\n",
+            "verify failed: python CI surface lock mutation unexpectedly passed: one-byte deletion length",
+        ),
+    ]
+    for guard, anchor, replacement, expected in mutations:
+        require(lock_source.count(anchor) == 1, f"python CI surface checker mutation anchor count changed: {guard}")
+        mutated_lock = lock_source.replace(anchor, replacement, 1)
+        mutated = source[:lock_start] + mutated_lock + source[lock_end:]
+        try:
+            ast.parse(mutated, filename="tools/verify.py")
+        except SyntaxError as exc:
+            raise VerifyError(f"python CI surface checker mutation did not parse [{guard}]: {exc}") from exc
+        result = _run_mutated_python_verifier(mutated, ["--check-python-ci-surface-lock-fixtures"])
+        require(result.returncode == 1, f"python CI surface checker mutation {guard} returned {result.returncode}")
+        require(
+            result.stderr.strip() == expected,
+            f"python CI surface checker mutation {guard} returned unexpected diagnostic: {result.stderr.strip()!r}",
+        )
+        location = source[: source.index(f"# CHECK: {guard}")].count("\n") + 1
+        print(
+            f"python CI surface checker mutation rejected [guard={guard} location=tools/verify.py:{location} "
+            f"parse=ok import=ok run=ok diagnostic={expected}]"
+        )
+    print(f"python CI surface checker mutation probes: {len(mutations)}/{len(mutations)} rejected")
+
+
+def check_python_ci_preflight() -> None:
+    workflow_path = ROOT / ".github/workflows/python-ci.yaml"
+    workflow_bytes = workflow_path.read_bytes()
+    errors = python_ci_preflight_errors(workflow_bytes.decode())
+    errors.extend(python_ci_surface_lock_errors(workflow_bytes))
+    require(not errors, "python CI preflight contract failed: " + "; ".join(errors))
 
 
 def python_evidence_errors(workflow: str, tailoring: str, ledger: str, gitignore: str, codeowners: str) -> list[str]:
@@ -9536,6 +10470,20 @@ def main(argv: list[str] | None = None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
     if arguments == ["--check-python-builder-identity"]:
         return check_python_builder_identity_environment()
+    if len(arguments) == 2 and arguments[0] == "--check-python-preflight-semantic-fixture":
+        try:
+            check_python_ci_preflight_semantic_self_test(arguments[1])
+        except VerifyError as exc:
+            print(f"verify failed: {exc}", file=sys.stderr)
+            return 1
+        return 0
+    if arguments == ["--check-python-ci-surface-lock-fixtures"]:
+        try:
+            check_python_ci_surface_lock_self_test()
+        except VerifyError as exc:
+            print(f"verify failed: {exc}", file=sys.stderr)
+            return 1
+        return 0
     if arguments:
         print(f"verify failed: unsupported arguments: {' '.join(arguments)}", file=sys.stderr)
         return 2
@@ -9566,6 +10514,11 @@ def main(argv: list[str] | None = None) -> int:
         check_publish_workflow,
         check_publish_scope_gate,
         check_publish_scope_gate_self_test,
+        check_python_ci_preflight,
+        check_python_ci_preflight_semantic_self_test,
+        check_python_ci_preflight_checker_mutation_self_test,
+        check_python_ci_surface_lock_self_test,
+        check_python_ci_surface_lock_checker_mutation_self_test,
         check_python_evidence,
         check_python_evidence_self_test,
         check_python_sqlite_vex,
