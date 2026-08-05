@@ -15,6 +15,7 @@ import io
 import json
 import os
 import re
+import runpy
 import subprocess
 import sys
 import tarfile
@@ -619,17 +620,33 @@ def validate_json_schema(instance: Any, schema: dict[str, Any], path: str = "$")
         require(isinstance(instance, str), f"{path} must be a string for pattern validation")
         require(re.fullmatch(pattern, instance) is not None, f"{path} does not match pattern {pattern}")
 
+    max_length = schema.get("maxLength")
+    if max_length is not None:
+        require(isinstance(max_length, int) and not isinstance(max_length, bool), f"{path}: maxLength must be integer")
+        require(isinstance(instance, str), f"{path} must be a string for maxLength")
+        require(len(instance) <= max_length, f"{path} exceeds maxLength {max_length}")
+
     minimum = schema.get("minimum")
     if minimum is not None:
         require(isinstance(minimum, int) and not isinstance(minimum, bool), f"{path}: schema minimum must be integer")
         require(isinstance(instance, int) and not isinstance(instance, bool), f"{path} must be integer for minimum")
         require(instance >= minimum, f"{path} must be >= {minimum}")
 
+    maximum = schema.get("maximum")
+    if maximum is not None:
+        require(isinstance(maximum, int) and not isinstance(maximum, bool), f"{path}: schema maximum must be integer")
+        require(isinstance(instance, int) and not isinstance(instance, bool), f"{path} must be integer for maximum")
+        require(instance <= maximum, f"{path} must be <= {maximum}")
+
     if isinstance(instance, list):
         min_items = schema.get("minItems")
         if min_items is not None:
             require(isinstance(min_items, int) and not isinstance(min_items, bool), f"{path}: minItems must be integer")
             require(len(instance) >= min_items, f"{path} must contain at least {min_items} item(s)")
+        max_items = schema.get("maxItems")
+        if max_items is not None:
+            require(isinstance(max_items, int) and not isinstance(max_items, bool), f"{path}: maxItems must be integer")
+            require(len(instance) <= max_items, f"{path} must contain at most {max_items} item(s)")
         if schema.get("uniqueItems") is True:
             seen: set[str] = set()
             for item in instance:
@@ -1192,6 +1209,7 @@ def check_required_files() -> None:
         "images/python/docker-bake.json",
         "images/python/contracts/image-manifest.json",
         "images/python/contracts/image-manifest.schema.json",
+        "images/python/contracts/content-identity.schema.json",
         "images/python/rpm-lock/builder.amd64.txt",
         "images/python/rpm-lock/builder.arm64.txt",
         "images/python/rpm-lock/python.amd64.txt",
@@ -6831,6 +6849,74 @@ def check_python_contract_schema_self_test() -> None:
     print(f"python contract schema mutation probes: {rejected}/5 rejected")
 
 
+def check_content_identity_schema() -> None:
+    schema_path = "images/python/contracts/content-identity.schema.json"
+    schema = load_json_object(schema_path)
+    helper = runpy.run_path(str(ROOT / "images/python/tools/assert-reproducible.py"))
+    with tempfile.TemporaryDirectory() as temporary:
+        fixture = Path(temporary) / "layout.tar"
+        cast(Any, helper["make_oci_fixture"])(fixture)
+        identity = cast(Any, helper["read_oci_content_identity"])(fixture, "amd64")
+        record = cast(dict[str, Any], identity.record)
+    validate_json_schema(record, schema)
+    cast(Any, helper["validate_content_identity_record"])(
+        record,
+        architecture="amd64",
+        config_platform=identity.config_platform,
+        diff_ids=identity.diff_ids,
+    )
+    schema_ids = cast(
+        list[str],
+        schema["properties"]["checks"]["items"]["properties"]["id"]["enum"],
+    )
+    helper_ids = sorted(cast(dict[str, str], helper["OCI_GUARD_REASONS"]))
+    require(sorted(schema_ids) == helper_ids, "content-identity schema check IDs differ from the helper inventory")
+
+    def expect_failure(label: str, instance: Any, candidate_schema: dict[str, Any], reason: str) -> None:
+        try:
+            validate_json_schema(instance, candidate_schema)
+        except VerifyError as exc:
+            require(str(exc) == reason, f"content-identity {label} returned {exc!s}; expected {reason}")
+        else:
+            raise VerifyError(f"content-identity schema mutation unexpectedly passed: {label}")
+
+    unknown = copy.deepcopy(record)
+    unknown["unknown"] = True
+    boolean_integer = copy.deepcopy(record)
+    boolean_integer["schema_version"] = True
+    wrong_type = copy.deepcopy(record)
+    wrong_type["canonical_rootfs_digest"] = 7
+    missing = copy.deepcopy(record)
+    del missing["profile_version"]
+    for label, mutant, reason in [
+        ("unknown property", unknown, "$.unknown is not allowed by schema"),
+        ("boolean as integer", boolean_integer, "$.schema_version must be JSON type integer"),
+        ("wrong type", wrong_type, "$.canonical_rootfs_digest must be JSON type string"),
+        ("missing required property", missing, "$ missing required property profile_version"),
+    ]:
+        expect_failure(label, mutant, schema, reason)
+
+    expect_failure(
+        "maxLength keyword",
+        "xx",
+        {"type": "string", "maxLength": 1},
+        "$ exceeds maxLength 1",
+    )
+    expect_failure(
+        "maxItems keyword",
+        [1, 2],
+        {"type": "array", "maxItems": 1},
+        "$ must contain at most 1 item(s)",
+    )
+    expect_failure(
+        "maximum keyword",
+        2,
+        {"type": "integer", "maximum": 1},
+        "$ must be <= 1",
+    )
+    print("content-identity schema mutation probes: 7/7 rejected with exact reasons")
+
+
 PYTHON_NIST_POSTURES = {
     "4.1.1": (
         "Fixable MEDIUM, HIGH, and CRITICAL OS/library findings fail closed through both Trivy and Grype, with "
@@ -10524,6 +10610,7 @@ def main(argv: list[str] | None = None) -> int:
         check_python_sqlite_vex,
         check_python_contract_schema,
         check_python_contract_schema_self_test,
+        check_content_identity_schema,
         check_build_script,
         check_hardening_script,
         check_sbom_assertion_script,

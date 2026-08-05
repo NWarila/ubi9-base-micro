@@ -1,0 +1,409 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "base-python OCI content identity",
+  "description": "Closed OCI Image Specification v1.1.1 profile for one linux platform child, one gzip layer, and imageLayoutVersion 1.0.0.",
+  "$comment": "The producer contract uses a per-architecture platform override, type=oci,tar=true,oci-mediatypes=true,compression=gzip,force-compression=true,dest=<per-architecture path>, no target tags, no exporter name, no user annotations, disabled provenance and SBOM attestations, and SOURCE_DATE_EPOCH=1704067200. Engine observations belong in a separate versioned envelope that references and hash-binds this record.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile_version",
+    "platform",
+    "index",
+    "child",
+    "config",
+    "layers",
+    "annotations",
+    "canonical_rootfs_digest",
+    "checks"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "profile_version": {
+      "type": "string",
+      "const": "oci-content-identity/1"
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "architecture"
+      ],
+      "properties": {
+        "os": {
+          "type": "string",
+          "const": "linux"
+        },
+        "architecture": {
+          "type": "string",
+          "enum": [
+            "amd64",
+            "arm64"
+          ]
+        }
+      }
+    },
+    "index": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "digest",
+        "size"
+      ],
+      "properties": {
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1048576
+        }
+      }
+    },
+    "child": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "digest",
+        "size",
+        "media_type"
+      ],
+      "properties": {
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 536870912
+        },
+        "media_type": {
+          "type": "string",
+          "const": "application/vnd.oci.image.manifest.v1+json"
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "digest",
+        "size",
+        "media_type"
+      ],
+      "properties": {
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 536870912
+        },
+        "media_type": {
+          "type": "string",
+          "const": "application/vnd.oci.image.config.v1+json"
+        }
+      }
+    },
+    "layers": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "position",
+          "digest",
+          "size",
+          "media_type",
+          "diff_id"
+        ],
+        "properties": {
+          "position": {
+            "type": "integer",
+            "const": 0
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 402653184
+          },
+          "media_type": {
+            "type": "string",
+            "const": "application/vnd.oci.image.layer.v1.tar+gzip"
+          },
+          "diff_id": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "annotations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "location",
+          "key",
+          "value"
+        ],
+        "properties": {
+          "location": {
+            "type": "string",
+            "enum": [
+              "index",
+              "index.manifests[0]",
+              "manifest",
+              "manifest.config",
+              "manifest.layers[0]"
+            ]
+          },
+          "key": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "value": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        }
+      }
+    },
+    "canonical_rootfs_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 188,
+      "maxItems": 188,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "result"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "A01.child_annotations_missing",
+              "A02.child_annotations_type",
+              "A03.child_annotations_count",
+              "A04.child_annotation_key_bytes",
+              "A05.child_annotation_value_bytes",
+              "A06.child_annotation_unknown",
+              "A07.child_annotation_type",
+              "A08.child_created_rfc3339",
+              "A09.child_created_epoch",
+              "C01.config_keys",
+              "C02.config_media_type",
+              "C03.config_urls",
+              "C04.config_data",
+              "C05.config_artifact_type",
+              "C06.config_annotations",
+              "C07.config_platform",
+              "C08.config_digest_type",
+              "C09.config_digest_algorithm",
+              "C10.config_digest_grammar",
+              "C11.config_size_type",
+              "C12.config_size_negative",
+              "C13.config_size_ceiling",
+              "C14.config_blob_missing",
+              "C15.config_blob_regular",
+              "C16.config_size",
+              "C17.config_digest",
+              "C18.config_json",
+              "C19.config_object",
+              "C20.config_arch_type",
+              "C21.config_arch",
+              "C22.config_os_type",
+              "C23.config_os",
+              "C24.rootfs_object",
+              "C25.rootfs_type",
+              "C26.diff_ids_type",
+              "C27.diff_ids_zero",
+              "C28.diff_ids_multiple",
+              "C29.diff_id_type",
+              "C30.diff_id_algorithm",
+              "C31.diff_id_grammar",
+              "C32.layer_diff_id_count",
+              "D01.child_object",
+              "D02.child_keys",
+              "D03.child_media_type",
+              "D04.child_platform_missing",
+              "D05.child_platform_type",
+              "D06.child_platform_keys",
+              "D07.child_platform_os",
+              "D08.child_platform_arch",
+              "D09.child_urls",
+              "D10.child_data",
+              "D11.child_artifact_type",
+              "D12.child_digest_type",
+              "D13.child_digest_algorithm",
+              "D14.child_digest_grammar",
+              "D15.child_size_type",
+              "D16.child_size_negative",
+              "D17.child_size_ceiling",
+              "I01.index_missing",
+              "I02.index_regular",
+              "I03.index_json",
+              "I04.index_object",
+              "I05.index_keys",
+              "I06.index_schema",
+              "I07.index_media_type",
+              "I08.index_annotations",
+              "I09.index_artifact_type",
+              "I10.index_subject",
+              "I11.index_manifests_type",
+              "I12.index_manifests_zero",
+              "I13.index_manifests_multiple",
+              "J01.json_bytes",
+              "J02.json_duplicate",
+              "J03.json_nan",
+              "J04.json_infinity",
+              "J05.json_depth",
+              "J06.json_members",
+              "J07.json_string_bytes",
+              "L01.layout_missing",
+              "L02.layout_regular",
+              "L03.layout_json",
+              "L04.layout_object",
+              "L05.layout_keys",
+              "L06.layout_version",
+              "M01.child_blob_missing",
+              "M02.child_blob_regular",
+              "M03.child_size",
+              "M04.child_digest",
+              "M05.manifest_json",
+              "M06.manifest_object",
+              "M07.manifest_keys",
+              "M08.manifest_schema",
+              "M09.manifest_media_type",
+              "M10.manifest_annotations",
+              "M11.manifest_artifact_type",
+              "M12.manifest_subject",
+              "M13.config_object",
+              "M14.layers_type",
+              "M15.layers_zero",
+              "M16.layers_multiple",
+              "O01.outer_archive_bytes",
+              "O02.outer_compressed",
+              "O03.outer_tar",
+              "O04.outer_member_count",
+              "O05.outer_path_bytes",
+              "O06.outer_absolute",
+              "O07.outer_traversal",
+              "O08.outer_duplicate",
+              "O09.outer_canonical",
+              "O10.outer_individual_bytes",
+              "O11.outer_member_bytes",
+              "O12.outer_consumed_size",
+              "O13.outer_unexpected",
+              "O14.outer_directory_type",
+              "O15.outer_unreferenced_blob",
+              "P01.global_pax",
+              "P02.unknown_pax",
+              "P03.duplicate_pax",
+              "P04.pax_records",
+              "P05.pax_key_bytes",
+              "P06.pax_value_bytes",
+              "P07.sparse",
+              "P08.xattr_count",
+              "P09.xattr_name",
+              "P10.xattr_name_bytes",
+              "P11.xattr_value_bytes",
+              "R01.schema_missing",
+              "R02.schema_json",
+              "R03.record_missing",
+              "R04.record_empty",
+              "R05.record_json",
+              "R06.record_schema",
+              "R07.record_platform",
+              "R08.record_positions",
+              "R09.record_digest",
+              "R10.record_layer_count",
+              "R11.record_checks",
+              "R12.output_exists",
+              "R13.output_parent",
+              "T01.layer_tar",
+              "T02.layer_member_count",
+              "T03.inner_path_bytes",
+              "T04.inner_absolute",
+              "T05.inner_traversal",
+              "T06.inner_duplicate",
+              "T07.inner_canonical",
+              "T08.link_bytes",
+              "T09.symlink_escape",
+              "T10.hardlink_escape",
+              "T11.hardlink_missing",
+              "T12.hardlink_cycle",
+              "T13.layer_consumed_size",
+              "T14.layer_regular_bytes",
+              "T15.whiteout_entry",
+              "T16.whiteout_opaque",
+              "T17.fifo",
+              "T18.character_device",
+              "T19.block_device",
+              "T20.socket",
+              "T21.member_type",
+              "Y01.layer_object",
+              "Y02.layer_keys",
+              "Y03.layer_media_uncompressed",
+              "Y04.layer_media_zstd",
+              "Y05.layer_media_nondistributable",
+              "Y06.layer_media_type",
+              "Y07.layer_urls",
+              "Y08.layer_data",
+              "Y09.layer_artifact_type",
+              "Y10.layer_annotations",
+              "Y11.layer_platform",
+              "Y12.layer_digest_type",
+              "Y13.layer_digest_algorithm",
+              "Y14.layer_digest_grammar",
+              "Y15.layer_size_type",
+              "Y16.layer_size_negative",
+              "Y17.layer_size_ceiling",
+              "Y18.layer_blob_missing",
+              "Y19.layer_blob_regular",
+              "Y20.layer_size",
+              "Y21.layer_digest",
+              "Y22.compressed_layer_bytes",
+              "Y23.gzip_invalid",
+              "Y24.gzip_truncated",
+              "Y25.gzip_concatenated",
+              "Y26.gzip_trailing",
+              "Y27.decoded_layer_bytes",
+              "Y28.diff_id"
+            ]
+          },
+          "result": {
+            "type": "string",
+            "const": "pass"
+          }
+        }
+      }
+    }
+  }
+}
