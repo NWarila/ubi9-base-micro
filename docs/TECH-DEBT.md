@@ -172,3 +172,26 @@ constructs can, in the same change, alter the verifier or remove the identity
 step. The workflow checks are therefore defence-in-depth against accidental
 regression, not an adversarial control over a hostile committer. Code review,
 CODEOWNERS, and required status checks are the controls for that threat.
+
+## TD-9: Docker-save layer-flattening semantics
+
+`tools/assert-reproducible.py` and
+`images/python/tools/assert-reproducible.py` flatten Docker-save layers into a
+single path map. Their current `apply_whiteout` implementation mutates the
+combined lower-layer and current-layer map as archive members are encountered.
+An opaque `.wh..wh..opq` member can therefore delete additions encountered
+earlier in the same layer, although the
+[OCI Image Specification v1.1.1 layer rules](https://github.com/opencontainers/image-spec/blob/v1.1.1/layer.md#whiteouts)
+require whiteouts to affect only lower or parent layers, independently of
+member order. The flatteners also overwrite a directory path with a
+non-directory entry without removing that lower-layer directory's descendants,
+leaving paths that should have been removed by the replacement.
+
+No tracked production caller is affected today: the images passed to these
+flatteners are emitted as a single full-snapshot layer, so they do not exercise
+multi-layer merge semantics. The additive OCI-layout reader in the Python
+helper does not inherit this defect; it rejects every `.wh.*` and
+`.wh..wh..opq` member before deriving the canonical rootfs and no production
+workflow invokes that reader. Supporting multi-layer inputs will require
+separate lower-layer and current-layer state plus ordering-independent whiteout
+fixtures and directory-replacement fixtures.
