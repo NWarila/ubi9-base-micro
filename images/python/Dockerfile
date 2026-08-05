@@ -3,7 +3,7 @@
 # Role: build
 # Build context: images/python/ (never the repository root).
 
-ARG UBI_MINIMAL_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal@sha256:463cae32c6f6f5594b11a5c22de275016bd8545ce58a6373388e8b24f13fc15c
+ARG UBI_MINIMAL_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal@sha256:dd334afa72444fa46238fcf9e6bd399245adf746378735348cf84b9dfdca38f1
 ARG BASE_MICRO_IMAGE=ghcr.io/nwarila/ubi9-base-micro@sha256:f1ad33e69ac71564a9a51f905772daacaf827aeef20dcdeedd1a10a27be80b88
 
 # The literal published parent: both the runtime ancestor and the rootfs clone source.
