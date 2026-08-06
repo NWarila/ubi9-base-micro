@@ -125,7 +125,8 @@
       "cyclonedx": "cyclonedx",
       "openvex": "openvex",
       "nist_800_190": "https://nwarila.dev/attestations/nist-sp-800-190-image/v1",
-      "stig_arf": "https://nwarila.dev/attestations/stig-arf/v1"
+      "stig_arf": "https://nwarila.dev/attestations/stig-arf/v1",
+      "trust_contract": "https://nwarila.dev/attestations/python-trust-contract/v1"
     }
   }
 }

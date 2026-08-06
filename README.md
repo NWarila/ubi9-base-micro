@@ -170,14 +170,16 @@ RHEL9 STIG ARF attestation, and a fail-closed byte-for-byte digest gate.
 
 ## Image Family
 
-Only `ubi9-base-micro` exists in this repository today; the language variants
-below are planned as `images/<variant>/` trees in this same repository and must
-not be read as published artifacts from this repo.
+`ubi9-base-micro` is the root image. `base-python` has its own two-phase
+publication workflow; a completed publish creates the GHCR package privately by
+default, so it must not be treated as publicly consumable until the owner changes
+package visibility and the anonymous verification succeeds. The remaining
+language variants are planned as `images/<variant>/` trees.
 
 | Image | Status | Base relationship | Runtime scope |
 | --- | --- | --- | --- |
 | `base-micro` | Current repository | Root image | glibc, CA trust, rpmdb, OpenSSL #4857 provider |
-| `base-python` | Planned | `FROM base-micro@sha256:<digest>` | CPython runtime on the micro floor |
+| `base-python` | Publication-enabled; visibility-gated | `FROM base-micro@sha256:<digest>` | CPython runtime on the micro floor |
 | `base-node` | Planned | `FROM base-micro@sha256:<digest>` | Node.js runtime on the micro floor |
 | `base-java` | Planned | `FROM base-micro@sha256:<digest>` | OpenJDK runtime on the micro floor |
 
@@ -186,9 +188,10 @@ signature, SLSA L3 provenance, rpmdb-derived SPDX and CycloneDX SBOMs, Trivy and
 Grype fixable-CVE gates, OpenVEX default-deny coverage for unfixed HIGH/CRITICAL
 findings, NIST SP 800-190 section 4.1 image evidence, tailored RHEL9 STIG ARF,
 and byte-for-byte reproducibility. Published signatures and attestations are
-Rekor-logged. `base-micro` implements that contract here; planned variants must
-carry the same evidence set under their `images/<variant>/` trees before
-publication, each publishing through its own path-scoped workflow.
+Rekor-logged. `base-micro` and the `base-python` publication workflow implement
+that contract here; planned variants must carry the same evidence set under
+their `images/<variant>/` trees before publication, each publishing through its
+own path-scoped workflow.
 
 Responsibility boundary: the base family owns a standard hardened floor through
 RPM hygiene (`install_weak_deps=0`, `--nodocs`, locale/man stripping, shell

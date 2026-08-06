@@ -18,6 +18,15 @@
     "RELEASE_REF": {
       "default": null
     },
+    "OCI_REVISION": {
+      "default": null
+    },
+    "OCI_SOURCE": {
+      "default": null
+    },
+    "OCI_VERSION": {
+      "default": null
+    },
     "UBI_MINIMAL_IMAGE": {
       "default": null
     },
@@ -51,6 +60,11 @@
       "inherits": [
         "base"
       ],
+      "args": {
+        "OCI_REVISION": "${OCI_REVISION}",
+        "OCI_SOURCE": "${OCI_SOURCE}",
+        "OCI_VERSION": "${OCI_VERSION}"
+      },
       "tags": [
         "${RELEASE_REF}"
       ],
@@ -59,7 +73,7 @@
         "type=sbom,disabled=true"
       ],
       "output": [
-        "type=registry,rewrite-timestamp=true"
+        "type=registry,rewrite-timestamp=true,push-by-digest=true,name-canonical=true"
       ]
     },
     "repro": {

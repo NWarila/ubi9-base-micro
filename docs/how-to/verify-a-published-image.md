@@ -121,3 +121,109 @@ slsa-verifier verify-image "${INDEX_REF}" \
 
 Do not substitute `gh attestation verify`; this repository's published evidence
 uses Cosign OCI attestations.
+
+## Verify base-python
+
+Use this procedure only after a Python publish run reports its immutable index
+digest. A newly created package is private by default; inability to pull it
+anonymously means the image is published but not yet publicly consumable.
+
+```sh
+set -euo pipefail
+IMAGE="ghcr.io/nwarila/ubi9-base-python"
+TAG="base-python-<first-12-lowercase-hex-of-publishing-sha>"
+PUBLISH_SHA="<40-lowercase-hex-publishing-sha>"
+PUBLISH_REF="refs/heads/main" # or refs/tags/python/v<version>
+INDEX_DIGEST="$(crane digest "${IMAGE}:${TAG}")"
+INDEX_REF="${IMAGE}@${INDEX_DIGEST}"
+AMD64_DIGEST="$(crane digest --platform linux/amd64 "${INDEX_REF}")"
+ARM64_DIGEST="$(crane digest --platform linux/arm64 "${INDEX_REF}")"
+AMD64_REF="${IMAGE}@${AMD64_DIGEST}"
+ARM64_REF="${IMAGE}@${ARM64_DIGEST}"
+PUBLISH_IDENTITY="https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-python.yaml@${PUBLISH_REF}"
+SLSA_IDENTITY="https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0"
+ISSUER="https://token.actions.githubusercontent.com"
+```
+
+Verify the index and both recursively signed children:
+
+```sh
+cosign verify "${INDEX_REF}" \
+  --certificate-identity "${PUBLISH_IDENTITY}" \
+  --certificate-oidc-issuer "${ISSUER}" \
+  --certificate-github-workflow-repository NWarila/ubi9-base-micro \
+  --certificate-github-workflow-sha "${PUBLISH_SHA}" \
+  --certificate-github-workflow-ref "${PUBLISH_REF}"
+cosign verify "${AMD64_REF}" \
+  --certificate-identity "${PUBLISH_IDENTITY}" \
+  --certificate-oidc-issuer "${ISSUER}" \
+  --certificate-github-workflow-repository NWarila/ubi9-base-micro \
+  --certificate-github-workflow-sha "${PUBLISH_SHA}" \
+  --certificate-github-workflow-ref "${PUBLISH_REF}"
+cosign verify "${ARM64_REF}" \
+  --certificate-identity "${PUBLISH_IDENTITY}" \
+  --certificate-oidc-issuer "${ISSUER}" \
+  --certificate-github-workflow-repository NWarila/ubi9-base-micro \
+  --certificate-github-workflow-sha "${PUBLISH_SHA}" \
+  --certificate-github-workflow-ref "${PUBLISH_REF}"
+```
+
+Verify the complete per-child predicate matrix:
+
+```sh
+set -euo pipefail
+verify_python_child() {
+  PYTHON_CHILD_REF="$1"
+  cosign verify-attestation --type spdxjson "${PYTHON_CHILD_REF}" \
+    --certificate-identity "${PUBLISH_IDENTITY}" \
+    --certificate-oidc-issuer "${ISSUER}"
+  cosign verify-attestation --type cyclonedx "${PYTHON_CHILD_REF}" \
+    --certificate-identity "${PUBLISH_IDENTITY}" \
+    --certificate-oidc-issuer "${ISSUER}"
+  cosign verify-attestation --type openvex "${PYTHON_CHILD_REF}" \
+    --certificate-identity "${PUBLISH_IDENTITY}" \
+    --certificate-oidc-issuer "${ISSUER}"
+  cosign verify-attestation --type https://nwarila.dev/attestations/nist-sp-800-190-image/v1 "${PYTHON_CHILD_REF}" \
+    --certificate-identity "${PUBLISH_IDENTITY}" \
+    --certificate-oidc-issuer "${ISSUER}"
+  cosign verify-attestation --type https://nwarila.dev/attestations/stig-arf/v1 "${PYTHON_CHILD_REF}" \
+    --certificate-identity "${PUBLISH_IDENTITY}" \
+    --certificate-oidc-issuer "${ISSUER}"
+}
+verify_python_child "${AMD64_REF}"
+verify_python_child "${ARM64_REF}"
+```
+
+Verify the index-only trust contract and provenance:
+
+```sh
+cosign verify-attestation \
+  --type https://nwarila.dev/attestations/python-trust-contract/v1 \
+  "${INDEX_REF}" \
+  --certificate-identity "${PUBLISH_IDENTITY}" \
+  --certificate-oidc-issuer "${ISSUER}"
+
+cosign verify-attestation --type slsaprovenance "${INDEX_REF}" \
+  --certificate-identity "${SLSA_IDENTITY}" \
+  --certificate-oidc-issuer "${ISSUER}" \
+  --certificate-github-workflow-repository NWarila/ubi9-base-micro \
+  --certificate-github-workflow-sha "${PUBLISH_SHA}" \
+  --certificate-github-workflow-ref "${PUBLISH_REF}"
+```
+
+For a main publish, authenticate the source branch and print the provenance for
+the exact-source policy helper. For a release, replace `--source-branch main`
+with `--source-tag "${PUBLISH_REF#refs/tags/}"`.
+
+```sh
+slsa-verifier verify-image "${INDEX_REF}" \
+  --source-uri github.com/NWarila/ubi9-base-micro \
+  --source-branch main \
+  --builder-id "${SLSA_IDENTITY}" \
+  --print-provenance > verified-provenance.json
+
+python3 tools/assert-python-provenance.py \
+  --provenance verified-provenance.json \
+  --image "${IMAGE}" --digest "${INDEX_DIGEST}" \
+  --sha "${PUBLISH_SHA}" --ref "${PUBLISH_REF}"
+```

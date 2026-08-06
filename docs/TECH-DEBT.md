@@ -175,3 +175,32 @@ constructs can, in the same change, alter the verifier or remove the identity
 step. The workflow checks are therefore defence-in-depth against accidental
 regression, not an adversarial control over a hostile committer. Code review,
 CODEOWNERS, and required status checks are the controls for that threat.
+
+## TD-9: Base-python create-once alias external-writer race
+
+The `base-python-<12-hex>` commit alias and Python version alias are checked for
+absence or the already-verified digest before evidence generation, checked again
+immediately before application, and resolved after application. Only the moving
+`base-python` alias may replace an existing digest.
+
+GHCR does not expose a conditional manifest write for this operation. An owner,
+PAT, or other workflow with package-write authority can therefore race the final
+resolve-then-apply window. The owner accepts this residual external-writer risk;
+the checks are mandatory collision detection, not an atomic create-once
+guarantee. Closing the window requires package settings or another owner-managed
+serialization mechanism outside repository code.
+
+## TD-10: Base-python SLSA generator tag execution window
+
+The Python publisher checks that generator tag `v2.1.0` resolves to
+`f7dd8c54c2067bafc12ca7a55595d5ee9b75204a` before publication and verifies the
+result only against the exact tag-qualified Fulcio identity. The reusable
+generator is fail-closed through its own recorded-outcome aggregation and final
+failure job; the repository caller supplies no soft-failure input.
+
+The integrity job is still a freshness check, not a cryptographic execution
+binding. The generator tag can move between that check and reusable-workflow
+resolution, and this implementation does not post-verify Fulcio Build Signer
+Digest OID `1.3.6.1.4.1.57264.1.10` against the audited commit. The owner accepts
+that residual window for the first Python publication. Add a post-execution
+certificate-extension check before treating the tag-to-SHA check as a binding.
