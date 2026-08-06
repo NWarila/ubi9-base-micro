@@ -236,3 +236,17 @@ Review this entry by 2026-10-01 and monitor Red Hat for a fixed RHEL 9
 refresh absorbs it and the same pull request removes the in-tool allowlist entry
 and flips the OpenVEX statement to `fixed`; that change also removes the dormant
 published-child authorization.
+
+## TD-10: Base-python create-once alias external-writer race
+
+The `base-python-<12-hex>` commit alias and Python version alias are checked for
+absence or the already-verified digest before evidence generation, checked again
+immediately before application, and resolved after application. Only the moving
+`base-python` alias may replace an existing digest.
+
+GHCR does not expose a conditional manifest write for this operation. An owner,
+PAT, or other workflow with package-write authority can therefore race the final
+resolve-then-apply window. The owner accepts this residual external-writer risk;
+the checks are mandatory collision detection, not an atomic create-once
+guarantee. Closing the window requires package settings or another owner-managed
+serialization mechanism outside repository code.
