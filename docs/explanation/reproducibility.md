@@ -54,10 +54,12 @@ assertion compares the Buildx version, commit, installed plugin SHA-256, BuildKi
 container image, and BuildKit node version, and any mismatch fails the CI job
 before building. [TD-8](../TECH-DEBT.md#td-8-python-builder-identity-workflow-static-analysis-boundary)
 records why this is an accepted trust boundary and the compensating controls.
-Except for the build job's checked revision, source, and version bindings, the
-verifier does not interpret arbitrary caller command-line overrides or discover
-and count build callers. The current per-side descriptor is harness behavior,
-not a repository-wide invocation guarantee or a claim about a future publisher.
+The verifier does not interpret arbitrary caller command-line overrides or
+discover and count every possible build caller. It does, however, lock the
+production publisher's exact `release` invocation and resolved destination,
+output attributes, protected OCI arguments, cache policy, platforms, and
+attestation settings. The current per-side descriptor remains behavior of the
+reproducibility harness, not a repository-wide invocation guarantee.
 
 The Python build matrix is also an active CI-rootfs preflight. On pushes to
 `main` and manual dispatches it runs for both architectures independently of the
@@ -76,12 +78,14 @@ rpmdb file.
 The canonical digest is produced from normalized, sorted entries; it is not an
 OCI manifest, image-config, compressed-layer, or tar-encoding digest. The
 ephemeral `ci` image is not a release-shaped artifact, and its successful check
-does not establish the manifest digest of a later release child. The workflow's
-`GITHUB_TOKEN` grants `contents: read` only and the committed workflow contains
-no configured registry credential or login surface. Repository verification
-binds every committed byte of that workflow to an expected SHA-256 and byte
-length, so changing its YAML surface requires a corresponding visible verifier
-edit; that lock does not cover separately invoked scripts or external code.
+does not establish the manifest digest of a later release child. The CI
+workflow's `GITHUB_TOKEN` grants `contents: read` only and that workflow contains
+no configured registry credential or login surface. The separate production
+workflow grants package-write and OIDC permissions only where its publish,
+signing, or attestation roles require them. Repository verification binds every
+committed byte of both workflows to an expected SHA-256 and byte length, so
+changing either YAML surface requires a corresponding visible verifier edit;
+those locks do not cover external code.
 
 The separate pull-request release preflight exercises the registry-exporting
 `release` target once for both architectures against a loopback-bound ephemeral
@@ -105,7 +109,8 @@ production publication.
 The arm64 proof intentionally uses QEMU on the GitHub-hosted amd64 runner because
 that is the same architecture path used by the publish workflow. Native arm64
 hosted runners would be a cleaner fallback if QEMU ever produces a byte diff, but
-QEMU is currently in scope and hard-gated because arm64 is a published artifact.
+QEMU is currently in scope and hard-gated because the publication contract
+includes an arm64 child.
 
 The setup-action code is pinned by
 `docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8`.
@@ -137,9 +142,12 @@ scope.
 - The base-micro local, CI, and publish exporter paths use
   `rewrite-timestamp=true`. Base-python's `repro` target uses the same policy for
   its docker-tar double-build gate, and its `release` target uses it for the
-  registry exporter; `ci` uses a local Docker exporter without claiming that
-  policy. Base-python has no publish destination outside the preflight's
-  loopback-bound ephemeral registry and no production publisher.
+  registry exporter with `push-by-digest=true` and `name-canonical=true`; `ci`
+  uses a local Docker exporter without claiming that policy. The pull-request
+  preflight remains confined to its loopback registry. The production workflow
+  is capable of exporting an unaliased candidate to GHCR by digest.
+  Base-python has no publish result at this revision; the workflow's presence
+  alone does not establish one.
 - `images/python/docker-bake.json` is the base-python build definition. Its
   shared target owns the graph inputs, while the `ci`, `release`, and `repro`
   targets own distinct exporter, cache, provenance, and SBOM policies.

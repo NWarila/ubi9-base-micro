@@ -178,17 +178,20 @@ CODEOWNERS, and required status checks are the controls for that threat.
 
 ## TD-9: Base-python create-once alias external-writer race
 
-The `base-python-<12-hex>` commit alias and Python version alias are checked for
-absence or the already-verified digest before evidence generation, checked again
-immediately before application, and resolved after application. Only the moving
-`base-python` alias may replace an existing digest.
+The `base-python-<first-12-lowercase-hex-of-publishing-sha>` commit alias and the
+Python version alias are checked for absence or the candidate index digest as
+soon as that digest is known, before any signing, attestation, SLSA, or Rekor
+work. They are checked again immediately before application and resolved after
+application to require the expected digest. Only the moving `base-python` alias
+may replace an existing digest under repository policy.
 
 GHCR does not expose a conditional manifest write for this operation. An owner,
-PAT, or other workflow with package-write authority can therefore race the final
-resolve-then-apply window. The owner accepts this residual external-writer risk;
-the checks are mandatory collision detection, not an atomic create-once
-guarantee. Closing the window requires package settings or another owner-managed
-serialization mechanism outside repository code.
+PAT, or another workflow with package-write authority can therefore race the
+final resolve-then-apply window. The owner explicitly accepts this residual
+external-writer risk. The three checks are mandatory collision detection. They
+are not an atomic create-once guarantee. Closing the window requires package
+settings or another owner-managed serialization mechanism outside repository
+code.
 
 ## TD-10: Base-python SLSA generator tag execution window
 
