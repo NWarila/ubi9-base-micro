@@ -6622,8 +6622,8 @@ def check_python_ci_preflight() -> None:
 
 
 PUBLISH_PYTHON_WORKFLOW = ".github/workflows/publish-python.yaml"
-PUBLISH_PYTHON_WORKFLOW_SHA256 = "aa8649dd9c35393fccc7695c19867ed8e2df7e785d8807aabde48c54098a9f91"
-PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH = 19225
+PUBLISH_PYTHON_WORKFLOW_SHA256 = "1a239d2965c32e51ec3531ca487029e6b71bcd41a67faa0947534d8659da8e46"
+PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH = 19231
 PUBLISH_PYTHON_TRIGGER_BLOCK = "on:\n  pull_request:\n\n"
 PUBLISH_PYTHON_REGISTRY_IMAGE = (
     "docker.io/library/registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e"
@@ -6883,8 +6883,8 @@ def publish_python_preflight_errors(workflow: str) -> list[str]:
     release_assignments = re.findall(r"^\s*(?:declare\s+-rx\s+|export\s+)?RELEASE_REF=", run, re.MULTILINE)
     release_ref_invalid = not (
         len(release_assignments) == 1
-        and 'declare -rx RELEASE_REF="localhost:${host_port}/step047a/release:candidate"' in run
-        and '[[ ! "${RELEASE_REF}" =~ ^localhost:[1-9][0-9]{0,4}/step047a/release:candidate$ ]]' in run
+        and 'declare -rx RELEASE_REF="localhost:${host_port}/base-python/release:candidate"' in run
+        and '[[ ! "${RELEASE_REF}" =~ ^localhost:[1-9][0-9]{0,4}/base-python/release:candidate$ ]]' in run
     )
     release_set_keys_invalid = release_set_keys != ()
     release_argv_invalid = release_set_keys == () and release_tokens != PUBLISH_PYTHON_RELEASE_ARGV
