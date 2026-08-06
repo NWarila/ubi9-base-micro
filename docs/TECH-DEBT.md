@@ -239,10 +239,12 @@ published-child authorization.
 
 ## TD-10: Base-python create-once alias external-writer race
 
-The `base-python-<12-hex>` commit alias and Python version alias are checked for
-absence or the already-verified digest before evidence generation, checked again
-immediately before application, and resolved after application. Only the moving
-`base-python` alias may replace an existing digest.
+The `base-python-<first-12-lowercase-hex-of-publishing-sha>` commit alias and the
+Python version alias are checked for absence or the candidate index digest as
+soon as that digest is known, before any signing, attestation, SLSA, or Rekor
+work. They are checked again immediately before application and resolved after
+application to require the expected digest. Only the moving `base-python` alias
+may replace an existing digest under repository policy.
 
 GHCR does not expose a conditional manifest write for this operation. An owner,
 PAT, or other workflow with package-write authority can therefore race the final

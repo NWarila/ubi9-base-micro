@@ -39,6 +39,12 @@ publication; it does not define the Python image's publication scope. A skipped
 run creates no new micro publication and does not remove or re-point any
 already-published digest or revision-bound attestation.
 
+The Python publish boundary above describes repository capability, not a
+completed publication. This revision does not claim that
+`ghcr.io/nwarila/ubi9-base-python` has been published, made public, or made
+consumable. The image is not publicly consumable at this revision. Those claims
+require evidence from the corresponding completed boundary.
+
 The Python CI workflow has an active CI-rootfs preflight for the unpublished
 `base-python` image. Its build and reproducibility matrices run for both
 architectures on every push to `main` and manual dispatch; pull requests retain
@@ -91,9 +97,41 @@ https://token.actions.githubusercontent.com
 The Python publisher pushes an unaliased multi-architecture candidate by digest,
 reruns every image and evidence gate, signs the index and children, attaches all
 five image-evidence predicates to each child, and attaches the trust-contract and
-SLSA provenance only to the index. Only the final guarded job applies the moving
-or create-once aliases. The create-once checks are deliberately not described as
-atomic; an external writer can race the resolve-then-apply window.
+SLSA provenance only to the index. The subject matrix is exact:
+
+| Evidence | `linux/amd64` child | `linux/arm64` child | Index |
+| --- | --- | --- | --- |
+| SPDX rpmdb SBOM | Required | Required | No |
+| CycloneDX rpmdb SBOM | Required | Required | No |
+| OpenVEX | Required | Required | No |
+| NIST SP 800-190 | Required | Required | No |
+| STIG ARF | Required | Required | No |
+| Python trust contract | No | No | Required |
+| SLSA provenance | No | No | Required |
+
+The tag namespace for Python releases is `python/v*`; a top-level `v*` tag is
+reserved for the root-image publisher. On `main`, the final job applies the
+moving `base-python` alias and the create-once
+`base-python-<first-12-lowercase-hex-of-publishing-sha>` alias. On a Python
+release tag, it applies that commit alias and the validated version alias, and
+does not move `base-python`.
+
+The create-once mechanism is mandatory collision detection, not a guarantee.
+It checks applicable aliases once after the candidate digest is known and before
+any signing, attestation, SLSA, or Rekor work, checks again immediately before
+applying aliases, and reads every applied alias back afterward. These operations
+are not atomic because GHCR exposes no conditional manifest write. An external
+writer with package-write authority, including an owner, PAT, or another
+workflow, can race the final resolve-then-apply window. This residual race is
+explicitly accepted in
+[`../TECH-DEBT.md`](../TECH-DEBT.md#td-9-base-python-create-once-alias-external-writer-race).
+
+The first cache-cold verification leg runs on a fresh runner with GHCR
+credentials against the candidate digest and completes before aliases are
+applied. A successful publish can therefore exist while the new GHCR package is
+still private. That is distinct from public consumability. Only after the owner
+makes the package public and the separate cache-cold verification succeeds with
+no registry credentials may the image be described as publicly consumable.
 
 After setting `INDEX_DIGEST`, `AMD64_DIGEST`, `ARM64_DIGEST`, and the exact
 publishing ref, verify the repository-produced evidence with the contract
@@ -102,6 +140,7 @@ identity:
 ```sh
 IMAGE="ghcr.io/nwarila/ubi9-base-python"
 PUBLISH_REF="refs/heads/main" # or refs/tags/python/v<version>
+PUBLISH_SHA="<40-lowercase-hex-publishing-sha>"
 PUBLISH_IDENTITY="https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-python.yaml@${PUBLISH_REF}"
 ISSUER="https://token.actions.githubusercontent.com"
 
@@ -137,18 +176,28 @@ SLSA_IDENTITY="https://github.com/slsa-framework/slsa-github-generator/.github/w
 cosign verify-attestation --type slsaprovenance \
   "${IMAGE}@${INDEX_DIGEST}" \
   --certificate-identity "${SLSA_IDENTITY}" \
-  --certificate-oidc-issuer "${ISSUER}"
+  --certificate-oidc-issuer "${ISSUER}" \
+  --certificate-github-workflow-repository NWarila/ubi9-base-micro \
+  --certificate-github-workflow-sha "${PUBLISH_SHA}" \
+  --certificate-github-workflow-ref "${PUBLISH_REF}"
 
 slsa-verifier verify-image "${IMAGE}@${INDEX_DIGEST}" \
   --source-uri github.com/NWarila/ubi9-base-micro \
   --source-branch main \
   --builder-id "${SLSA_IDENTITY}" \
-  --print-provenance
+  --print-provenance > verified-provenance.json
+
+python3 tools/assert-python-provenance.py \
+  --provenance verified-provenance.json \
+  --image "${IMAGE}" --digest "${INDEX_DIGEST}" \
+  --sha "${PUBLISH_SHA}" --ref "${PUBLISH_REF}"
 ```
 
-Successful commands establish cryptographic and source-policy verification. The
-package is publicly consumable only after GHCR visibility is public and these
-commands also succeed from an unauthenticated, cache-cold client.
+For a Python release, replace `--source-branch main` with
+`--source-tag python/v<version>`. Successful commands establish cryptographic and
+source-policy verification for the named digest. They do not establish public
+consumability unless GHCR visibility is public and the commands also succeed
+from an unauthenticated, cache-cold client.
 
 The manifest field `runtime.package_floor` is the final rpmdb package-name
 floor. The direct RPM URLs and hashes that build that floor are repository

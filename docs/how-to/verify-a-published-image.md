@@ -124,12 +124,29 @@ uses Cosign OCI attestations.
 
 ## Verify base-python
 
-Use this procedure only after a Python publish run reports its immutable index
-digest. A newly created package is private by default; inability to pull it
-anonymously means the image is published but not yet publicly consumable.
+The presence of the Python publish workflow is capability only; it does not mean
+the image has been published. Use this procedure only after a completed Python
+publish run reports its immutable index digest and publishing SHA/ref.
+
+There are two distinct verification states. During publication, a fresh runner
+logs in to GHCR and performs the cache-cold `cosign verify-attestation` and
+`slsa-verifier` checks against the unaliased digest before the final job applies
+consumer aliases. A newly created GHCR package is private by default, so success
+of that credentialed leg establishes a published artifact but not public
+consumability. After the owner changes package visibility, repeat the checks from
+a fresh client with no registry credentials. Only success of that genuinely
+anonymous leg establishes that the digest is publicly consumable. An anonymous
+pull failure alone does not prove that a private publication exists.
+
+The commands below are the anonymous leg. Start with an empty registry-auth
+directory; do not log in to GHCR in this shell:
 
 ```sh
 set -euo pipefail
+VERIFY_AUTH_DIR="$(mktemp -d)"
+trap 'rm -rf -- "${VERIFY_AUTH_DIR}"' EXIT
+export DOCKER_CONFIG="${VERIFY_AUTH_DIR}"
+export REGISTRY_AUTH_FILE="${VERIFY_AUTH_DIR}/containers-auth.json"
 IMAGE="ghcr.io/nwarila/ubi9-base-python"
 TAG="base-python-<first-12-lowercase-hex-of-publishing-sha>"
 PUBLISH_SHA="<40-lowercase-hex-publishing-sha>"
@@ -169,6 +186,10 @@ cosign verify "${ARM64_REF}" \
 ```
 
 Verify the complete per-child predicate matrix:
+
+- SPDX rpmdb SBOM, CycloneDX rpmdb SBOM, OpenVEX, NIST SP 800-190, and STIG ARF
+  are each required on both the `linux/amd64` and `linux/arm64` child digests.
+- The Python trust contract and SLSA provenance are required on the index only.
 
 ```sh
 set -euo pipefail
@@ -227,3 +248,8 @@ python3 tools/assert-python-provenance.py \
   --image "${IMAGE}" --digest "${INDEX_DIGEST}" \
   --sha "${PUBLISH_SHA}" --ref "${PUBLISH_REF}"
 ```
+
+These commands verify only the digest and publishing identity supplied above.
+They do not claim that any Python image currently exists. For a release, the
+publishing ref must be in the `python/v*` namespace; top-level `v*` tags belong
+to the root-image publisher.
