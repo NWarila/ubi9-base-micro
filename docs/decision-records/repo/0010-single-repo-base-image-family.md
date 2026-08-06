@@ -32,9 +32,12 @@ The base-image family lives in this repository. `ubi9-base-micro` remains at
 the repository root; relocating it under a variant-style tree was rejected as
 cosmetic churn against a shipped, digest-locked v1.0.0 image. The built-and-gated,
 unpublished `base-python` variant lives under `images/python/` and has no
-publisher, registry write, signature, attestation, or published digest. Future
-variants use `images/<variant>/` trees. Each variant needs its own path-scoped
-publish workflow and evidence set before publication.
+production publisher, signature, or published digest. Its pull-request
+preflight writes an unsigned candidate and BuildKit provenance only to a
+loopback-bound ephemeral registry; this is neither an external or project
+publication nor a consumer-resolvable digest. Future variants use
+`images/<variant>/` trees. Each variant needs its own path-scoped publish
+workflow and evidence set before publication.
 
 Variants consume the published parent strictly by pinned digest: a committed
 `base-micro@sha256:<digest>` reference updated through ordinary
