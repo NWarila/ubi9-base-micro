@@ -48,13 +48,15 @@ binding before findings are evaluated against OpenVEX.
 
 ## Build input contract
 
-`docker-bake.json` is the one native build definition used by both existing
-Python image build sites. Its shared target owns the context, Dockerfile,
-runtime build target, two supported platforms, `SOURCE_DATE_EPOCH`, and
-`OCI_CREATED`. The `ci` target selects the local Docker exporter; the `repro`
-target selects no-cache double builds, disables BuildKit provenance and SBOM,
-and keeps `rewrite-timestamp=true` on its docker-tar exporter. There is no
-release target.
+`docker-bake.json` is the one native build definition used by the Python image
+build sites. Its shared target owns the context, Dockerfile, runtime build
+target, two supported platforms, `SOURCE_DATE_EPOCH`, and `OCI_CREATED`. The
+`ci` target selects the local Docker exporter. The registry-exporting `release`
+target takes its only tag from the fail-closed `RELEASE_REF`, emits maximum-mode
+BuildKit provenance, disables exporter SBOM, and keeps
+`rewrite-timestamp=true`. The `repro` target selects no-cache double builds,
+disables BuildKit provenance and SBOM, and applies the same timestamp-rewrite
+policy to its docker-tar exporter.
 
 The same file carries the Buildx version, expected commit, Linux-amd64 release
 asset SHA-256, and version-plus-digest BuildKit driver reference. Before either
@@ -64,12 +66,13 @@ hashes the selected plugin binary, checks the builder container's
 Any missing or mismatched observation stops the job; there is no fallback to a
 moving tag or nearby version.
 
-Repository verification enforces the contract shape and fails closed if a
-`ci` or `repro` target redeclares a protected graph field. It also requires both
-workflow builder setups and their five-observation identity steps to derive the
-pins from this file before building. Each named identity step must keep
-`set -euo pipefail` enabled, omit `continue-on-error`, and end with the identity
-checker as its final unwrapped command.
+Repository verification enforces the four-target contract shape and fails
+closed if a committed non-base target redeclares a protected graph field. It
+also locks the `release` target's exact registry exporter and attestation
+settings. Both CI workflow builder setups and their five-observation identity
+steps must derive the pins from this file before building. Each named identity
+step must keep `set -euo pipefail` enabled, omit `continue-on-error`, and end
+with the identity checker as its final unwrapped command.
 
 The build matrix is an active CI-rootfs preflight. On pushes to `main` and manual
 dispatches it runs for both architectures independently of the pull-request path
@@ -82,12 +85,19 @@ and committed inputs. This is an effective-rootfs and rpmdb assertion, not an OC
 manifest or image-config identity check, and it does not determine the digest of
 a future release child.
 
-The workflow's `GITHUB_TOKEN` grants `contents: read` only and the committed YAML
-contains no configured registry credential or login surface. Repository
-verification binds every committed workflow byte to an expected SHA-256 and byte
-length, requiring a corresponding visible verifier edit when its YAML changes.
-That lock does not cover separately invoked scripts or pinned external code.
-Outside the specifically checked CI label overrides, repository verification
+A separate pull-request-only release preflight invokes `release` once for both
+architectures against a loopback-bound ephemeral registry. It reads back the
+registry-served index and children, checks each exported rootfs and rpmdb against
+the committed contract, and compares each rootfs with a same-commit `ci` build.
+The preflight pushes a candidate tag and unsigned BuildKit provenance only to
+that local registry; it does not create an external or project publication.
+
+Each Python workflow's `GITHUB_TOKEN` grants `contents: read` only, and the
+committed YAML contains no configured registry credential or login surface.
+Repository verification binds each complete workflow to an expected SHA-256 and
+byte length, requiring a corresponding visible verifier edit when its YAML
+changes. Those locks do not cover separately invoked scripts or pinned external
+code. Outside the specifically checked invocations, repository verification
 does not interpret arbitrary Bake command-line overrides, reject alternate
 direct-build spellings, or discover and count build callers. The double-build
 harness continues to use one per-side Bake descriptor for both resolved-report
@@ -104,17 +114,19 @@ baselines. See
 [`../../docs/explanation/reproducibility.md`](../../docs/explanation/reproducibility.md)
 for the complete scope.
 
-**Status: built and gated in CI, unpublished.** The evidence machinery is in
-place and exercised by the active preflight on every push to `main` and manual
-dispatch, and for Python-tree or shared-gate changes selected on pull requests —
-a tailored RHEL9 STIG profile evaluated fail-closed, rpmdb-derived SPDX and
-CycloneDX SBOMs, dual CVE scanners with OpenVEX default-deny, a rootfs secret
-gate, and a NIST SP 800-190 image-control predicate — but it runs against locally
-built images. Nothing is signed, attested, or pushed. No registry package, tag,
-or publish workflow exists for this image yet; publication requires the full
-`base-micro` evidence-parity set (signature, SPDX and CycloneDX SBOMs, OpenVEX,
-NIST SP 800-190 evidence, tailored STIG ARF, SLSA provenance) and will arrive as
-its own change. Consumption instructions are deliberately absent until then.
+**Status: built and gated in CI, externally unpublished.** The evidence
+machinery is exercised by the CI-rootfs preflight on every push to `main` and
+manual dispatch, and for Python-tree or shared-gate changes selected on pull
+requests — a tailored RHEL9 STIG profile evaluated fail-closed, rpmdb-derived
+SPDX and CycloneDX SBOMs, dual CVE scanners with OpenVEX default-deny, a rootfs
+secret gate, and a NIST SP 800-190 image-control predicate. The pull-request
+release preflight additionally pushes a candidate tag and unsigned BuildKit
+provenance to its ephemeral loopback registry. No package in the project
+namespace, public or moving alias, production publisher, signature, Cosign or
+GitHub artifact attestation, SLSA or Rekor record, or consumer-resolvable digest
+exists for this image. Publication still requires the full `base-micro`
+evidence-parity set and a separate production path. Consumption instructions
+are deliberately absent until then.
 
 The shipped package set is derived, not hand-picked: the lock refresh harness
 resolves the python3.12 closure against a clone of the pinned parent, records

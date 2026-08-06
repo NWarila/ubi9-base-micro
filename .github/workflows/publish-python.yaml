@@ -1,0 +1,409 @@
+# Purpose: Exercise the Python release exporter against a loopback registry on pull requests.
+# Role: release preflight
+# Micro-container candidate: no - repository workflow control plane.
+
+name: Python release preflight
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  release-preflight:
+    name: Python release preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    env:
+      CRANE_VERSION: v0.21.7
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+          token: ${{ github.token }}
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          token: ''
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          platforms: amd64,arm64
+          image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          cache-image: false
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          version: v0.35.0
+          driver: docker-container
+          driver-opts: |
+            image=docker.io/moby/buildkit:v0.31.2@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
+            network=host
+          buildkitd-flags: --debug=false
+          cache-binary: false
+
+      - name: Execute release preflight
+        env:
+          BUILDER_NAME: ${{ steps.buildx.outputs.name }}
+        run: |
+          set -euo pipefail
+
+          registry_reference="docker.io/library/registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e"
+          expected_registry_digest="sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e"
+          docker pull "${registry_reference}"
+          registry_repo_digests="$(docker image inspect --format '{{json .RepoDigests}}' "${registry_reference}")"
+          python3.12 - "${registry_repo_digests}" "${expected_registry_digest}" <<'PY'
+          import json
+          import sys
+
+          repo_digests = json.loads(sys.argv[1])
+          expected = sys.argv[2]
+          observed = sorted(item.rsplit("@", 1)[-1] for item in repo_digests)
+          if expected not in observed:
+              raise SystemExit(f"registry image digest mismatch: expected {expected}, observed {observed}")
+          print(f"registry image digest assertion passed: {expected}")
+          PY
+
+          readonly -a registry_argv=(
+            docker
+            run
+            --detach
+            --rm
+            --publish=127.0.0.1::5000
+            docker.io/library/registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
+          )
+          registry_id="$("${registry_argv[@]}")"
+          cleanup() {
+            docker rm --force "${registry_id}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          registry_ports="$(docker inspect --format '{{json (index .NetworkSettings.Ports "5000/tcp")}}' "${registry_id}")"
+          mapfile -t publication < <(python3.12 - "${registry_ports}" <<'PY'
+          import json
+          import re
+          import sys
+
+          publications = json.loads(sys.argv[1])
+          if not isinstance(publications, list) or len(publications) != 1:
+              raise SystemExit("registry must expose exactly one host publication")
+          publication = publications[0]
+          host_ip = publication.get("HostIp")
+          host_port = publication.get("HostPort")
+          if host_ip in {"0.0.0.0", "::"}:
+              raise SystemExit("registry publication must not use a wildcard HostIp")
+          if isinstance(host_ip, str) and ":" in host_ip:
+              raise SystemExit("registry publication must not use an IPv6 HostIp")
+          if host_ip != "127.0.0.1":
+              raise SystemExit(f"registry HostIp must be exact IPv4 loopback, observed {host_ip!r}")
+          if not isinstance(host_port, str) or re.fullmatch(r"[1-9][0-9]{0,4}", host_port) is None:
+              raise SystemExit(f"registry HostPort is invalid: {host_port!r}")
+          if int(host_port) > 65535:
+              raise SystemExit(f"registry HostPort is out of range: {host_port}")
+          print(host_ip)
+          print(host_port)
+          PY
+          )
+          readonly host_ip="${publication[0]}"
+          readonly host_port="${publication[1]}"
+          printf 'registry publication assertion passed: HostIp=%s HostPort=%s publications=1\n' \
+            "${host_ip}" "${host_port}"
+
+          docker_server_version="$(docker version --format '{{.Server.Version}}')"
+          python3.12 - "${docker_server_version}" <<'PY'
+          import re
+          import sys
+
+          observed = sys.argv[1]
+          match = re.match(r"^(\d+)\.(\d+)\.(\d+)", observed)
+          if match is None:
+              raise SystemExit(f"Docker server version is not semantic: {observed!r}")
+          version = tuple(int(component) for component in match.groups())
+          if version < (28, 0, 0):
+              raise SystemExit(f"Docker server must be at least 28.0.0, observed {observed}")
+          print(f"Docker server floor assertion passed: observed={observed} required>=28.0.0")
+          PY
+
+          builder_container="buildx_buildkit_${BUILDER_NAME}0"
+          builder_network="$(docker inspect --format '{{.HostConfig.NetworkMode}}' "${builder_container}")"
+          if [[ "${builder_network}" != "host" ]]; then
+            printf 'BuildKit builder NetworkMode must be host, observed %s\n' "${builder_network}" >&2
+            exit 1
+          fi
+          printf 'BuildKit builder network assertion passed: NetworkMode=%s\n' "${builder_network}"
+
+          registry_response=""
+          for attempt in {1..30}; do
+            if registry_response="$(curl --fail --silent --show-error "http://localhost:${host_port}/v2/" 2>/dev/null)"; then
+              break
+            fi
+            if [[ "${attempt}" == "30" ]]; then
+              echo "loopback registry GET /v2/ did not succeed" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          if [[ "${registry_response}" != "{}" ]]; then
+            printf 'loopback registry GET /v2/ returned unexpected body: %s\n' "${registry_response}" >&2
+            exit 1
+          fi
+          printf 'loopback registry API assertion passed: GET http://localhost:%s/v2/ response=%s\n' \
+            "${host_port}" "${registry_response}"
+
+          bash tools/install-crane.sh
+          export PATH="${PWD}/dist/tools:${PATH}"
+          mkdir -p dist/release dist/ci
+
+          declare -rx RELEASE_REF="localhost:${host_port}/base-python/release:candidate"
+          if [[ ! "${RELEASE_REF}" =~ ^localhost:[1-9][0-9]{0,4}/base-python/release:candidate$ ]]; then
+            printf 'RELEASE_REF is not an exact loopback candidate: %s\n' "${RELEASE_REF}" >&2
+            exit 1
+          fi
+          printf 'immutable release destination assertion passed: RELEASE_REF=%s\n' "${RELEASE_REF}"
+
+          readonly -a release_argv=(
+            docker
+            buildx
+            bake
+            --file
+            images/python/docker-bake.json
+            release
+            --progress
+            plain
+          )
+          release_print="$("${release_argv[@]}" --print)"
+          printf '%s\n' "${release_print}" | tee dist/release/bake-print.json
+          python3.12 - "${RELEASE_REF}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          expected_ref = sys.argv[1]
+          resolved = json.loads(Path("dist/release/bake-print.json").read_text(encoding="utf-8"))
+          target = resolved.get("target", {}).get("release", {})
+
+          output = target.get("output")
+          if output != [{"type": "registry", "rewrite-timestamp": "true"}]:
+              raise SystemExit(f"resolved release output mismatch: {output!r}")
+          if target.get("tags") != [expected_ref]:
+              raise SystemExit(f"resolved release tags mismatch: {target.get('tags')!r}")
+          if target.get("platforms") != ["linux/amd64", "linux/arm64"]:
+              raise SystemExit(f"resolved release platforms mismatch: {target.get('platforms')!r}")
+          cache_to = target.get("cache-to", [])
+          if cache_to != []:
+              raise SystemExit(f"resolved release cache exports must be empty: {cache_to!r}")
+          attest = target.get("attest")
+          expected_attest = [
+              {"mode": "max", "type": "provenance"},
+              {"disabled": True, "type": "sbom"},
+          ]
+          if attest != expected_attest or type(attest[1]["disabled"]) is not bool:
+              raise SystemExit(f"resolved release attestations mismatch: {attest!r}")
+          print(
+              "resolved release object assertion passed: "
+              + json.dumps(
+                  {
+                      "tags": target["tags"],
+                      "platforms": target["platforms"],
+                      "output": output,
+                      "cache-to": cache_to,
+                      "attest": attest,
+                  },
+                  sort_keys=True,
+              )
+          )
+          PY
+          "${release_argv[@]}"
+
+          crane manifest "${RELEASE_REF}" > dist/release/index.json
+          python3.12 - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          index = json.loads(Path("dist/release/index.json").read_text(encoding="utf-8"))
+          found = {}
+          ignored = []
+          for descriptor in index.get("manifests") or []:
+              platform = descriptor.get("platform") or {}
+              os_name = platform.get("os")
+              architecture = platform.get("architecture")
+              digest = descriptor.get("digest")
+              if os_name == "linux" and architecture in {"amd64", "arm64"}:
+                  if architecture in found:
+                      raise SystemExit(f"duplicate Linux platform descriptor: {architecture}")
+                  if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+                      raise SystemExit(f"invalid Linux platform digest for {architecture}: {digest!r}")
+                  found[architecture] = digest
+              else:
+                  ignored.append({"os": os_name, "architecture": architecture, "digest": digest})
+          if set(found) != {"amd64", "arm64"}:
+              raise SystemExit(f"registry index Linux platform set mismatch: {sorted(found)}")
+          if not any(item["os"] == "unknown" and item["architecture"] == "unknown" for item in ignored):
+              raise SystemExit("registry index is missing unknown/unknown provenance descriptors")
+          Path("dist/release/platform-digests.json").write_text(
+              json.dumps(found, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          for item in ignored:
+              print(
+                  "ignored non-platform descriptor: "
+                  f"os={item['os']} architecture={item['architecture']} digest={item['digest']}"
+              )
+          for architecture in ("amd64", "arm64"):
+              print(f"registry-served child digest: architecture={architecture} digest={found[architecture]}")
+          PY
+
+          readonly repository_url="https://github.com/${GITHUB_REPOSITORY}"
+          oci_version="$(tr -d '[:space:]' < images/python/VERSION)"
+          readonly oci_version
+          if [[ -z "${oci_version}" ]]; then
+            echo "images/python/VERSION is empty after whitespace stripping" >&2
+            exit 1
+          fi
+
+          verify_architecture() {
+            local -r arch="$1"
+            local digest
+            digest="$(python3.12 - "${arch}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          print(json.loads(Path("dist/release/platform-digests.json").read_text(encoding="utf-8"))[sys.argv[1]])
+          PY
+          )"
+            local -r release_rootfs="dist/release/${arch}.rootfs.tar"
+            local -r ci_image_tar="dist/ci/${arch}.image.tar"
+            local -r ci_rootfs="dist/ci/${arch}.rootfs.tar"
+
+            crane export "${RELEASE_REF}@${digest}" "${release_rootfs}"
+            python3.12 images/python/tools/assert-reproducible.py \
+              --rootfs-tar "${release_rootfs}" \
+              --arch "${arch}" \
+              --expect-from-contract images/python/contracts/image-manifest.json
+
+            local -a ci_argv=(
+              docker
+              buildx
+              bake
+              --file
+              images/python/docker-bake.json
+              ci
+              --progress
+              plain
+              --set
+              "ci.platform=linux/${arch}"
+              --set
+              "ci.tags=local/ubi9-base-python:ci-${arch}"
+              --set
+              "ci.args.OCI_REVISION=${GITHUB_SHA}"
+              --set
+              "ci.args.OCI_SOURCE=${repository_url}"
+              --set
+              "ci.args.OCI_VERSION=${oci_version}"
+            )
+            local ci_print
+            ci_print="$("${ci_argv[@]}" --print)"
+            printf '%s\n' "${ci_print}" | tee "dist/ci/${arch}.bake-print.json"
+            python3.12 - "${arch}" "${repository_url}" "${oci_version}" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          arch, repository_url, oci_version = sys.argv[1:]
+          target = json.loads(
+              Path(f"dist/ci/{arch}.bake-print.json").read_text(encoding="utf-8")
+          ).get("target", {}).get("ci", {})
+
+          output = target.get("output")
+          expected_tag = f"local/ubi9-base-python:ci-{arch}"
+          if output != [{"type": "docker"}]:
+              raise SystemExit(f"resolved ci output mismatch for {arch}: {output!r}")
+          if target.get("tags") != [expected_tag]:
+              raise SystemExit(f"resolved ci tags mismatch for {arch}: {target.get('tags')!r}")
+          if target.get("platforms") != [f"linux/{arch}"]:
+              raise SystemExit(f"resolved ci platforms mismatch for {arch}: {target.get('platforms')!r}")
+          cache_to = target.get("cache-to", [])
+          if cache_to != []:
+              raise SystemExit(f"resolved ci cache exports must be empty for {arch}: {cache_to!r}")
+          expected_args = {
+              "OCI_REVISION": os.environ["GITHUB_SHA"],
+              "OCI_SOURCE": repository_url,
+              "OCI_VERSION": oci_version,
+          }
+          observed_args = target.get("args") or {}
+          for key, value in expected_args.items():
+              if observed_args.get(key) != value:
+                  raise SystemExit(
+                      f"resolved ci argument mismatch for {arch}: {key}={observed_args.get(key)!r}"
+                  )
+          print(
+              f"resolved ci object assertion passed for {arch}: "
+              + json.dumps(
+                  {
+                      "tags": target["tags"],
+                      "platforms": target["platforms"],
+                      "output": output,
+                      "cache-to": cache_to,
+                      "args": expected_args,
+                  },
+                  sort_keys=True,
+              )
+          )
+          PY
+            "${ci_argv[@]}"
+
+            local ci_image_id
+            ci_image_id="$(docker image inspect --format '{{.Id}}' "local/ubi9-base-python:ci-${arch}")"
+            printf 'ci image producer assertion passed: architecture=%s tag=%s image_id=%s\n' \
+              "${arch}" "local/ubi9-base-python:ci-${arch}" "${ci_image_id}"
+            docker save "local/ubi9-base-python:ci-${arch}" -o "${ci_image_tar}"
+            python3.12 - "${arch}" <<'FLATTEN'
+          import importlib.util
+          import sys
+          from pathlib import Path
+
+          arch = sys.argv[1]
+          spec = importlib.util.spec_from_file_location(
+              "python_assert_reproducible", Path("images/python/tools/assert-reproducible.py")
+          )
+          if spec is None or spec.loader is None:
+              raise SystemExit("could not load the reproducibility helper")
+          module = importlib.util.module_from_spec(spec)
+          sys.modules[spec.name] = module
+          spec.loader.exec_module(module)
+          entries = module.load_image_rootfs(Path(f"dist/ci/{arch}.image.tar"))
+          module.write_rootfs_tar(entries, Path(f"dist/ci/{arch}.rootfs.tar"))
+          FLATTEN
+
+            python3.12 - "${release_rootfs}" "${ci_image_tar}" "${ci_rootfs}" <<'PY'
+          import sys
+          from pathlib import Path
+
+          paths = [Path(value).resolve() for value in sys.argv[1:]]
+          if len(set(paths)) != 3:
+              raise SystemExit(f"release and ci artifact paths must be pairwise distinct: {paths}")
+          left, _, right = paths
+          if left == right:
+              raise SystemExit(f"release and ci rootfs paths must differ: {left}")
+          print(f"artifact path independence assertion passed: left={left} right={right}")
+          PY
+            python3.12 images/python/tools/assert-reproducible.py \
+              --left-tar "${release_rootfs}" \
+              --right-tar "${ci_rootfs}" \
+              --assert-byte-identical
+          }
+
+          verify_architecture amd64
+          verify_architecture arm64

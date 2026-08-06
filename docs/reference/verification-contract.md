@@ -16,11 +16,11 @@ consumer check lives in
 
 | Boundary | Runs on | Proves | Does not prove |
 | --- | --- | --- | --- |
-| Pull request | `pull_request` to `main` | Repository contract, lint, local build, hardening, FIPS artifact checks, SBOM and scanner gates, OpenVEX policy, NIST predicate validation, tailored STIG ARF, and byte-for-byte rootfs reproducibility. | Published signatures, published attestations, SLSA provenance over a pushed digest, Rekor roll-up, or anonymous GHCR pull. |
+| Pull request | `pull_request` to `main` | Repository contract, lint, local build, hardening, FIPS artifact checks, SBOM and scanner gates, OpenVEX policy, NIST predicate validation, tailored STIG ARF, byte-for-byte rootfs reproducibility, and the Python release exporter exercised against a loopback-bound ephemeral registry. | Project or external publication, published signatures or attestations, SLSA provenance over a consumer-resolvable digest, Rekor roll-up, or anonymous GHCR pull. |
 | Publish | `push` to `main` and `v*` tags | Multi-arch publish, Cosign keyless signature, Syft rpmdb-derived SPDX and CycloneDX attestations, NIST SP 800-190 and STIG ARF predicates, OpenVEX attestations when needed, SLSA L3 provenance, and Rekor roll-up. | The one-time public package visibility change required before anonymous GHCR verification can pass. |
 | Post-publish audit | Clean unauthenticated verifier | Anonymous pull by digest and the full `cosign` plus `slsa-verifier` contract in [`verify.md`](verify.md). | Future rebuild currency or downstream family-coherence status. |
 
-The Python workflow adds an active CI-rootfs preflight for the unpublished
+The Python CI workflow has an active CI-rootfs preflight for the unpublished
 `base-python` image. Its build and reproducibility matrices run for both
 architectures on every push to `main` and manual dispatch; pull requests retain
 the Python-tree and shared-gate path selector. Both matrices assert five
@@ -33,16 +33,27 @@ image used by its gate battery, and checks the architecture-specific
 image's revision, source, version, and created labels to the current commit and
 committed inputs.
 
-This preflight does not create a published artifact, signature, attestation,
-transparency-log entry, provenance statement, or release-shaped manifest. Its
-effective-rootfs assertion does not determine the OCI manifest digest of a
-future release child. The workflow's `GITHUB_TOKEN` grants `contents: read` only
-and its committed YAML contains no configured registry credential or login
-surface. Repository verification checks those boundaries and binds the complete
-committed workflow bytes to an expected SHA-256 and byte length, requiring a
-corresponding visible verifier edit for any YAML-surface change. That byte lock
-does not extend to the scripts or pinned external code the workflow invokes.
-The `python / required` reducer is not a required repository status context.
+The CI-rootfs preflight does not create a published artifact, signature,
+attestation, transparency-log entry, provenance statement, or release-shaped
+manifest. Its effective-rootfs assertion does not determine the OCI manifest
+digest of a future release child.
+
+A separate Python release preflight runs only on pull requests. It invokes the
+registry-exporting `release` target once for both architectures, pushes a
+candidate index and unsigned BuildKit provenance to a loopback-bound ephemeral
+registry, reads both served child digests back, and checks each exported rootfs
+against the contract and a same-commit `ci` build. This is a local registry
+write, not an external or project publication: it creates no project package,
+public or moving alias, production signature or attestation, SLSA or Rekor
+record, or consumer-resolvable digest.
+
+Each workflow's `GITHUB_TOKEN` grants `contents: read` only, and the committed
+YAML contains no configured registry credential or login surface. Repository
+verification checks those boundaries and binds each complete committed workflow
+to an expected SHA-256 and byte length, requiring a corresponding visible
+verifier edit for any YAML-surface change. Those byte locks do not extend to the
+scripts or pinned external code the workflows invoke. The `python / required`
+reducer is not a required repository status context.
 
 The publish path uses exact certificate identities. The repository workflow
 identity signs image signatures and repository-generated predicates; the SLSA
