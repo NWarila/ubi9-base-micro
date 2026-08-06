@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-06-21
+- Last reviewed: 2026-08-06
 - Scope: repo
 
 ## Context
@@ -33,22 +34,27 @@ pinned inputs.
 The built-and-gated, unpublished `base-python` path additionally defines its
 build graph in `images/python/docker-bake.json`. That native Bake contract owns
 the context, Dockerfile, runtime target, platforms, fixed timestamp arguments,
-and the distinct CI and double-build exporter policies. It pins Buildx by
-version, expected commit, and independently verified Linux-amd64 release-asset
+and the distinct CI, release, and double-build exporter policies. It pins
+Buildx by version, expected commit, and independently verified Linux-amd64 release-asset
 SHA-256, and pins the BuildKit driver by a versioned digest-qualified image
 reference. Both Python builder jobs assert those identities before building.
-`tools/verify.py` requires exactly the `base`, `ci`, and `repro` targets; the two
-non-base targets must inherit the shared target without redeclaring protected
-graph inputs. It also requires both builder jobs to derive their setup and
-identity inputs from that file. Each named identity step must keep strict shell
+`tools/verify.py` requires exactly the `base`, `ci`, `release`, and `repro`
+targets; the three non-base targets must inherit the shared target without
+redeclaring protected graph inputs. It also requires both builder jobs to derive
+their setup and identity inputs from that file. Each named identity step must keep strict shell
 mode enabled, omit `continue-on-error`, and finish with the identity checker as
 its final unwrapped command. The both-architecture byte gates retain the
 committed rootfs and rpmdb values. The workflow and double-build harness use the
-contract, but repository verification does not analyze their Bake command-line
-overrides and does not discover or count build callers. The contract contains no
-release target or publisher. The non-Python Buildx and BuildKit paths remain
-outside this decision's new pin and are not made reproducible by the Python
-contract.
+contract, but repository verification does not analyze arbitrary Bake
+command-line overrides or discover and count build callers. The registry-capable
+`release` target is exercised on pull requests against a loopback-bound
+ephemeral registry, including unsigned BuildKit provenance and registry-served
+rootfs checks. That preflight creates no external or project publication. The
+production workflow now uses the same target through a verifier-locked,
+push-by-digest caller with protected OCI label inputs. This is publication
+capability only; no completed Python publication is claimed at this revision.
+The non-Python Buildx and BuildKit paths remain outside this decision's new pin
+and are not made reproducible by the Python contract.
 
 ## Consequences
 

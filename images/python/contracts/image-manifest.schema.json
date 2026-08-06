@@ -299,7 +299,8 @@
             "cyclonedx",
             "openvex",
             "nist_800_190",
-            "stig_arf"
+            "stig_arf",
+            "trust_contract"
           ],
           "properties": {
             "spdx": {
@@ -319,6 +320,10 @@
               "minLength": 1
             },
             "stig_arf": {
+              "type": "string",
+              "minLength": 1
+            },
+            "trust_contract": {
               "type": "string",
               "minLength": 1
             }

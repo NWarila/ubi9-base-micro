@@ -74,9 +74,12 @@ behavior.
 
 `canonical_rootfs_digest` is profile- and image-specific. For `base-micro`, it
 binds to the rootfs exported by the local, CI, and publish Docker Buildx paths,
-which set `rewrite-timestamp=true`. For `base-python`, it binds to the `repro`
-target's docker-tar export, which also sets `rewrite-timestamp=true`; the Python
-`ci` target uses a local Docker exporter without that policy. The digest
+which set `rewrite-timestamp=true`. For `base-python`, it binds to both the
+`repro` target's docker-tar export and the registry-served child exported by the
+`release` target; both set `rewrite-timestamp=true`. The pull-request release
+preflight checks each served child against that baseline and compares its
+entries with a same-commit `ci` rootfs. The Python `ci` target uses a local
+Docker exporter without the timestamp-rewrite policy. The digest
 includes entry metadata (`uname`, `gname`, and `mtime`) as well as content. A
 different builder, such as buildah or kaniko, can produce byte-identical file
 contents and still produce a different aggregate digest because exported layer
@@ -172,3 +175,35 @@ constructs can, in the same change, alter the verifier or remove the identity
 step. The workflow checks are therefore defence-in-depth against accidental
 regression, not an adversarial control over a hostile committer. Code review,
 CODEOWNERS, and required status checks are the controls for that threat.
+
+## TD-9: Base-python create-once alias external-writer race
+
+The `base-python-<first-12-lowercase-hex-of-publishing-sha>` commit alias and the
+Python version alias are checked for absence or the candidate index digest as
+soon as that digest is known, before any signing, attestation, SLSA, or Rekor
+work. They are checked again immediately before application and resolved after
+application to require the expected digest. Only the moving `base-python` alias
+may replace an existing digest under repository policy.
+
+GHCR does not expose a conditional manifest write for this operation. An owner,
+PAT, or another workflow with package-write authority can therefore race the
+final resolve-then-apply window. The owner explicitly accepts this residual
+external-writer risk. The three checks are mandatory collision detection. They
+are not an atomic create-once guarantee. Closing the window requires package
+settings or another owner-managed serialization mechanism outside repository
+code.
+
+## TD-10: Base-python SLSA generator tag execution window
+
+The Python publisher checks that generator tag `v2.1.0` resolves to
+`f7dd8c54c2067bafc12ca7a55595d5ee9b75204a` before publication and verifies the
+result only against the exact tag-qualified Fulcio identity. The reusable
+generator is fail-closed through its own recorded-outcome aggregation and final
+failure job; the repository caller supplies no soft-failure input.
+
+The integrity job is still a freshness check, not a cryptographic execution
+binding. The generator tag can move between that check and reusable-workflow
+resolution, and this implementation does not post-verify Fulcio Build Signer
+Digest OID `1.3.6.1.4.1.57264.1.10` against the audited commit. The owner accepts
+that residual window for the first Python publication. Add a post-execution
+certificate-extension check before treating the tag-to-SHA check as a binding.

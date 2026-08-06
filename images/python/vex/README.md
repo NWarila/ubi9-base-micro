@@ -9,7 +9,13 @@ Accepted statements must be OpenVEX JSON files with:
 - `products[].@id` matching the exact image reference scanned, or the same reference prefixed with `pkg:oci/`.
 - `status: "fixed"` or `status: "not_affected"` with one of the standard OpenVEX justifications.
 
-`affected` and `under_investigation` are valid OpenVEX statuses, but they do not satisfy this gate. Files under `vex/` require review through `.github/CODEOWNERS`; the publish workflow introduced by a later change will attest each JSON file to the per-architecture image digests with `cosign attest --type openvex`.
+`affected` and `under_investigation` are valid OpenVEX statuses, but they do not
+satisfy this gate. Files under `vex/` require review through
+`.github/CODEOWNERS`. The pull-request release preflight does not attest OpenVEX.
+The production workflow is capable of binding and attesting every reviewed JSON
+document separately to both platform child digests with
+`cosign attest --type openvex`; that capability does not mean a publication has
+occurred.
 
 The image inherits the deliberately held FIPS provider packages from its parent, so the same
 disclosure applies here with a base-python product identity.

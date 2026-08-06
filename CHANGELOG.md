@@ -30,11 +30,12 @@ and this project adheres to
 
 - `images/python/` evidence machinery: a python STIG tailoring and justification
   ledger, forked SBOM, NIST SP 800-190 and rootfs-secret gates, an OpenVEX
-  disclosure, and the image contract's record of the identity a future publish
-  workflow must use. The evidence chain runs in CI on locally built images for
-  both architectures. The image is still not published, tagged, or attested;
-  signing, attestation and transparency-log evidence arrive with the publish
-  workflow.
+  disclosure, and the image contract's record of the identity the production
+  publish workflow must use. The evidence chain runs in CI on locally built
+  images for both architectures. The image still has no external or project
+  publication, public or moving tag, signature, consumer-resolvable attestation,
+  or transparency-log evidence; those require a completed production publish
+  run.
 - `images/python/`: the base-python image build — a pinned, signature-verified RPM
   transaction applied to a byte-asserted clone of the published `base-micro`
   parent, producing one truthful combined rpmdb; build-support packages are
@@ -45,7 +46,22 @@ and this project adheres to
   with a real loopback TLS handshake, parent-subset invariance on the exported
   image, an OCI config contract, dual CVE scanners reading the combined rpmdb,
   and a both-arch byte-identical double-build. The image is built and gated
-  only: it is not published, tagged, or attested yet.
+  only: it has no external or project publication, public or moving tag,
+  signature, or consumer-resolvable attestation or digest yet.
+- Added a registry-capable Python `release` Bake target and a pull-request-only
+  preflight that invokes it once for both architectures. The preflight pushes a
+  candidate index and unsigned BuildKit provenance to a loopback-bound ephemeral
+  registry, reads both children back, and compares their rootfs and rpmdb state
+  with the contract and same-commit `ci` builds. It creates no project package,
+  external publication, production signature or attestation, SLSA or Rekor
+  record, or consumer-resolvable digest.
+- Added the guarded `base-python` publication workflow for `main` and
+  `python/v*` pushes. It uses an unaliased digest-first candidate, per-child
+  evidence and index-only trust/SLSA evidence, credentialed pre-alias
+  verification, non-atomic collision detection with post-apply readback, and a
+  separate anonymous post-visibility leg. This is publication capability only;
+  no Python package, public artifact, or consumable image is claimed by this
+  change.
 
 ### Changed
 
@@ -53,7 +69,7 @@ and this project adheres to
   Bake contract used by its CI and double-build paths. Python builders now
   fail before building unless the Buildx version, commit, Linux-amd64 asset
   SHA-256, BuildKit driver image, and derived BuildKit version match; repository
-  checks also require the exact `base`/`ci`/`repro` target set, base-only
+  checks also require the exact `base`/`ci`/`release`/`repro` target set, base-only
   inheritance, no protected-field redeclaration in the committed non-base
   targets, and contract-derived workflow pin inputs. Each named identity step
   must keep strict shell mode, omit `continue-on-error`, and end with the

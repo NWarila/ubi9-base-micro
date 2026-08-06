@@ -1,7 +1,8 @@
 # Acceptance Criteria
 
 This document states the acceptance policy for the published `base-micro`
-artifact and the separately scoped pre-publication gates for `base-python`.
+artifact and the separately scoped pre-publication gates and publication
+capability for `base-python`.
 Command-level consumer verification of the published artifact is canonical in
 [`../how-to/verify-a-published-image.md`](../how-to/verify-a-published-image.md)
 and [`../reference/verify.md`](../reference/verify.md); the separation between
@@ -26,20 +27,23 @@ uses that bypass routinely because the approval requirements cannot be
 self-satisfied. Required status checks have `strict=false`, so the pull-request
 head need not be current with the base branch.
 
-`base-python` is a separate pre-publication image path with an active CI-rootfs
-preflight and remains unpublished. Its build and reproducibility matrices run
-for both architectures on
-every push to `main` and manual dispatch; pull requests keep the existing
-Python-tree and shared-gate path selector. The Python-only Bake contract fixes
-the graph-affecting inputs and the distinct CI and double-build policies, while
-the workflow pins and observes the Buildx executable and BuildKit driver
-identities. The verifier checks the committed contract for exactly the `base`,
-`ci`, and `repro` targets, requires the two non-base targets to inherit only
-`base`, and rejects a protected graph field redeclared in either non-base target.
-It also requires contract-derived setup and identity inputs, with all five
-builder observations ordered before either build. Each named identity step must
-keep `set -euo pipefail` enabled, may not set `continue-on-error`, and must finish
-with the identity checker as its final unwrapped command.
+`base-python` is a separate pre-publication image path and remains externally
+unpublished. It has an active CI-rootfs preflight, a pull-request-only release
+preflight, and a guarded production publication workflow. Its build and
+reproducibility matrices run for both architectures on every push to `main` and
+manual dispatch; pull requests keep the existing Python-tree and shared-gate
+path selector. The release preflight runs on every pull request. The Python-only
+Bake contract fixes the graph-affecting inputs and the distinct CI, release, and
+double-build policies. The CI workflow pins and observes the Buildx executable
+and BuildKit driver identities; the production workflow consumes verifier-locked
+versions and action inputs. The verifier checks the committed contract for
+exactly the `base`, `ci`, `release`, and `repro` targets, requires the three
+non-base targets to inherit only `base`, and rejects protected graph-field
+redeclarations. It also requires contract-derived setup and identity inputs,
+with all five builder observations ordered before the CI builds. Each named
+identity step must keep `set -euo pipefail` enabled, may not set
+`continue-on-error`, and must finish with the identity checker as its final
+unwrapped command.
 
 Each build-matrix job builds the `ci` target once, runs the gate battery against
 that loaded image, and checks the effective rootfs exported from the same image
@@ -47,27 +51,39 @@ against the committed architecture-specific `canonical_rootfs_digest` and
 `rpmdb_sha256`. It also binds the revision, source, version, and created labels to
 the current commit and committed inputs. The separate reproducibility matrix
 continues to compare two `repro` builds and to assert the same contract fields.
-These checks cover effective rootfs entries and the rpmdb file, not an OCI
-manifest digest, image-config digest, or exact future release child.
+These CI-rootfs checks cover effective rootfs entries and the rpmdb file, not an
+OCI manifest digest, image-config digest, or exact future release child. The
+release preflight separately invokes the registry-capable `release` target once
+for both architectures, pushes only to a loopback-bound ephemeral registry,
+reads the served index and child digests back, and compares each registry-served
+rootfs both with the contract and with a same-commit `ci` build. Its local index,
+candidate tag, and unsigned BuildKit provenance are pre-publication test
+evidence, not a project publication.
 
-The Python workflow's `GITHUB_TOKEN` grants `contents: read` only and its
-committed YAML contains no configured registry credential or login surface. The
-verifier checks those boundaries and binds the complete workflow bytes to an
-expected SHA-256 and byte length, so a YAML-surface change requires a
-corresponding visible verifier edit. The lock does not cover separately invoked
-scripts or pinned external code. Outside the specifically checked CI label
-overrides, the verifier does not interpret arbitrary Bake command-line overrides
-or discover and count build callers. The contract has no publisher or release
-target, does not pin the micro build path, and does not make the Python reducer
-a claimed merge-blocking context. No Python artifact, signature, attestation,
-transparency-log entry, provenance statement, or release-shaped manifest is
-published by this preflight. The result remains built-and-gated, unpublished.
+The CI and pull-request preflight jobs grant `contents: read` only and contain no
+external registry credential or login surface. In the production workflow,
+package-write and OIDC permissions exist only on jobs that push, sign, or attest,
+and every independently guarded privileged job requires the exact base
+repository. The verifier checks those boundaries, the `main` and `python/v*`
+trigger namespace, the digest-only export, complete evidence subject matrix,
+exact identities, collision checks, and alias ordering. It also binds each
+complete workflow to an expected SHA-256 and byte length. Those locks do not
+cover pinned external code or every possible caller spelling. Neither preflight
+creates a package in the project namespace, a public or moving alias, a
+signature, a Cosign or GitHub artifact attestation, a SLSA or Rekor record, or a
+consumer-resolvable digest. The production workflow adds capability only at this
+revision: no completed Python publish, public package, or consumable image is
+claimed. The earlier no publisher limitation is superseded by that capability,
+but the artifact status remains built-and-gated, unpublished. The Python
+contract does not pin the micro build path and does not make the Python reducer a
+claimed merge-blocking context.
 
 ## Criteria and gates
 
 | Criterion | Accepted state | Enforcing gate |
 | --- | --- | --- |
-| Pre-publication base-python build identity | The active CI-rootfs preflight requires the committed Bake contract to contain exactly `base`, `ci`, and `repro`; the non-base targets inherit the shared graph inputs without redeclaring protected fields. Before either build starts, its builder must match the contracted Buildx version, commit, Linux-amd64 asset SHA-256, digest-qualified BuildKit image, and derived BuildKit version. The identity checker must be the final unwrapped command in its strict-shell step, which may not set `continue-on-error`. On every `main` push and manual dispatch, both architecture build jobs must build `ci` once, gate that loaded image, and compare its exported effective rootfs and rpmdb with the committed contract while binding revision, source, version, and created labels. Pull requests remain path-selected, and the separate `repro` matrix retains its double-build byte-identity gate. The preflight does not establish a future OCI child digest or produce release evidence. | `.github/workflows/python-ci.yaml`, `images/python/docker-bake.json`, `images/python/tools/assert-reproducible.py`, and `tools/verify.py`. |
+| Pre-publication base-python build identity | The Bake contract contains exactly `base`, `ci`, `release`, and `repro`; all three non-base targets inherit the shared graph inputs without redeclaring protected fields. Before the CI-rootfs and reproducibility builds start, their builders must match the contracted Buildx version, commit, Linux-amd64 asset SHA-256, digest-qualified BuildKit image, and derived BuildKit version. On every `main` push and manual dispatch, both architecture build jobs build `ci` once, gate that loaded image, and compare its exported effective rootfs and rpmdb with the contract while binding revision, source, version, and created labels; the separate `repro` matrix retains its double-build byte-identity gate. On pull requests, the release preflight invokes `release` once for both architectures against a loopback-bound ephemeral registry, resolves the registry-served children, and checks their rootfs and rpmdb values against both the contract and same-commit `ci` builds. Its local candidate tag and unsigned BuildKit provenance are not an external or project publication. | `.github/workflows/python-ci.yaml`, `.github/workflows/publish-python.yaml`, `images/python/docker-bake.json`, `images/python/tools/assert-reproducible.py`, and `tools/verify.py`. |
+| Base-python publication capability | `main` and `python/v*` pushes in the base repository may push an unaliased candidate by digest. SPDX, CycloneDX, OpenVEX, NIST SP 800-190, and STIG ARF evidence is required and verified on both platform children; the trust contract and SLSA provenance are index-only. A credentialed cache-cold verification completes before aliases. Create-once aliases receive mandatory pre-evidence and pre-apply collision checks plus post-apply readback, but the operation is not atomic against an external writer. A completed publish is distinct from public consumability: only an owner visibility change followed by successful anonymous verification establishes the latter. | `.github/workflows/publish-python.yaml`, `tools/assert-python-alias-policy.py`, `tools/assert-python-attestation.py`, `tools/assert-python-provenance.py`, [`../reference/verification-contract.md`](../reference/verification-contract.md), and [`../TECH-DEBT.md`](../TECH-DEBT.md#td-9-base-python-create-once-alias-external-writer-race). |
 | Multi-architecture runtime publication | The runtime target publishes as an OCI index with `linux/amd64` and `linux/arm64` children. The development target remains built-not-published. | `.github/workflows/publish-image.yaml` builds and pushes only the `runtime` target, then resolves both platform child digests. |
 | Signed publication, contract assertion, and transparency evidence | The workflow must push the OCI index before it can export and compare the registry-served child rootfs bytes, and it requires each child's canonical rootfs digest and rpmdb digest to match `contracts/image-manifest.json` before this run's signing step and before producing repository attestations, SLSA provenance, and the Rekor roll-up. Until that assertion passes, mutable tags may resolve to a digest for which this run has emitted no signature or downstream attestations. If the assertion fails, the job stops before this run's signing step, but it cannot retract the pushed manifest or tag update. | `publish-image.yaml`; `tools/assert-reproducible.py --expect-from-contract`; `tools/assert-cosign-rekor.py`. |
 | Anonymous consumer verification | A clean, unauthenticated consumer resolves one immutable index, verifies the Cosign signature on that index, verifies SPDX, CycloneDX, NIST SP 800-190, tailored STIG ARF, and any published OpenVEX attestations on each platform child, then verifies both the `slsaprovenance` attestation and `slsa-verifier` result on the index against exact identities. | The post-publish procedure in [`../reference/verify.md`](../reference/verify.md), reached through [`../how-to/verify-a-published-image.md`](../how-to/verify-a-published-image.md). The authenticated SBOM content check is summarized below; an attached-BuildKit-SBOM download path is not part of this contract. |
