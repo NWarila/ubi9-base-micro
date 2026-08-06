@@ -184,7 +184,6 @@ jobs:
           release_print="$("${release_argv[@]}" --print)"
           printf '%s\n' "${release_print}" | tee dist/release/bake-print.json
           python3.12 - "${RELEASE_REF}" <<'PY'
-          import csv
           import json
           import sys
           from pathlib import Path
@@ -193,33 +192,23 @@ jobs:
           resolved = json.loads(Path("dist/release/bake-print.json").read_text(encoding="utf-8"))
           target = resolved.get("target", {}).get("release", {})
 
-          def parse_objects(values: object) -> list[dict[str, str]]:
-              if not isinstance(values, list) or not all(isinstance(item, str) for item in values):
-                  raise SystemExit(f"resolved exporter list is invalid: {values!r}")
-              objects = []
-              for value in values:
-                  fields = next(csv.reader([value]))
-                  parsed = {}
-                  for field in fields:
-                      key, separator, item = field.partition("=")
-                      if not separator or key in parsed:
-                          raise SystemExit(f"resolved exporter field is invalid: {field!r}")
-                      parsed[key] = item
-                  objects.append(parsed)
-              return objects
-
-          output = parse_objects(target.get("output"))
+          output = target.get("output")
           if output != [{"type": "registry", "rewrite-timestamp": "true"}]:
               raise SystemExit(f"resolved release output mismatch: {output!r}")
           if target.get("tags") != [expected_ref]:
               raise SystemExit(f"resolved release tags mismatch: {target.get('tags')!r}")
           if target.get("platforms") != ["linux/amd64", "linux/arm64"]:
               raise SystemExit(f"resolved release platforms mismatch: {target.get('platforms')!r}")
-          if target.get("cache-to", []) != []:
-              raise SystemExit(f"resolved release cache exports must be empty: {target.get('cache-to')!r}")
-          expected_attest = ["type=provenance,mode=max", "type=sbom,disabled=true"]
-          if target.get("attest") != expected_attest:
-              raise SystemExit(f"resolved release attestations mismatch: {target.get('attest')!r}")
+          cache_to = target.get("cache-to", [])
+          if cache_to != []:
+              raise SystemExit(f"resolved release cache exports must be empty: {cache_to!r}")
+          attest = target.get("attest")
+          expected_attest = [
+              {"mode": "max", "type": "provenance"},
+              {"disabled": True, "type": "sbom"},
+          ]
+          if attest != expected_attest or type(attest[1]["disabled"]) is not bool:
+              raise SystemExit(f"resolved release attestations mismatch: {attest!r}")
           print(
               "resolved release object assertion passed: "
               + json.dumps(
@@ -227,8 +216,8 @@ jobs:
                       "tags": target["tags"],
                       "platforms": target["platforms"],
                       "output": output,
-                      "cache-to": [],
-                      "attest": target["attest"],
+                      "cache-to": cache_to,
+                      "attest": attest,
                   },
                   sort_keys=True,
               )
@@ -327,7 +316,6 @@ jobs:
             ci_print="$("${ci_argv[@]}" --print)"
             printf '%s\n' "${ci_print}" | tee "dist/ci/${arch}.bake-print.json"
             python3.12 - "${arch}" "${repository_url}" "${oci_version}" <<'PY'
-          import csv
           import json
           import os
           import sys
@@ -338,22 +326,7 @@ jobs:
               Path(f"dist/ci/{arch}.bake-print.json").read_text(encoding="utf-8")
           ).get("target", {}).get("ci", {})
 
-          def parse_objects(values: object) -> list[dict[str, str]]:
-              if not isinstance(values, list) or not all(isinstance(item, str) for item in values):
-                  raise SystemExit(f"resolved exporter list is invalid: {values!r}")
-              objects = []
-              for value in values:
-                  fields = next(csv.reader([value]))
-                  parsed = {}
-                  for field in fields:
-                      key, separator, item = field.partition("=")
-                      if not separator or key in parsed:
-                          raise SystemExit(f"resolved exporter field is invalid: {field!r}")
-                      parsed[key] = item
-                  objects.append(parsed)
-              return objects
-
-          output = parse_objects(target.get("output"))
+          output = target.get("output")
           expected_tag = f"local/ubi9-base-python:ci-{arch}"
           if output != [{"type": "docker"}]:
               raise SystemExit(f"resolved ci output mismatch for {arch}: {output!r}")
@@ -361,8 +334,9 @@ jobs:
               raise SystemExit(f"resolved ci tags mismatch for {arch}: {target.get('tags')!r}")
           if target.get("platforms") != [f"linux/{arch}"]:
               raise SystemExit(f"resolved ci platforms mismatch for {arch}: {target.get('platforms')!r}")
-          if target.get("cache-to", []) != []:
-              raise SystemExit(f"resolved ci cache exports must be empty for {arch}: {target.get('cache-to')!r}")
+          cache_to = target.get("cache-to", [])
+          if cache_to != []:
+              raise SystemExit(f"resolved ci cache exports must be empty for {arch}: {cache_to!r}")
           expected_args = {
               "OCI_REVISION": os.environ["GITHUB_SHA"],
               "OCI_SOURCE": repository_url,
@@ -381,7 +355,7 @@ jobs:
                       "tags": target["tags"],
                       "platforms": target["platforms"],
                       "output": output,
-                      "cache-to": [],
+                      "cache-to": cache_to,
                       "args": expected_args,
                   },
                   sort_keys=True,

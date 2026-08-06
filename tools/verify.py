@@ -6622,8 +6622,8 @@ def check_python_ci_preflight() -> None:
 
 
 PUBLISH_PYTHON_WORKFLOW = ".github/workflows/publish-python.yaml"
-PUBLISH_PYTHON_WORKFLOW_SHA256 = "1a239d2965c32e51ec3531ca487029e6b71bcd41a67faa0947534d8659da8e46"
-PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH = 19231
+PUBLISH_PYTHON_WORKFLOW_SHA256 = "65fdef8d5a7a14962151287f836cc54369866e75f5acd72c760599ba6a80adb8"
+PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH = 17777
 PUBLISH_PYTHON_TRIGGER_BLOCK = "on:\n  pull_request:\n\n"
 PUBLISH_PYTHON_REGISTRY_IMAGE = (
     "docker.io/library/registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e"
@@ -6901,12 +6901,13 @@ def publish_python_preflight_errors(workflow: str) -> list[str]:
     resolved_release_output_invalid = 'if output != [{"type": "registry", "rewrite-timestamp": "true"}]:' not in run
     resolved_release_tags_invalid = 'if target.get("tags") != [expected_ref]:' not in run
     resolved_release_platforms_invalid = 'if target.get("platforms") != ["linux/amd64", "linux/arm64"]:' not in run
-    resolved_release_cache_invalid = run.count('if target.get("cache-to", []) != []:') != 2
+    resolved_release_cache_invalid = run.count("if cache_to != []:") != 2
     resolved_release_attest_invalid = not all(
         marker in run
         for marker in (
-            'expected_attest = ["type=provenance,mode=max", "type=sbom,disabled=true"]',
-            'if target.get("attest") != expected_attest:',
+            '{"mode": "max", "type": "provenance"}',
+            '{"disabled": True, "type": "sbom"}',
+            'if attest != expected_attest or type(attest[1]["disabled"]) is not bool:',
         )
     )
     platform_resolver_invalid = not all(
@@ -6924,7 +6925,7 @@ def publish_python_preflight_errors(workflow: str) -> list[str]:
     resolved_ci_output_invalid = 'if output != [{"type": "docker"}]:' not in run
     resolved_ci_tags_invalid = 'if target.get("tags") != [expected_tag]:' not in run
     resolved_ci_platforms_invalid = 'if target.get("platforms") != [f"linux/{arch}"]:' not in run
-    resolved_ci_cache_invalid = run.count('if target.get("cache-to", []) != []:') != 2
+    resolved_ci_cache_invalid = run.count("if cache_to != []:") != 2
     resolved_ci_args_invalid = not all(
         marker in run
         for marker in (
@@ -7450,12 +7451,12 @@ def _publish_python_semantic_fixtures(workflow: str) -> list[tuple[str, str, str
         ),
         (
             "resolved-release-cache-condition-false",
-            '          if target.get("cache-to", []) != []:\n',
+            "          if cache_to != []:\n",
             "publish Python resolved release cache assertion mismatch",
         ),
         (
             "resolved-release-attest-condition-false",
-            '          if target.get("attest") != expected_attest:\n',
+            '          if attest != expected_attest or type(attest[1]["disabled"]) is not bool:\n',
             "publish Python resolved release attestation assertion mismatch",
         ),
     ]
@@ -7519,7 +7520,7 @@ def _publish_python_semantic_fixtures(workflow: str) -> list[tuple[str, str, str
         ),
         (
             "resolved-ci-cache-condition-false",
-            '          if target.get("cache-to", []) != []:\n',
+            "          if cache_to != []:\n",
             "publish Python resolved ci cache assertion mismatch",
         ),
         (
