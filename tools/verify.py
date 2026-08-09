@@ -1509,8 +1509,8 @@ def python_bake_contract_error(contract: Any) -> str | None:
     repro_dest = variables["REPRO_DEST"]["default"]
     if not isinstance(repro_dest, str) or not repro_dest:
         return "repro destination variable must have a non-empty default"
-    if variables["RELEASE_REF"]["default"] is not None:
-        return "release destination variable must have a null default"
+    if variables["RELEASE_REF"]["default"] != "RELEASE_REF must be set":
+        return "release destination variable must have the invalid sentinel default"
     for name in ("UBI_MINIMAL_IMAGE", "BASE_MICRO_IMAGE"):
         if variables[name]["default"] is not None:
             return f"python Bake variable {name} must be nullable"
@@ -1609,7 +1609,7 @@ def python_release_bake_errors(contract: Mapping[str, Any]) -> list[str]:
     release_ref_default_invalid = (
         not isinstance(variables, dict)
         or not isinstance(variables.get("RELEASE_REF"), dict)
-        or variables["RELEASE_REF"].get("default", object()) is not None
+        or variables["RELEASE_REF"].get("default", object()) != "RELEASE_REF must be set"
     )
     release = targets.get("release") if isinstance(targets, dict) else None
     release_key_set_invalid = not isinstance(release, dict) or set(release) != {
@@ -1633,7 +1633,7 @@ def python_release_bake_errors(contract: Mapping[str, Any]) -> list[str]:
     # CHECK: python-release-bake-target-set
     reject(target_set_invalid, "python release Bake target set mismatch")
     # CHECK: python-release-bake-ref-default
-    reject(release_ref_default_invalid, "python release Bake RELEASE_REF default must be null")
+    reject(release_ref_default_invalid, "python release Bake RELEASE_REF default must be the invalid sentinel")
     # CHECK: python-release-bake-key-set
     reject(release_key_set_invalid, "python release Bake target keys must be exactly inherits, tags, attest, output")
     # CHECK: python-release-bake-inheritance
@@ -1688,7 +1688,7 @@ def _python_release_bake_fixtures(contract: Mapping[str, Any]) -> list[tuple[str
         "release-ref-default",
         ("variable", "RELEASE_REF", "default"),
         "ghcr.io/example/release:latest",
-        "python release Bake RELEASE_REF default must be null",
+        "python release Bake RELEASE_REF default must be the invalid sentinel",
     )
     open_release = copy.deepcopy(contract["target"]["release"])
     open_release.update(
@@ -2242,10 +2242,10 @@ def check_python_build_input_contract_self_test() -> None:
         "repro destination variable must have a non-empty default",
     )
     reject_bake_path(
-        "a/release-destination-null",
+        "a/release-destination-sentinel",
         ("variable", "RELEASE_REF", "default"),
         "localhost:5000/example/candidate",
-        "release destination variable must have a null default",
+        "release destination variable must have the invalid sentinel default",
     )
     reject_bake_path(
         "a/nullable-parent-input",

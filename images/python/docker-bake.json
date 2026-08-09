@@ -16,7 +16,7 @@
       "default": "dist/reproducibility/base-python.repro.tar"
     },
     "RELEASE_REF": {
-      "default": null
+      "default": "RELEASE_REF must be set"
     },
     "UBI_MINIMAL_IMAGE": {
       "default": null
