@@ -402,6 +402,8 @@ jobs:
             python3.12 images/python/tools/assert-reproducible.py \
               --left-tar "${release_rootfs}" \
               --right-tar "${ci_rootfs}" \
+              --repo-root . \
+              --platform "linux/${arch}" \
               --assert-byte-identical
           }
 

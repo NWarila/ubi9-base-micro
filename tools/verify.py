@@ -6622,8 +6622,8 @@ def check_python_ci_preflight() -> None:
 
 
 PUBLISH_PYTHON_WORKFLOW = ".github/workflows/publish-python.yaml"
-PUBLISH_PYTHON_WORKFLOW_SHA256 = "65fdef8d5a7a14962151287f836cc54369866e75f5acd72c760599ba6a80adb8"
-PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH = 17777
+PUBLISH_PYTHON_WORKFLOW_SHA256 = "9160a0dc300713a28038c2f209238b92fd5f265a7b7f739a85ee417f23239842"
+PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH = 17850
 PUBLISH_PYTHON_TRIGGER_BLOCK = "on:\n  pull_request:\n\n"
 PUBLISH_PYTHON_REGISTRY_IMAGE = (
     "docker.io/library/registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e"
@@ -6964,6 +6964,8 @@ def publish_python_preflight_errors(workflow: str) -> list[str]:
         "python3.12 images/python/tools/assert-reproducible.py \\\n"
         '    --left-tar "${release_rootfs}" \\\n'
         '    --right-tar "${ci_rootfs}" \\\n'
+        "    --repo-root . \\\n"
+        '    --platform "linux/${arch}" \\\n'
         "    --assert-byte-identical"
     )
     order_markers = (
