@@ -36,7 +36,7 @@ the context, Dockerfile, runtime target, platforms, fixed timestamp arguments,
 and the distinct CI, release, and double-build exporter policies. It pins
 Buildx by version, expected commit, and independently verified Linux-amd64 release-asset
 SHA-256, and pins the BuildKit driver by a versioned digest-qualified image
-reference. Both Python builder jobs assert those identities before building.
+reference. Both Python CI builder jobs assert those identities before building.
 `tools/verify.py` requires exactly the `base`, `ci`, `release`, and `repro`
 targets; the three non-base targets must inherit the shared target without
 redeclaring protected graph inputs. It also requires both builder jobs to derive

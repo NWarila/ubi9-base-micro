@@ -85,10 +85,14 @@ signature, SBOM attestation, SLSA provenance, and Rekor roll-up jobs run only on
 A change to `images/python/docker-bake.json`, including a dependency update to
 its Buildx or BuildKit pins, is image-affecting. Run `python tools/verify.py`,
 then require real, non-skipped `python build and gates` and `python
-reproducibility` results for both architectures. Those jobs assert the five
-builder identities before building and re-prove the rootfs and rpmdb baselines.
-The `python / required` reducer is evidence aggregation, not a required
-repository status context, and the image remains unpublished.
+reproducibility` results for both architectures, and confirm that the
+pull-request-only `Python release preflight` also passes. The CI jobs assert the
+five builder identities before building and re-prove the rootfs and rpmdb
+baselines. The release preflight exercises the registry exporter only against a
+loopback-bound ephemeral registry; it does not create an external or project
+publication. The `python / required` reducer is evidence aggregation, not a
+required repository status context, and the image remains externally
+unpublished.
 
 Repository verification also requires each named builder-identity step to keep
 `set -euo pipefail` enabled, omit `continue-on-error`, and end with the

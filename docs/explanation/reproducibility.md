@@ -42,7 +42,7 @@ and the build that the report describes. Repository verification fails closed
 unless the exact `base`/`ci`/`release`/`repro` target set is present and the
 three non-base targets inherit the base without redeclaring a protected graph
 field. It also
-requires the two workflow builder setups and their five-observation identity
+requires the two CI workflow builder setups and their five-observation identity
 steps to derive the pins from the contract before building. Each named identity
 step must keep `set -euo pipefail` enabled, omit `continue-on-error`, and end in
 the identity checker as its final unwrapped command. These static shape checks
