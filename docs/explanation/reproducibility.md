@@ -39,9 +39,10 @@ image-specific `canonical_rootfs_digest` and `rpmdb_sha256` baselines. Each side
 is represented by one immutable Bake invocation descriptor; the same file,
 target, variable environment, and overrides drive both `bake --print`
 and the build that the report describes. Repository verification fails closed
-unless the exact `base`/`ci`/`repro` target set is present and the two non-base
-targets inherit the base without redeclaring a protected graph field. It also
-requires the two workflow builder setups and their five-observation identity
+unless the exact `base`/`ci`/`release`/`repro` target set is present and the
+three non-base targets inherit the base without redeclaring a protected graph
+field. It also
+requires the two CI workflow builder setups and their five-observation identity
 steps to derive the pins from the contract before building. Each named identity
 step must keep `set -euo pipefail` enabled, omit `continue-on-error`, and end in
 the identity checker as its final unwrapped command. These static shape checks
@@ -70,7 +71,8 @@ image labels bind revision to `GITHUB_SHA`, source to the repository URL, versio
 to the committed `images/python/VERSION`, and created time to the fixed Bake
 contract value.
 
-This preflight is scoped to the effective rootfs entry set and the rpmdb file.
+The CI-rootfs preflight is scoped to the effective rootfs entry set and the
+rpmdb file.
 The canonical digest is produced from normalized, sorted entries; it is not an
 OCI manifest, image-config, compressed-layer, or tar-encoding digest. The
 ephemeral `ci` image is not a release-shaped artifact, and its successful check
@@ -81,14 +83,24 @@ binds every committed byte of that workflow to an expected SHA-256 and byte
 length, so changing its YAML surface requires a corresponding visible verifier
 edit; that lock does not cover separately invoked scripts or external code.
 
+The separate pull-request release preflight exercises the registry-exporting
+`release` target once for both architectures against a loopback-bound ephemeral
+registry. It resolves the registry-served Linux child digests, exports each
+child rootfs, checks `canonical_rootfs_digest` and `rpmdb_sha256` against the
+contract, and compares the entries with a same-commit `ci` rootfs. The local
+candidate index and unsigned BuildKit provenance establish the release
+exporter's behavior without creating an external or project publication,
+signature, SLSA or Rekor record, or consumer-resolvable digest.
+
 Renovate has two non-automerge Python builder surfaces. The Buildx manager
 updates the release version only; the independently owned expected commit and
 Linux-amd64 asset SHA-256 must be paired with that version before the pre-build
 identity gate can pass. The BuildKit manager updates the version-plus-digest
 driver reference together, and the expected BuildKit version is derived from
 that reference. Either update still has to pass all five live identity
-observations and the both-architecture byte gates. Neither manager creates a
-release target, publisher, registry write, or published Python digest.
+observations and the both-architecture byte gates. These managers update only
+the pinned builder inputs; they do not configure the release destination or
+production publication.
 
 The arm64 proof intentionally uses QEMU on the GitHub-hosted amd64 runner because
 that is the same architecture path used by the publish workflow. Native arm64
@@ -123,13 +135,14 @@ scope.
 
 - `SOURCE_DATE_EPOCH=1704067200` is the committed timestamp input.
 - The base-micro local, CI, and publish exporter paths use
-  `rewrite-timestamp=true`. Base-python's `repro` target uses it for the
-  docker-tar double-build gate; its `ci` target uses a local Docker exporter
-  without claiming that timestamp-rewrite policy. Base-python has no publish
-  exporter or publisher.
+  `rewrite-timestamp=true`. Base-python's `repro` target uses the same policy for
+  its docker-tar double-build gate, and its `release` target uses it for the
+  registry exporter; `ci` uses a local Docker exporter without claiming that
+  policy. Base-python has no publish destination outside the preflight's
+  loopback-bound ephemeral registry and no production publisher.
 - `images/python/docker-bake.json` is the base-python build definition. Its
-  shared target owns the graph inputs, while the `ci` and `repro` targets own
-  their distinct exporter, cache, provenance, and SBOM policies.
+  shared target owns the graph inputs, while the `ci`, `release`, and `repro`
+  targets own distinct exporter, cache, provenance, and SBOM policies.
 - `docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8` pins
   the setup-action code for the cross-architecture `linux/arm64` build path on
   GitHub-hosted amd64 runners. Its emulator image is immutably pinned to

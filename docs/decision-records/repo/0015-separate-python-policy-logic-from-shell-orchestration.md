@@ -139,6 +139,11 @@ The current-state ledger is:
   assertions in `tests/fips.sh:51-53,66-113,136-206` and the AWK scans, decision
   loops, and embedded Python in `tests/hardening.sh:76-98,100-163,165-213` are
   pending extraction into testable Python helpers.
+- `.github/workflows/publish-python.yaml` retains inline Python for registry
+  publication inspection, resolved Bake-object and index assertions, and CI
+  rootfs flattening inside its release-preflight orchestration. Repository
+  verification mutation-tests the workflow contract, but these policy checks
+  remain pending extraction into directly testable Python helpers.
 
 ## Consequences
 
@@ -159,6 +164,7 @@ The current-state ledger is:
 - `docs/decision-records/repo/0014-pin-builder-python-closure.md`
 - `containers/Dockerfile`
 - `.github/workflows/python-ci.yaml`
+- `.github/workflows/publish-python.yaml`
 - `images/python/tools/assert-raw-scanners-no-sqlite.py`
 - `tools/assert-vex.py`
 - `tools/rpmlock.py`

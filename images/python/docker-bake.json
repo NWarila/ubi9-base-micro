@@ -15,6 +15,9 @@
     "REPRO_DEST": {
       "default": "dist/reproducibility/base-python.repro.tar"
     },
+    "RELEASE_REF": {
+      "default": "RELEASE_REF must be set"
+    },
     "UBI_MINIMAL_IMAGE": {
       "default": null
     },
@@ -42,6 +45,21 @@
       ],
       "output": [
         "type=docker"
+      ]
+    },
+    "release": {
+      "inherits": [
+        "base"
+      ],
+      "tags": [
+        "${RELEASE_REF}"
+      ],
+      "attest": [
+        "type=provenance,mode=max",
+        "type=sbom,disabled=true"
+      ],
+      "output": [
+        "type=registry,rewrite-timestamp=true"
       ]
     },
     "repro": {

@@ -74,9 +74,12 @@ behavior.
 
 `canonical_rootfs_digest` is profile- and image-specific. For `base-micro`, it
 binds to the rootfs exported by the local, CI, and publish Docker Buildx paths,
-which set `rewrite-timestamp=true`. For `base-python`, it binds to the `repro`
-target's docker-tar export, which also sets `rewrite-timestamp=true`; the Python
-`ci` target uses a local Docker exporter without that policy. The digest
+which set `rewrite-timestamp=true`. For `base-python`, it binds to both the
+`repro` target's docker-tar export and the registry-served child exported by the
+`release` target; both set `rewrite-timestamp=true`. The pull-request release
+preflight checks each served child against that baseline and compares its
+entries with a same-commit `ci` rootfs. The Python `ci` target uses a local
+Docker exporter without the timestamp-rewrite policy. The digest
 includes entry metadata (`uname`, `gname`, and `mtime`) as well as content. A
 different builder, such as buildah or kaniko, can produce byte-identical file
 contents and still produce a different aggregate digest because exported layer
