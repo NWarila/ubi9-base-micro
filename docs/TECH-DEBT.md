@@ -175,3 +175,26 @@ constructs can, in the same change, alter the verifier or remove the identity
 step. The workflow checks are therefore defence-in-depth against accidental
 regression, not an adversarial control over a hostile committer. Code review,
 CODEOWNERS, and required status checks are the controls for that threat.
+
+## TD-9: Expiring acceptance of CVE-2026-11940 in base-python
+
+The base-python CI products `local/ubi9-base-python:ci-amd64` and
+`local/ubi9-base-python:ci-arm64` are known affected by `CVE-2026-11940` in
+`python3.12` and `python3.12-libs` at exactly `3.12.13-3.el9_8.1`. As of
+2026-08-13, Red Hat lists RHEL 9 `python3.12` as Affected with no fixed RPM;
+RHEL 9 `python3.9` is fixed via RHSA-2026:54268, and the upstream CPython 3.12
+branch is fixed. Consumers must not rely on `tarfile.extractall()` `data` or
+`tar` filters to contain untrusted archives until a fixed RPM is absorbed.
+
+This known-affected state is accepted and tracked through two exact mechanisms:
+the closed allowlist in `tools/assert-vex.py` and the reviewed disclosure in
+`images/python/vex/cve-2026-11940.openvex.json`. Both must match the CVE, the two
+CI products, the complete two-package set, the installed version, this debt id,
+and `review-by 2026-10-01`. Valid fix evidence from either scanner refuses the
+disposition. The image is not unaffected, and no scanner input or raw finding is
+suppressed.
+
+Review this entry by 2026-10-01 and monitor Red Hat for a fixed RHEL 9
+`python3.12` RPM. When Red Hat ships a fixed `python3.12` RPM, the rpm-lock
+refresh absorbs it and the same pull request removes the in-tool allowlist entry
+and flips the OpenVEX statement to `fixed`.

@@ -7,9 +7,16 @@ Accepted statements must be OpenVEX JSON files with:
 - `@context` and a non-empty `statements` array.
 - `vulnerability.name` or an equivalent vulnerability id matching the scanner finding.
 - `products[].@id` matching the exact image reference scanned, or the same reference prefixed with `pkg:oci/`.
-- `status: "fixed"` or `status: "not_affected"` with one of the standard OpenVEX justifications.
+- `status: "fixed"` or `status: "not_affected"` with one of the standard OpenVEX justifications, except for the exact accept-and-track path below.
 
-`affected` and `under_investigation` are valid OpenVEX statuses, but they do not satisfy this gate. Files under `vex/` require review through `.github/CODEOWNERS`. The pull-request release preflight does not attest OpenVEX; a future production publisher will attest each JSON file to the per-architecture image digests with `cosign attest --type openvex`.
+`affected` satisfies the gate only for the exact, expiring CVE-2026-11940
+accept-and-track authorization implemented in `tools/assert-vex.py` and matched
+by `cve-2026-11940.openvex.json`. Every other `affected` statement, and every
+`under_investigation` statement, remains documentary and does not satisfy the
+gate. Files under `vex/` require review through `.github/CODEOWNERS`. The
+pull-request release preflight does not attest OpenVEX; a future production
+publisher will attest each JSON file to the per-architecture image digests with
+`cosign attest --type openvex`.
 
 The image inherits the deliberately held FIPS provider packages from its parent, so the same
 disclosure applies here with a base-python product identity.
@@ -19,6 +26,15 @@ packages are affected and gives downstream consumers mitigation guidance. This
 statement is documentary: it does not suppress the finding or satisfy the
 default-deny gate. The exact, expiring scanner suppression is maintained
 separately under `security/` and tracked as TD-6 in `docs/TECH-DEBT.md`.
+
+`cve-2026-11940.openvex.json` discloses that both base-python CI products ship
+the affected `python3.12` and `python3.12-libs` packages at
+`3.12.13-3.el9_8.1`. The gate accepts that known-affected finding only when the
+document and the in-tool allowlist match every canonical product, package,
+version, status, TD-9, and `review-by 2026-10-01` field. The authorization is
+refused if either scanner supplies valid fix evidence. Gate expiry is scoped to
+a present matching candidate; `tools/verify.py` independently expires a dormant
+repository entry after the review date.
 
 `sqlite-component-not-present.openvex.json` records five distinct
 `not_affected` / `component_not_present` dispositions for CVE-2026-51296,
