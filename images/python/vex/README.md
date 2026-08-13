@@ -31,10 +31,11 @@ separately under `security/` and tracked as TD-6 in `docs/TECH-DEBT.md`.
 the affected `python3.12` and `python3.12-libs` packages at
 `3.12.13-3.el9_8.1`. The gate accepts that known-affected finding only when the
 document and the in-tool allowlist match every canonical product, package,
-version, status, TD-9, and `review-by 2026-10-01` field. The authorization is
-refused if either scanner supplies valid fix evidence. Gate expiry is scoped to
-a present matching candidate; `tools/verify.py` independently expires a dormant
-repository entry after the review date.
+version, and status, and the action statement contains the exact TD-9 and
+`review-by 2026-10-01` markers. The authorization is refused if either scanner
+supplies valid fix evidence. Gate expiry is scoped to a present matching
+candidate; `tools/verify.py` independently expires a dormant repository entry
+after the review date.
 
 `sqlite-component-not-present.openvex.json` records five distinct
 `not_affected` / `component_not_present` dispositions for CVE-2026-51296,
