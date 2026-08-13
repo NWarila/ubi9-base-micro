@@ -154,8 +154,8 @@ either scanner refuses the disposition. On this path, raw scanner vulnerability
 IDs, package names, and installed versions must already contain no surrounding
 whitespace; padded identity evidence is malformed rather than normalized into
 authorization. `tools/verify.py` independently expires the entry even if the
-scanner finding becomes dormant. This accept-and-track path does not make the
-image unaffected and is not a TD-6 fixable-CVE scanner suppression.
+scanner finding becomes dormant. This accept-and-track path does not make the image unaffected
+and is not a TD-6 fixable-CVE scanner suppression.
 
 ## SBOM Source
 

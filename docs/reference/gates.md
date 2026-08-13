@@ -64,5 +64,4 @@ allowlist and reviewed `affected` statement must both match through
 installed versions must already contain no surrounding whitespace; the gate
 rejects padded evidence instead of normalizing it into the disposition.
 Candidate evaluations fail after that date, while `tools/verify.py` also expires
-the repository entry when dormant. Every other unfixed HIGH or CRITICAL finding
-remains default-denied.
+the repository entry when dormant. Every other unfixed HIGH or CRITICAL finding remains default-denied.
