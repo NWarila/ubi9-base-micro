@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-06-21
-- Last reviewed: 2026-07-28
+- Last reviewed: 2026-08-13
 - Scope: repo
 
 ## Context
@@ -39,6 +39,15 @@ publication nor a consumer-resolvable digest. Future variants use
 `images/<variant>/` trees. Each variant needs its own path-scoped publish
 workflow and evidence set before publication.
 
+The root micro publisher has its own conservative, closed scope decision. On a
+`main` push with an available, non-empty diff against the currently published
+revision, it skips micro publication only when every changed path is under
+`images/` or `docs/`, or is exactly `.github/workflows/python-ci.yaml`,
+`.github/workflows/publish-python.yaml`, `tools/verify.py`, `README.md`,
+`SUPPORT.md`, `CHANGELOG.md`, `SECURITY.md`, `CONTRIBUTING.md`, or
+`CODE_OF_CONDUCT.md`. Every unlisted path and every ambiguity publishes. This
+micro-specific set is not a template for a variant's publish scope.
+
 Variants consume the published parent strictly by pinned digest: a committed
 `base-micro@sha256:<digest>` reference updated through ordinary
 dependency-update pull requests. Publication orchestration remains banned:
@@ -57,6 +66,9 @@ same run.
   by scoped per-job workflow permissions.
 - The layout is heterogeneous: the root image lives at the repository root and
   variants live under `images/<variant>/`. This asymmetry is accepted.
+- Changes confined to the root micro publisher's closed skip set do not mint a
+  new micro digest. The policy does not retract or alter previously published
+  digests or their revision-bound attestations.
 - A variant whose compliance tooling diverges structurally (for example a Java
   variant carrying its own validated cryptographic module) splits out with
   history via `git subtree`.

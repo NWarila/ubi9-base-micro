@@ -57,6 +57,14 @@ and this project adheres to
 
 ### Changed
 
+- Expanded the micro publish-scope skip policy to a conservative closed set. A
+  `main` push with an available, non-empty diff now skips publication when every
+  changed path is under `images/` or `docs/`, or is exactly
+  `.github/workflows/python-ci.yaml`, `.github/workflows/publish-python.yaml`,
+  `tools/verify.py`, `README.md`, `SUPPORT.md`, `CHANGELOG.md`, `SECURITY.md`,
+  `CONTRIBUTING.md`, or `CODE_OF_CONDUCT.md`. Any unlisted path or ambiguity
+  still publishes; skipping avoids a new publication and does not remove an
+  already-published digest.
 - Pinned the unpublished `base-python` builder input chain through one native
   Bake contract used by its CI and double-build paths. Python builders now
   fail before building unless the Buildx version, commit, Linux-amd64 asset
