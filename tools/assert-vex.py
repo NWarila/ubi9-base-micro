@@ -101,6 +101,7 @@ class FindingRecord:
     package: str
     version: str
     has_fix: bool
+    identity_rejections: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -464,13 +465,24 @@ def parse_trivy(data: dict[str, Any]) -> list[Finding]:
             label = f"Trivy Results[{result_index}].Vulnerabilities[{finding_index}]"
             if not isinstance(vulnerability, dict):
                 raise VexError(f"{label} must be an object")
-            vuln_id = non_empty_string(vulnerability.get("VulnerabilityID"), f"{label}.VulnerabilityID")
+            raw_vuln_id = vulnerability.get("VulnerabilityID")
+            vuln_id = non_empty_string(raw_vuln_id, f"{label}.VulnerabilityID")
             sev = finding_severity(vulnerability.get("Severity"), f"{label}.Severity")
-            package = non_empty_string(vulnerability.get("PkgName"), f"{label}.PkgName")
+            raw_package = vulnerability.get("PkgName")
+            package = non_empty_string(raw_package, f"{label}.PkgName")
             if sev not in HIGH_CRITICAL:
                 continue
             raw_version = vulnerability.get("InstalledVersion")
             version = raw_version.strip() if isinstance(raw_version, str) else ""
+            identity_rejections = tuple(
+                f"{field_label} must not contain surrounding whitespace"
+                for raw_value, normalized, field_label in (
+                    (raw_vuln_id, vuln_id, f"{label}.VulnerabilityID"),
+                    (raw_package, package, f"{label}.PkgName"),
+                    (raw_version, version, f"{label}.InstalledVersion"),
+                )
+                if isinstance(raw_value, str) and raw_value != normalized
+            )
             has_fix = trivy_has_fix(vulnerability)
             findings.append(
                 Finding(
@@ -478,7 +490,7 @@ def parse_trivy(data: dict[str, Any]) -> list[Finding]:
                     severity=sev,
                     scanners=set() if has_fix else {"trivy"},
                     packages=set() if has_fix else {package},
-                    records=[FindingRecord("trivy", package, version, has_fix)],
+                    records=[FindingRecord("trivy", package, version, has_fix, identity_rejections)],
                 )
             )
     return findings
@@ -522,13 +534,24 @@ def parse_grype(data: dict[str, Any]) -> list[Finding]:
         artifact = match.get("artifact")
         if not isinstance(artifact, dict):
             raise VexError(f"{label}.artifact must be an object")
-        vuln_id = non_empty_string(vulnerability.get("id"), f"{label}.vulnerability.id")
+        raw_vuln_id = vulnerability.get("id")
+        vuln_id = non_empty_string(raw_vuln_id, f"{label}.vulnerability.id")
         sev = finding_severity(vulnerability.get("severity"), f"{label}.vulnerability.severity")
-        package = non_empty_string(artifact.get("name"), f"{label}.artifact.name")
+        raw_package = artifact.get("name")
+        package = non_empty_string(raw_package, f"{label}.artifact.name")
         if sev not in HIGH_CRITICAL:
             continue
         raw_version = artifact.get("version")
         version = raw_version.strip() if isinstance(raw_version, str) else ""
+        identity_rejections = tuple(
+            f"{field_label} must not contain surrounding whitespace"
+            for raw_value, normalized, field_label in (
+                (raw_vuln_id, vuln_id, f"{label}.vulnerability.id"),
+                (raw_package, package, f"{label}.artifact.name"),
+                (raw_version, version, f"{label}.artifact.version"),
+            )
+            if isinstance(raw_value, str) and raw_value != normalized
+        )
         has_fix = grype_has_fix(vulnerability)
         findings.append(
             Finding(
@@ -536,7 +559,7 @@ def parse_grype(data: dict[str, Any]) -> list[Finding]:
                 severity=sev,
                 scanners=set() if has_fix else {"grype"},
                 packages=set() if has_fix else {package},
-                records=[FindingRecord("grype", package, version, has_fix)],
+                records=[FindingRecord("grype", package, version, has_fix, identity_rejections)],
             )
         )
     return findings
@@ -794,6 +817,13 @@ def accepted_accept_and_track_statement(
     dispositions: tuple[AcceptAndTrackDisposition, ...],
     today: date,
 ) -> tuple[Statement | None, AcceptAndTrackDisposition | None, str | None]:
+    identity_rejections = sorted({rejection for record in finding.records for rejection in record.identity_rejections})
+    if identity_rejections:
+        return (
+            None,
+            None,
+            "malformed accept-and-track scanner identity evidence: " + "; ".join(identity_rejections),
+        )
     candidates = [
         disposition for disposition in dispositions if disposition_identity_matches(disposition, finding, product)
     ]
@@ -2209,6 +2239,36 @@ def self_test() -> int:
             )
             return 1
         print("assert-vex self-test: canonical accept-and-track disposition passed with zero undispositioned findings")
+
+        padded_identity_probes: list[tuple[str, Callable[[dict[str, Any]], Any], str]] = [
+            (
+                "accept-and-track padded scanner vulnerability id",
+                lambda match: match["vulnerability"].__setitem__("id", " CVE-2026-11940 "),
+                "malformed accept-and-track scanner identity evidence: "
+                "Grype matches[0].vulnerability.id must not contain surrounding whitespace",
+            ),
+            (
+                "accept-and-track padded scanner package name",
+                lambda match: match["artifact"].__setitem__("name", " python3.12 "),
+                "malformed accept-and-track scanner identity evidence: "
+                "Grype matches[0].artifact.name must not contain surrounding whitespace",
+            ),
+            (
+                "accept-and-track padded scanner version",
+                lambda match: match["artifact"].__setitem__("version", " 3.12.13-3.el9_8.1 "),
+                "malformed accept-and-track scanner identity evidence: "
+                "Grype matches[0].artifact.version must not contain surrounding whitespace",
+            ),
+        ]
+        for label, mutate_match, expected_reason in padded_identity_probes:
+            padded_grype = copy.deepcopy(accept_grype)
+            mutate_match(padded_grype["matches"][0])
+            expect_accept_rejection(
+                label,
+                expected_reason=expected_reason,
+                grype=padded_grype,
+            )
+        print("assert-vex self-test: 3/3 padded scanner identity bound-pair probes emitted no disposition")
 
         def mutate_vex(apply: Callable[[dict[str, Any]], Any]) -> dict[str, Any]:
             mutated = copy.deepcopy(canonical_vex)

@@ -9477,6 +9477,10 @@ def check_python_accept_and_track() -> None:
         "undispositioned unfixed HIGH/CRITICAL findings",
         "micro product evaluation remained byte-identical after review date",
         "all-fixed target pair passed without an accept-and-track disposition",
+        "malformed accept-and-track scanner identity evidence",
+        "accept-and-track padded scanner vulnerability id",
+        "accept-and-track padded scanner package name",
+        "accept-and-track padded scanner version",
     ]:
         require(marker in script, f"assert-vex accept-and-track implementation missing marker: {marker}")
 
