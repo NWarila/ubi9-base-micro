@@ -16,7 +16,8 @@ import sys
 import tempfile
 from collections.abc import Callable
 from contextlib import redirect_stderr, redirect_stdout
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,16 @@ TRIVY_FIX_STATUSES = {
 GRYPE_FIX_STATES = {"fixed", "not-fixed", "unknown", "wont-fix"}
 Mutation = Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], Any]
 
+ACCEPT_AND_TRACK_ACTION_STATEMENT = (
+    "This image ships the vulnerable CPython standard-library tarfile module in python3.12-libs "
+    "3.12.13-3.el9_8.1. As of 2026-08-13 Red Hat lists RHEL 9 python3.12 as Affected with no fixed RPM "
+    "(RHEL 9 python3.9 is fixed via RHSA-2026:54268; the upstream CPython 3.12 branch is fixed). "
+    "Consumers must not rely on tarfile.extractall() 'data' or 'tar' filters to contain untrusted archives "
+    "until a fixed RPM is absorbed; risk is realized only by a consumer that extracts attacker-supplied "
+    "archives relying on those filters. Accepted and tracked as TD-9 in docs/TECH-DEBT.md; review-by "
+    "2026-10-01."
+)
+
 
 class VexError(Exception):
     pass
@@ -74,21 +85,63 @@ class Finding:
     severity: str
     scanners: set[str] = field(default_factory=set)
     packages: set[str] = field(default_factory=set)
+    records: list[FindingRecord] = field(default_factory=list)
 
     def merge(self, other: Finding) -> None:
-        if SEVERITY_ORDER[other.severity] > SEVERITY_ORDER[self.severity]:
+        if other.scanners and (not self.scanners or SEVERITY_ORDER[other.severity] > SEVERITY_ORDER[self.severity]):
             self.severity = other.severity
         self.scanners.update(other.scanners)
         self.packages.update(other.packages)
+        self.records.extend(other.records)
+
+
+@dataclass(frozen=True)
+class FindingRecord:
+    scanner: str
+    package: str
+    version: str
+    has_fix: bool
+    identity_rejections: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class Statement:
     path: Path
+    index: int
     vulnerabilities: frozenset[str]
     products: frozenset[str]
     status: str
     justification: str | None
+    document: dict[str, Any]
+    statement: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class AcceptAndTrackDisposition:
+    vulnerability: str
+    products: tuple[str, ...]
+    packages: tuple[tuple[str, str], ...]
+    debt_id: str
+    review_by: str
+    statement_path: str
+
+
+ACCEPT_AND_TRACK_DISPOSITIONS = (
+    AcceptAndTrackDisposition(
+        vulnerability="CVE-2026-11940",
+        products=(
+            "local/ubi9-base-python:ci-amd64",
+            "local/ubi9-base-python:ci-arm64",
+        ),
+        packages=(
+            ("python3.12", "3.12.13-3.el9_8.1"),
+            ("python3.12-libs", "3.12.13-3.el9_8.1"),
+        ),
+        debt_id="TD-9",
+        review_by="2026-10-01",
+        statement_path="images/python/vex/cve-2026-11940.openvex.json",
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -412,17 +465,32 @@ def parse_trivy(data: dict[str, Any]) -> list[Finding]:
             label = f"Trivy Results[{result_index}].Vulnerabilities[{finding_index}]"
             if not isinstance(vulnerability, dict):
                 raise VexError(f"{label} must be an object")
-            vuln_id = non_empty_string(vulnerability.get("VulnerabilityID"), f"{label}.VulnerabilityID")
+            raw_vuln_id = vulnerability.get("VulnerabilityID")
+            vuln_id = non_empty_string(raw_vuln_id, f"{label}.VulnerabilityID")
             sev = finding_severity(vulnerability.get("Severity"), f"{label}.Severity")
-            package = non_empty_string(vulnerability.get("PkgName"), f"{label}.PkgName")
-            if sev not in HIGH_CRITICAL or trivy_has_fix(vulnerability):
+            raw_package = vulnerability.get("PkgName")
+            package = non_empty_string(raw_package, f"{label}.PkgName")
+            if sev not in HIGH_CRITICAL:
                 continue
+            raw_version = vulnerability.get("InstalledVersion")
+            version = raw_version.strip() if isinstance(raw_version, str) else ""
+            identity_rejections = tuple(
+                f"{field_label} must not contain surrounding whitespace"
+                for raw_value, normalized, field_label in (
+                    (raw_vuln_id, vuln_id, f"{label}.VulnerabilityID"),
+                    (raw_package, package, f"{label}.PkgName"),
+                    (raw_version, version, f"{label}.InstalledVersion"),
+                )
+                if isinstance(raw_value, str) and raw_value != normalized
+            )
+            has_fix = trivy_has_fix(vulnerability)
             findings.append(
                 Finding(
                     vulnerability=vuln_id,
                     severity=sev,
-                    scanners={"trivy"},
-                    packages={package},
+                    scanners=set() if has_fix else {"trivy"},
+                    packages=set() if has_fix else {package},
+                    records=[FindingRecord("trivy", package, version, has_fix, identity_rejections)],
                 )
             )
     return findings
@@ -466,17 +534,32 @@ def parse_grype(data: dict[str, Any]) -> list[Finding]:
         artifact = match.get("artifact")
         if not isinstance(artifact, dict):
             raise VexError(f"{label}.artifact must be an object")
-        vuln_id = non_empty_string(vulnerability.get("id"), f"{label}.vulnerability.id")
+        raw_vuln_id = vulnerability.get("id")
+        vuln_id = non_empty_string(raw_vuln_id, f"{label}.vulnerability.id")
         sev = finding_severity(vulnerability.get("severity"), f"{label}.vulnerability.severity")
-        package = non_empty_string(artifact.get("name"), f"{label}.artifact.name")
-        if sev not in HIGH_CRITICAL or grype_has_fix(vulnerability):
+        raw_package = artifact.get("name")
+        package = non_empty_string(raw_package, f"{label}.artifact.name")
+        if sev not in HIGH_CRITICAL:
             continue
+        raw_version = artifact.get("version")
+        version = raw_version.strip() if isinstance(raw_version, str) else ""
+        identity_rejections = tuple(
+            f"{field_label} must not contain surrounding whitespace"
+            for raw_value, normalized, field_label in (
+                (raw_vuln_id, vuln_id, f"{label}.vulnerability.id"),
+                (raw_package, package, f"{label}.artifact.name"),
+                (raw_version, version, f"{label}.artifact.version"),
+            )
+            if isinstance(raw_value, str) and raw_value != normalized
+        )
+        has_fix = grype_has_fix(vulnerability)
         findings.append(
             Finding(
                 vulnerability=vuln_id,
                 severity=sev,
-                scanners={"grype"},
-                packages={package},
+                scanners=set() if has_fix else {"grype"},
+                packages=set() if has_fix else {package},
+                records=[FindingRecord("grype", package, version, has_fix, identity_rejections)],
             )
         )
     return findings
@@ -490,7 +573,7 @@ def union_findings(findings: list[Finding]) -> list[Finding]:
             merged[finding.vulnerability] = finding
         else:
             existing.merge(finding)
-    return [merged[key] for key in sorted(merged)]
+    return [merged[key] for key in sorted(merged) if merged[key].scanners]
 
 
 def extract_vulnerability_ids(value: Any) -> frozenset[str]:
@@ -580,10 +663,13 @@ def load_vex_statements(vex_dir: Path) -> list[Statement]:
             statements.append(
                 Statement(
                     path=path,
+                    index=index,
                     vulnerabilities=vulnerabilities,
                     products=frozenset(products),
                     status=status,
                     justification=justification_text,
+                    document=document,
+                    statement=raw,
                 )
             )
     return statements
@@ -608,6 +694,180 @@ def accepted_statement(finding: Finding, product: str, statements: list[Statemen
     return None
 
 
+def expected_accept_and_track_document() -> dict[str, Any]:
+    return {
+        "@context": "https://openvex.dev/ns/v0.2.0",
+        "@id": "https://github.com/NWarila/ubi9-base-micro/images/python/vex/cve-2026-11940",
+        "author": "NWarila",
+        "timestamp": "2026-08-13T00:00:00Z",
+        "version": 1,
+        "statements": [
+            {
+                "vulnerability": {"name": "CVE-2026-11940"},
+                "products": [
+                    {
+                        "@id": "local/ubi9-base-python:ci-amd64",
+                        "subcomponents": [
+                            {"@id": "pkg:rpm/redhat/python3.12@3.12.13-3.el9_8.1"},
+                            {"@id": "pkg:rpm/redhat/python3.12-libs@3.12.13-3.el9_8.1"},
+                        ],
+                    },
+                    {
+                        "@id": "local/ubi9-base-python:ci-arm64",
+                        "subcomponents": [
+                            {"@id": "pkg:rpm/redhat/python3.12@3.12.13-3.el9_8.1"},
+                            {"@id": "pkg:rpm/redhat/python3.12-libs@3.12.13-3.el9_8.1"},
+                        ],
+                    },
+                ],
+                "status": "affected",
+                "action_statement": ACCEPT_AND_TRACK_ACTION_STATEMENT,
+                "action_statement_timestamp": "2026-08-13T00:00:00Z",
+            }
+        ],
+    }
+
+
+def finding_package_versions(finding: Finding) -> frozenset[tuple[str, str]]:
+    return frozenset((record.package, record.version) for record in finding.records if not record.has_fix)
+
+
+def disposition_identity_matches(
+    disposition: AcceptAndTrackDisposition,
+    finding: Finding,
+    product: str,
+) -> bool:
+    return (
+        disposition.vulnerability == finding.vulnerability
+        and product in disposition.products
+        and finding_package_versions(finding) == frozenset(disposition.packages)
+    )
+
+
+def statement_path_matches(path: Path, expected: str) -> bool:
+    expected_parts = Path(expected).parts
+    return len(path.parts) >= len(expected_parts) and path.parts[-len(expected_parts) :] == expected_parts
+
+
+def accept_and_track_statement_rejection(
+    statement: Statement,
+    disposition: AcceptAndTrackDisposition,
+) -> str | None:
+    if not statement_path_matches(statement.path, disposition.statement_path):
+        return f"statement source must be {disposition.statement_path}"
+
+    document = statement.document
+    expected = expected_accept_and_track_document()
+    top_keys = {"@context", "@id", "author", "timestamp", "version", "statements"}
+    if set(document) != top_keys:
+        return "statement document has unexpected or missing top-level fields"
+    for key in ("@context", "@id", "author", "timestamp", "version"):
+        if document.get(key) != expected[key]:
+            return f"statement document field {key} does not match the canonical value"
+
+    raw_statements = document.get("statements")
+    if not isinstance(raw_statements, list) or len(raw_statements) != 1:
+        return "statement document must contain exactly one statement"
+    raw = statement.statement
+    statement_keys = {
+        "vulnerability",
+        "products",
+        "status",
+        "action_statement",
+        "action_statement_timestamp",
+    }
+    if set(raw) != statement_keys:
+        return "accept-and-track statement has unexpected or missing fields"
+    vulnerability = raw.get("vulnerability")
+    if not isinstance(vulnerability, dict) or set(vulnerability) != {"name"}:
+        return "accept-and-track vulnerability must contain only its name"
+    if vulnerability.get("name") != disposition.vulnerability:
+        return f"accept-and-track vulnerability must be {disposition.vulnerability}"
+
+    expected_statement = expected["statements"][0]
+    if raw.get("products") != expected_statement["products"]:
+        return "accept-and-track products and subcomponents must match the canonical ordered set"
+    if raw.get("status") != "affected":
+        return "accept-and-track status must be affected"
+
+    action_statement = raw.get("action_statement")
+    if not isinstance(action_statement, str):
+        return "accept-and-track action_statement must be a string"
+    review_markers = re.findall(r"review-by [0-9]{4}-[0-9]{2}-[0-9]{2}", action_statement)
+    if len(review_markers) != 1:
+        return "accept-and-track action_statement must contain exactly one review-by marker"
+    expected_review_marker = f"review-by {disposition.review_by}"
+    if review_markers[0] != expected_review_marker:
+        return f"accept-and-track action_statement must contain {expected_review_marker}"
+    if disposition.debt_id not in action_statement:
+        return f"accept-and-track action_statement must name {disposition.debt_id}"
+    if action_statement != ACCEPT_AND_TRACK_ACTION_STATEMENT:
+        return "accept-and-track action_statement does not match the canonical text"
+    if raw.get("action_statement_timestamp") != expected_statement["action_statement_timestamp"]:
+        return "accept-and-track action_statement_timestamp does not match the canonical value"
+    if document != expected:
+        return "accept-and-track statement does not match the canonical document"
+    return None
+
+
+def accepted_accept_and_track_statement(
+    finding: Finding,
+    product: str,
+    statements: list[Statement],
+    dispositions: tuple[AcceptAndTrackDisposition, ...],
+    today: date,
+) -> tuple[Statement | None, AcceptAndTrackDisposition | None, str | None]:
+    identity_rejections = sorted({rejection for record in finding.records for rejection in record.identity_rejections})
+    if identity_rejections:
+        return (
+            None,
+            None,
+            "malformed accept-and-track scanner identity evidence: " + "; ".join(identity_rejections),
+        )
+    candidates = [
+        disposition for disposition in dispositions if disposition_identity_matches(disposition, finding, product)
+    ]
+    if len(candidates) != 1:
+        return None, None, "no exact in-tool accept-and-track allowlist entry"
+    disposition = candidates[0]
+    if disposition != ACCEPT_AND_TRACK_DISPOSITIONS[0]:
+        return None, None, "in-tool accept-and-track allowlist entry does not match the canonical authorization"
+
+    review_by = date.fromisoformat(disposition.review_by)
+    if today > review_by:
+        packages = ",".join(f"{name}@{version}" for name, version in disposition.packages)
+        raise VexError(
+            "expired accept-and-track entry: "
+            f"{disposition.vulnerability} product={product} packages={packages} "
+            f"debt={disposition.debt_id} review-by={disposition.review_by}"
+        )
+
+    fixed_records = sorted(
+        {
+            (record.scanner, record.package, record.version)
+            for record in finding.records
+            if record.has_fix and (record.package, record.version) in disposition.packages
+        }
+    )
+    if fixed_records:
+        evidence = ",".join(f"{scanner}:{package}@{version}" for scanner, package, version in fixed_records)
+        return None, None, f"valid fix evidence refuses accept-and-track disposition: {evidence}"
+
+    target_statements = [
+        statement for statement in statements if disposition.vulnerability in statement.vulnerabilities
+    ]
+    if len(target_statements) > 1:
+        locations = ",".join(f"{statement.path}#{statement.index}" for statement in target_statements)
+        raise VexError(f"duplicate accept-and-track statements for {disposition.vulnerability}: {locations}")
+    if not target_statements:
+        return None, None, f"no reviewed OpenVEX statement for {disposition.vulnerability}"
+    statement = target_statements[0]
+    rejection = accept_and_track_statement_rejection(statement, disposition)
+    if rejection is not None:
+        return None, None, rejection
+    return statement, disposition, None
+
+
 def assert_vex(
     product: str,
     trivy_json: Path,
@@ -615,6 +875,9 @@ def assert_vex(
     package_floor: Path,
     vex_dir: Path,
     emit: bool = True,
+    *,
+    accept_and_track: tuple[AcceptAndTrackDisposition, ...] = ACCEPT_AND_TRACK_DISPOSITIONS,
+    today: date | None = None,
 ) -> int:
     trivy_document = scanner_document(trivy_json, "Trivy")
     grype_document = scanner_document(grype_json, "Grype")
@@ -629,9 +892,30 @@ def assert_vex(
     if emit:
         print(f"unfixed HIGH/CRITICAL findings requiring VEX: {len(findings)}")
 
+    evaluation_date = date.today() if today is None else today
     missing: list[Finding] = []
+    rejection_reasons: list[tuple[Finding, str]] = []
     matched: list[tuple[Finding, Statement]] = []
+    tracked: list[tuple[Finding, Statement, AcceptAndTrackDisposition]] = []
     for finding in findings:
+        if (
+            finding.vulnerability == ACCEPT_AND_TRACK_DISPOSITIONS[0].vulnerability
+            and product in ACCEPT_AND_TRACK_DISPOSITIONS[0].products
+        ):
+            statement, disposition, rejection = accepted_accept_and_track_statement(
+                finding,
+                product,
+                statements,
+                accept_and_track,
+                evaluation_date,
+            )
+            if statement is not None and disposition is not None:
+                tracked.append((finding, statement, disposition))
+            else:
+                missing.append(finding)
+                if rejection is not None:
+                    rejection_reasons.append((finding, rejection))
+            continue
         statement = accepted_statement(finding, product, statements)
         if statement is None:
             missing.append(finding)
@@ -646,8 +930,22 @@ def assert_vex(
                 f"product={product} source={statement.path}"
             )
 
+    for _finding, statement, disposition in tracked:
+        if emit:
+            packages = ",".join(f"{name}@{version}" for name, version in disposition.packages)
+            print(
+                "accept-and-track disposition: "
+                f"{disposition.vulnerability} packages={packages} debt={disposition.debt_id} "
+                f"review-by={disposition.review_by} product={product} source={statement.path}"
+            )
+
+    if tracked and emit:
+        print(f"undispositioned unfixed HIGH/CRITICAL findings: {len(missing)}")
+
     if missing:
         if emit:
+            for finding, reason in rejection_reasons:
+                print(f"accept-and-track rejected for {finding.vulnerability}: {reason}", file=sys.stderr)
             print("un-vexed unfixed HIGH/CRITICAL findings:", file=sys.stderr)
             for finding in missing:
                 scanners = ",".join(sorted(finding.scanners))
@@ -1782,6 +2080,572 @@ def self_test() -> int:
         print("assert-vex self-test: Trivy FixedVersion without Status honoured")
         print("assert-vex self-test: Trivy fixed Status without FixedVersion honoured")
         print("assert-vex self-test: Trivy fix_deferred status honoured")
+
+        accept_product = "local/ubi9-base-python:ci-amd64"
+        accept_vex_dir = tmp / "images" / "python" / "vex"
+        accept_vex_dir.mkdir(parents=True)
+        canonical_vex_name = "cve-2026-11940.openvex.json"
+        canonical_vex = expected_accept_and_track_document()
+
+        accept_trivy = copy.deepcopy(clean_trivy)
+        accept_trivy["ArtifactName"] = accept_product
+        accept_trivy["Metadata"]["ImageConfig"]["architecture"] = "amd64"
+        accept_trivy["Metadata"].pop("RepoDigests")
+        accept_trivy["Results"][0]["Packages"] = [
+            {"Name": "glibc", "Version": "2.34"},
+            {"Name": "python3.12", "Version": "3.12.13-3.el9_8.1"},
+            {"Name": "python3.12-libs", "Version": "3.12.13-3.el9_8.1"},
+        ]
+        accept_trivy["Results"][0]["Vulnerabilities"] = []
+
+        accept_grype = copy.deepcopy(clean_grype)
+        accept_grype["source"]["target"]["userInput"] = accept_product
+        accept_grype["source"]["target"]["architecture"] = "amd64"
+        accept_grype["source"]["target"]["repoDigests"] = []
+
+        def target_trivy_records(*, fixed: bool) -> list[dict[str, Any]]:
+            records: list[dict[str, Any]] = []
+            for package in ("python3.12", "python3.12-libs"):
+                record: dict[str, Any] = {
+                    "VulnerabilityID": "CVE-2026-11940",
+                    "PkgName": package,
+                    "InstalledVersion": "3.12.13-3.el9_8.1",
+                    "Severity": "HIGH",
+                }
+                if fixed:
+                    record.update({"FixedVersion": "3.12.13-4.el9_8", "Status": "fixed"})
+                records.append(record)
+            return records
+
+        def target_grype_records(*, fixed: bool) -> list[dict[str, Any]]:
+            records: list[dict[str, Any]] = []
+            for package in ("python3.12", "python3.12-libs"):
+                vulnerability: dict[str, Any] = {
+                    "id": "CVE-2026-11940",
+                    "severity": "High",
+                }
+                if fixed:
+                    vulnerability["fix"] = {"versions": ["3.12.13-4.el9_8"], "state": "fixed"}
+                records.append(
+                    {
+                        "vulnerability": vulnerability,
+                        "artifact": {"name": package, "version": "3.12.13-3.el9_8.1"},
+                    }
+                )
+            return records
+
+        accept_grype["matches"] = target_grype_records(fixed=False)
+
+        def bind_accept_reports(
+            trivy: dict[str, Any],
+            grype: dict[str, Any],
+            fixture_product: str,
+            architecture: str = "amd64",
+        ) -> None:
+            trivy["ArtifactName"] = fixture_product
+            trivy["Metadata"]["ImageConfig"]["architecture"] = architecture
+            trivy["Metadata"].pop("RepoDigests", None)
+            grype["source"]["target"]["userInput"] = fixture_product
+            grype["source"]["target"]["architecture"] = architecture
+            grype["source"]["target"]["repoDigests"] = []
+
+        def run_accept_fixture(
+            trivy: dict[str, Any],
+            grype: dict[str, Any],
+            *,
+            fixture_product: str = accept_product,
+            document: dict[str, Any] | None = canonical_vex,
+            filename: str = canonical_vex_name,
+            extra_documents: tuple[tuple[str, dict[str, Any]], ...] = (),
+            dispositions: tuple[AcceptAndTrackDisposition, ...] = ACCEPT_AND_TRACK_DISPOSITIONS,
+            evaluation_date: date = date(2026, 8, 13),
+        ) -> tuple[int | None, str, VexError | None]:
+            for old_document in accept_vex_dir.glob("*.json"):
+                old_document.unlink()
+            if document is not None:
+                write_json(accept_vex_dir / filename, document)
+            for extra_name, extra_document in extra_documents:
+                write_json(accept_vex_dir / extra_name, extra_document)
+            write_json(trivy_json, trivy)
+            write_json(grype_json, grype)
+            write_json(package_floor, clean_floor)
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            try:
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    result = assert_vex(
+                        fixture_product,
+                        trivy_json,
+                        grype_json,
+                        package_floor,
+                        accept_vex_dir,
+                        emit=True,
+                        accept_and_track=dispositions,
+                        today=evaluation_date,
+                    )
+            except VexError as exc:
+                return None, stdout.getvalue() + stderr.getvalue(), exc
+            return result, stdout.getvalue() + stderr.getvalue(), None
+
+        def expect_accept_rejection(
+            label: str,
+            *,
+            expected_reason: str,
+            trivy: dict[str, Any] = accept_trivy,
+            grype: dict[str, Any] = accept_grype,
+            fixture_product: str = accept_product,
+            document: dict[str, Any] | None = canonical_vex,
+            filename: str = canonical_vex_name,
+            dispositions: tuple[AcceptAndTrackDisposition, ...] = ACCEPT_AND_TRACK_DISPOSITIONS,
+        ) -> None:
+            result, output, error = run_accept_fixture(
+                copy.deepcopy(trivy),
+                copy.deepcopy(grype),
+                fixture_product=fixture_product,
+                document=copy.deepcopy(document),
+                filename=filename,
+                dispositions=dispositions,
+            )
+            if error is not None or result != 1 or expected_reason not in output:
+                print(
+                    f"self-test failed: {label} rejected for wrong reason: "
+                    f"result={result} error={error} output={output}",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if any(line.startswith("accept-and-track disposition:") for line in output.splitlines()):
+                print(f"self-test failed: {label} emitted a disposition: {output}", file=sys.stderr)
+                raise SystemExit(1)
+            print(f"assert-vex self-test: {label} rejected at its expected discriminator")
+
+        baseline_result, baseline_output, baseline_error = run_accept_fixture(accept_trivy, accept_grype)
+        baseline_markers = [
+            "accept-and-track disposition: CVE-2026-11940",
+            "python3.12@3.12.13-3.el9_8.1",
+            "python3.12-libs@3.12.13-3.el9_8.1",
+            "debt=TD-9",
+            "review-by=2026-10-01",
+            "undispositioned unfixed HIGH/CRITICAL findings: 0",
+        ]
+        if (
+            baseline_error is not None
+            or baseline_result != 0
+            or any(marker not in baseline_output for marker in baseline_markers)
+        ):
+            print(
+                "self-test failed: canonical accept-and-track fixture did not pass with complete output: "
+                f"result={baseline_result} error={baseline_error} output={baseline_output}",
+                file=sys.stderr,
+            )
+            return 1
+        print("assert-vex self-test: canonical accept-and-track disposition passed with zero undispositioned findings")
+
+        padded_identity_probes: list[tuple[str, Callable[[dict[str, Any]], Any], str]] = [
+            (
+                "accept-and-track padded scanner vulnerability id",
+                lambda match: match["vulnerability"].__setitem__("id", " CVE-2026-11940 "),
+                "malformed accept-and-track scanner identity evidence: "
+                "Grype matches[0].vulnerability.id must not contain surrounding whitespace",
+            ),
+            (
+                "accept-and-track padded scanner package name",
+                lambda match: match["artifact"].__setitem__("name", " python3.12 "),
+                "malformed accept-and-track scanner identity evidence: "
+                "Grype matches[0].artifact.name must not contain surrounding whitespace",
+            ),
+            (
+                "accept-and-track padded scanner version",
+                lambda match: match["artifact"].__setitem__("version", " 3.12.13-3.el9_8.1 "),
+                "malformed accept-and-track scanner identity evidence: "
+                "Grype matches[0].artifact.version must not contain surrounding whitespace",
+            ),
+        ]
+        for label, mutate_match, expected_reason in padded_identity_probes:
+            padded_grype = copy.deepcopy(accept_grype)
+            mutate_match(padded_grype["matches"][0])
+            expect_accept_rejection(
+                label,
+                expected_reason=expected_reason,
+                grype=padded_grype,
+            )
+        print("assert-vex self-test: 3/3 padded scanner identity bound-pair probes emitted no disposition")
+
+        def mutate_vex(apply: Callable[[dict[str, Any]], Any]) -> dict[str, Any]:
+            mutated = copy.deepcopy(canonical_vex)
+            apply(mutated)
+            return mutated
+
+        statement_mutations: list[tuple[str, dict[str, Any], str]] = [
+            (
+                "accept-and-track statement wrong CVE",
+                mutate_vex(lambda value: value["statements"][0]["vulnerability"].update(name="CVE-2099-0000")),
+                "no reviewed OpenVEX statement for CVE-2026-11940",
+            ),
+            (
+                "accept-and-track statement first package altered",
+                mutate_vex(
+                    lambda value: value["statements"][0]["products"][0]["subcomponents"][0].update(
+                        {"@id": "pkg:rpm/redhat/python3.12-extra@3.12.13-3.el9_8.1"}
+                    )
+                ),
+                "accept-and-track products and subcomponents must match the canonical ordered set",
+            ),
+            (
+                "accept-and-track statement first package missing",
+                mutate_vex(lambda value: value["statements"][0]["products"][0]["subcomponents"].pop(0)),
+                "accept-and-track products and subcomponents must match the canonical ordered set",
+            ),
+            (
+                "accept-and-track statement second package altered",
+                mutate_vex(
+                    lambda value: value["statements"][0]["products"][0]["subcomponents"][1].update(
+                        {"@id": "pkg:rpm/redhat/python3.12-libs-extra@3.12.13-3.el9_8.1"}
+                    )
+                ),
+                "accept-and-track products and subcomponents must match the canonical ordered set",
+            ),
+            (
+                "accept-and-track statement second package missing",
+                mutate_vex(lambda value: value["statements"][0]["products"][0]["subcomponents"].pop(1)),
+                "accept-and-track products and subcomponents must match the canonical ordered set",
+            ),
+            (
+                "accept-and-track statement extra package",
+                mutate_vex(
+                    lambda value: value["statements"][0]["products"][0]["subcomponents"].append(
+                        {"@id": "pkg:rpm/redhat/extra@1"}
+                    )
+                ),
+                "accept-and-track products and subcomponents must match the canonical ordered set",
+            ),
+            (
+                "accept-and-track statement first version altered",
+                mutate_vex(
+                    lambda value: value["statements"][0]["products"][0]["subcomponents"][0].update(
+                        {"@id": "pkg:rpm/redhat/python3.12@3.12.13-3.el9_8.2"}
+                    )
+                ),
+                "accept-and-track products and subcomponents must match the canonical ordered set",
+            ),
+            (
+                "accept-and-track statement second version altered",
+                mutate_vex(
+                    lambda value: value["statements"][0]["products"][0]["subcomponents"][1].update(
+                        {"@id": "pkg:rpm/redhat/python3.12-libs@3.12.13-3.el9_8.2"}
+                    )
+                ),
+                "accept-and-track products and subcomponents must match the canonical ordered set",
+            ),
+            (
+                "accept-and-track statement wrong product",
+                mutate_vex(
+                    lambda value: value["statements"][0]["products"][0].update(
+                        {"@id": "local/ubi9-base-python:ci-other"}
+                    )
+                ),
+                "accept-and-track products and subcomponents must match the canonical ordered set",
+            ),
+            (
+                "accept-and-track statement status other than affected",
+                mutate_vex(lambda value: value["statements"][0].update(status="fixed")),
+                "accept-and-track status must be affected",
+            ),
+            (
+                "accept-and-track statement zero review markers",
+                mutate_vex(
+                    lambda value: value["statements"][0].update(
+                        action_statement=ACCEPT_AND_TRACK_ACTION_STATEMENT.replace("review-by", "review by")
+                    )
+                ),
+                "accept-and-track action_statement must contain exactly one review-by marker",
+            ),
+            (
+                "accept-and-track statement two review markers",
+                mutate_vex(
+                    lambda value: value["statements"][0].update(
+                        action_statement=ACCEPT_AND_TRACK_ACTION_STATEMENT + " review-by 2026-10-01"
+                    )
+                ),
+                "accept-and-track action_statement must contain exactly one review-by marker",
+            ),
+            (
+                "accept-and-track statement wrong review date",
+                mutate_vex(
+                    lambda value: value["statements"][0].update(
+                        action_statement=ACCEPT_AND_TRACK_ACTION_STATEMENT.replace("2026-10-01", "2026-10-02")
+                    )
+                ),
+                "accept-and-track action_statement must contain review-by 2026-10-01",
+            ),
+            (
+                "accept-and-track statement wrong debt id",
+                mutate_vex(
+                    lambda value: value["statements"][0].update(
+                        action_statement=ACCEPT_AND_TRACK_ACTION_STATEMENT.replace("TD-9", "TD-10")
+                    )
+                ),
+                "accept-and-track action_statement must name TD-9",
+            ),
+            (
+                "accept-and-track statement added alias",
+                mutate_vex(lambda value: value["statements"][0]["vulnerability"].update(aliases=[])),
+                "accept-and-track vulnerability must contain only its name",
+            ),
+            (
+                "accept-and-track statement added product",
+                mutate_vex(
+                    lambda value: value["statements"][0]["products"].append(
+                        {"@id": "local/ubi9-base-python:ci-extra", "subcomponents": []}
+                    )
+                ),
+                "accept-and-track products and subcomponents must match the canonical ordered set",
+            ),
+        ]
+        for label, mutated_document, expected_reason in statement_mutations:
+            expect_accept_rejection(label, expected_reason=expected_reason, document=mutated_document)
+
+        expect_accept_rejection(
+            "accept-and-track allowlist present but statement absent",
+            expected_reason="no reviewed OpenVEX statement for CVE-2026-11940",
+            document=None,
+        )
+        expect_accept_rejection(
+            "accept-and-track statement present but allowlist absent",
+            expected_reason="no exact in-tool accept-and-track allowlist entry",
+            dispositions=(),
+        )
+        expect_accept_rejection(
+            "accept-and-track canonical statement under wrong file name",
+            expected_reason="statement source must be images/python/vex/cve-2026-11940.openvex.json",
+            filename="wrong.openvex.json",
+        )
+
+        canonical_disposition = ACCEPT_AND_TRACK_DISPOSITIONS[0]
+        allowlist_mutations: list[tuple[str, AcceptAndTrackDisposition, str]] = [
+            (
+                "accept-and-track allowlist wrong CVE",
+                replace(canonical_disposition, vulnerability="CVE-2099-0000"),
+                "no exact in-tool accept-and-track allowlist entry",
+            ),
+            (
+                "accept-and-track allowlist wrong product",
+                replace(canonical_disposition, products=("local/ubi9-base-python:ci-other",)),
+                "no exact in-tool accept-and-track allowlist entry",
+            ),
+            (
+                "accept-and-track allowlist missing first package",
+                replace(canonical_disposition, packages=canonical_disposition.packages[1:]),
+                "no exact in-tool accept-and-track allowlist entry",
+            ),
+            (
+                "accept-and-track allowlist missing second package",
+                replace(canonical_disposition, packages=canonical_disposition.packages[:1]),
+                "no exact in-tool accept-and-track allowlist entry",
+            ),
+            (
+                "accept-and-track allowlist extra package",
+                replace(canonical_disposition, packages=(*canonical_disposition.packages, ("extra", "1"))),
+                "no exact in-tool accept-and-track allowlist entry",
+            ),
+            (
+                "accept-and-track allowlist first version altered",
+                replace(
+                    canonical_disposition,
+                    packages=(("python3.12", "3.12.13-3.el9_8.2"), canonical_disposition.packages[1]),
+                ),
+                "no exact in-tool accept-and-track allowlist entry",
+            ),
+            (
+                "accept-and-track allowlist second version altered",
+                replace(
+                    canonical_disposition,
+                    packages=(canonical_disposition.packages[0], ("python3.12-libs", "3.12.13-3.el9_8.2")),
+                ),
+                "no exact in-tool accept-and-track allowlist entry",
+            ),
+            (
+                "accept-and-track allowlist wrong debt id",
+                replace(canonical_disposition, debt_id="TD-10"),
+                "in-tool accept-and-track allowlist entry does not match the canonical authorization",
+            ),
+            (
+                "accept-and-track allowlist wrong review date",
+                replace(canonical_disposition, review_by="2026-10-02"),
+                "in-tool accept-and-track allowlist entry does not match the canonical authorization",
+            ),
+            (
+                "accept-and-track allowlist wrong statement path",
+                replace(canonical_disposition, statement_path="images/python/vex/other.openvex.json"),
+                "in-tool accept-and-track allowlist entry does not match the canonical authorization",
+            ),
+        ]
+        for label, mutated_disposition, expected_reason in allowlist_mutations:
+            expect_accept_rejection(
+                label,
+                expected_reason=expected_reason,
+                dispositions=(mutated_disposition,),
+            )
+
+        unintended_trivy = copy.deepcopy(accept_trivy)
+        unintended_grype = copy.deepcopy(accept_grype)
+        unintended_product = "local/ubi9-base-python:ci-amd64-extra"
+        bind_accept_reports(unintended_trivy, unintended_grype, unintended_product)
+        expect_accept_rejection(
+            "accept-and-track unintended base-python tag",
+            expected_reason="un-vexed unfixed HIGH/CRITICAL findings",
+            trivy=unintended_trivy,
+            grype=unintended_grype,
+            fixture_product=unintended_product,
+        )
+
+        duplicate_file_result, _, duplicate_file_error = run_accept_fixture(
+            accept_trivy,
+            accept_grype,
+            extra_documents=(("duplicate.openvex.json", canonical_vex),),
+        )
+        if (
+            duplicate_file_result is not None
+            or duplicate_file_error is None
+            or "duplicate accept-and-track statements for CVE-2026-11940" not in str(duplicate_file_error)
+        ):
+            print(
+                f"self-test failed: duplicate accept-and-track file rejected for wrong reason: {duplicate_file_error}",
+                file=sys.stderr,
+            )
+            return 1
+        print("assert-vex self-test: duplicate accept-and-track file rejected at its expected discriminator")
+
+        duplicate_statement = copy.deepcopy(canonical_vex)
+        duplicate_statement["statements"].append(copy.deepcopy(duplicate_statement["statements"][0]))
+        duplicate_statement_result, _, duplicate_statement_error = run_accept_fixture(
+            accept_trivy,
+            accept_grype,
+            document=duplicate_statement,
+        )
+        if (
+            duplicate_statement_result is not None
+            or duplicate_statement_error is None
+            or "duplicate accept-and-track statements for CVE-2026-11940" not in str(duplicate_statement_error)
+        ):
+            print(
+                "self-test failed: duplicate accept-and-track statement rejected for wrong reason: "
+                f"{duplicate_statement_error}",
+                file=sys.stderr,
+            )
+            return 1
+        print("assert-vex self-test: duplicate accept-and-track statement rejected at its expected discriminator")
+
+        expired_result, _, expired_error = run_accept_fixture(
+            accept_trivy,
+            accept_grype,
+            evaluation_date=date(2026, 10, 2),
+        )
+        expected_expiry = (
+            "expired accept-and-track entry: CVE-2026-11940 product=local/ubi9-base-python:ci-amd64 "
+            "packages=python3.12@3.12.13-3.el9_8.1,python3.12-libs@3.12.13-3.el9_8.1 "
+            "debt=TD-9 review-by=2026-10-01"
+        )
+        if expired_result is not None or expired_error is None or str(expired_error) != expected_expiry:
+            print(
+                f"self-test failed: elapsed accept-and-track entry rejected for wrong reason: {expired_error}",
+                file=sys.stderr,
+            )
+            return 1
+        print("assert-vex self-test: elapsed candidate-scoped entry failed with its complete identity")
+
+        micro_product = "ghcr.io/nwarila/ubi9-base-micro:base-micro"
+        micro_trivy = copy.deepcopy(accept_trivy)
+        micro_grype = copy.deepcopy(accept_grype)
+        bind_accept_reports(micro_trivy, micro_grype, micro_product)
+        micro_before = run_accept_fixture(
+            micro_trivy,
+            micro_grype,
+            fixture_product=micro_product,
+            evaluation_date=date(2026, 10, 1),
+        )
+        micro_after = run_accept_fixture(
+            micro_trivy,
+            micro_grype,
+            fixture_product=micro_product,
+            evaluation_date=date(2026, 10, 2),
+        )
+        if (
+            micro_before[:2] != micro_after[:2]
+            or micro_before[0] != 1
+            or "un-vexed unfixed HIGH/CRITICAL findings" not in micro_before[1]
+            or any(line.startswith("accept-and-track disposition:") for line in micro_before[1].splitlines())
+            or micro_before[2] is not None
+            or micro_after[2] is not None
+        ):
+            print("self-test failed: micro product output changed after the review date", file=sys.stderr)
+            return 1
+        print("assert-vex self-test: micro product evaluation remained byte-identical after review date")
+
+        dormant_trivy = copy.deepcopy(accept_trivy)
+        dormant_grype = copy.deepcopy(clean_grype)
+        bind_accept_reports(dormant_trivy, dormant_grype, accept_product)
+        dormant_before = run_accept_fixture(
+            dormant_trivy,
+            dormant_grype,
+            evaluation_date=date(2026, 10, 1),
+        )
+        dormant_after = run_accept_fixture(
+            dormant_trivy,
+            dormant_grype,
+            evaluation_date=date(2026, 10, 2),
+        )
+        if (
+            dormant_before[:2] != dormant_after[:2]
+            or dormant_before[0] != 0
+            or "unfixed HIGH/CRITICAL findings requiring VEX: 0" not in dormant_before[1]
+            or dormant_before[2] is not None
+            or dormant_after[2] is not None
+        ):
+            print("self-test failed: dormant base-python entry output changed after the review date", file=sys.stderr)
+            return 1
+        print("assert-vex self-test: dormant base-python entry evaluation remained byte-identical after review date")
+
+        trivy_fixed = copy.deepcopy(accept_trivy)
+        trivy_fixed["Results"][0]["Vulnerabilities"] = target_trivy_records(fixed=True)
+        grype_unfixed = copy.deepcopy(accept_grype)
+        expect_accept_rejection(
+            "accept-and-track Trivy-fixed Grype-unfixed contradiction",
+            expected_reason=(
+                "valid fix evidence refuses accept-and-track disposition: "
+                "trivy:python3.12@3.12.13-3.el9_8.1,trivy:python3.12-libs@3.12.13-3.el9_8.1"
+            ),
+            trivy=trivy_fixed,
+            grype=grype_unfixed,
+        )
+
+        trivy_unfixed = copy.deepcopy(accept_trivy)
+        trivy_unfixed["Results"][0]["Vulnerabilities"] = target_trivy_records(fixed=False)
+        grype_fixed = copy.deepcopy(accept_grype)
+        grype_fixed["matches"] = target_grype_records(fixed=True)
+        expect_accept_rejection(
+            "accept-and-track Grype-fixed Trivy-unfixed contradiction",
+            expected_reason=(
+                "valid fix evidence refuses accept-and-track disposition: "
+                "grype:python3.12@3.12.13-3.el9_8.1,grype:python3.12-libs@3.12.13-3.el9_8.1"
+            ),
+            trivy=trivy_unfixed,
+            grype=grype_fixed,
+        )
+
+        all_fixed_result, all_fixed_output, all_fixed_error = run_accept_fixture(trivy_fixed, grype_fixed)
+        if (
+            all_fixed_error is not None
+            or all_fixed_result != 0
+            or "unfixed HIGH/CRITICAL findings requiring VEX: 0" not in all_fixed_output
+            or "accept-and-track disposition:" in all_fixed_output
+        ):
+            print(
+                "self-test failed: all-fixed target pair did not take the trivial pass: "
+                f"result={all_fixed_result} error={all_fixed_error} output={all_fixed_output}",
+                file=sys.stderr,
+            )
+            return 1
+        print("assert-vex self-test: all-fixed target pair passed without an accept-and-track disposition")
 
         critical_trivy = copy.deepcopy(clean_trivy)
         critical_trivy["Results"][0]["Vulnerabilities"] = [

@@ -44,10 +44,13 @@ Documentation for this repository follows the Diataxis framework.
 - [`fips.md`](compliance/fips.md) - OpenSSL FIPS-provider ledger, family CMVP context, out-of-scope certificates, approved-mode mechanism, per-architecture validation scope, and non-FIPS-host scope.
 - [`nist-800-190.md`](compliance/nist-800-190.md) - section 4.1 image-control predicate URI, control mapping, and not-CIS-Docker scope.
 - [`stig.md`](compliance/stig.md) - image-scoped RHEL9 STIG tailoring, mass-N/A guard, ARF predicate type, and scan scope.
-- [`vex.md`](compliance/vex.md) - CODEOWNERS-gated VEX authoring flow for the default-deny unfixed HIGH/CRITICAL gate.
+- [`vex.md`](compliance/vex.md) - CODEOWNERS-gated VEX authoring flow for the
+  default-deny unfixed HIGH/CRITICAL gate, including the exact expiring TD-9
+  accept-and-track disposition.
 
 ## Maintenance Ledgers
 
 - [`TECH-DEBT.md`](TECH-DEBT.md) - tracked repository debt and scoped exceptions,
   including the retained-RPM payload-verification limitation and the Python
-  identity-step static-analysis boundary.
+  identity-step static-analysis boundary, plus the expiring known-affected
+  base-python CVE disposition.

@@ -21,7 +21,8 @@ import sys
 import tarfile
 import tempfile
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from datetime import date
 from pathlib import Path
 from typing import Any, cast
 
@@ -1223,6 +1224,7 @@ def check_required_files() -> None:
         "images/python/stig/rhel9-base-python-tailoring.xml",
         "images/python/stig/tailoring-justifications.json",
         "images/python/vex/README.md",
+        "images/python/vex/cve-2026-11940.openvex.json",
         "images/python/vex/cve-2026-31790.openvex.json",
         "images/python/vex/sqlite-component-not-present.openvex.json",
         "images/python/tools/run-python-gates.sh",
@@ -9295,6 +9297,320 @@ def check_python_sqlite_vex_self_test() -> None:
     )
 
 
+PYTHON_ACCEPT_AND_TRACK_VEX_PATH = "images/python/vex/cve-2026-11940.openvex.json"
+PYTHON_ACCEPT_AND_TRACK_ACTION = (
+    "This image ships the vulnerable CPython standard-library tarfile module in python3.12-libs "
+    "3.12.13-3.el9_8.1. As of 2026-08-13 Red Hat lists RHEL 9 python3.12 as Affected with no fixed RPM "
+    "(RHEL 9 python3.9 is fixed via RHSA-2026:54268; the upstream CPython 3.12 branch is fixed). "
+    "Consumers must not rely on tarfile.extractall() 'data' or 'tar' filters to contain untrusted archives "
+    "until a fixed RPM is absorbed; risk is realized only by a consumer that extracts attacker-supplied "
+    "archives relying on those filters. Accepted and tracked as TD-9 in docs/TECH-DEBT.md; review-by "
+    "2026-10-01."
+)
+PYTHON_ACCEPT_AND_TRACK_ENTRY = {
+    "vulnerability": "CVE-2026-11940",
+    "products": (
+        "local/ubi9-base-python:ci-amd64",
+        "local/ubi9-base-python:ci-arm64",
+    ),
+    "packages": (
+        ("python3.12", "3.12.13-3.el9_8.1"),
+        ("python3.12-libs", "3.12.13-3.el9_8.1"),
+    ),
+    "debt_id": "TD-9",
+    "review_by": "2026-10-01",
+    "statement_path": PYTHON_ACCEPT_AND_TRACK_VEX_PATH,
+}
+
+
+def _expected_python_accept_and_track_vex() -> dict[str, Any]:
+    return {
+        "@context": "https://openvex.dev/ns/v0.2.0",
+        "@id": "https://github.com/NWarila/ubi9-base-micro/images/python/vex/cve-2026-11940",
+        "author": "NWarila",
+        "timestamp": "2026-08-13T00:00:00Z",
+        "version": 1,
+        "statements": [
+            {
+                "vulnerability": {"name": "CVE-2026-11940"},
+                "products": [
+                    {
+                        "@id": "local/ubi9-base-python:ci-amd64",
+                        "subcomponents": [
+                            {"@id": "pkg:rpm/redhat/python3.12@3.12.13-3.el9_8.1"},
+                            {"@id": "pkg:rpm/redhat/python3.12-libs@3.12.13-3.el9_8.1"},
+                        ],
+                    },
+                    {
+                        "@id": "local/ubi9-base-python:ci-arm64",
+                        "subcomponents": [
+                            {"@id": "pkg:rpm/redhat/python3.12@3.12.13-3.el9_8.1"},
+                            {"@id": "pkg:rpm/redhat/python3.12-libs@3.12.13-3.el9_8.1"},
+                        ],
+                    },
+                ],
+                "status": "affected",
+                "action_statement": PYTHON_ACCEPT_AND_TRACK_ACTION,
+                "action_statement_timestamp": "2026-08-13T00:00:00Z",
+            }
+        ],
+    }
+
+
+def python_accept_and_track_vex_errors(document: dict[str, Any]) -> list[str]:
+    if document == _expected_python_accept_and_track_vex():
+        return []
+    return ["python accept-and-track VEX must equal the canonical CVE-2026-11940 document"]
+
+
+def extract_python_accept_and_track_entries(source: str) -> tuple[list[dict[str, Any]], list[str]]:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return [], [f"assert-vex source does not parse: {exc}"]
+    assignments = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "ACCEPT_AND_TRACK_DISPOSITIONS" for target in node.targets
+        )
+    ]
+    if len(assignments) != 1:
+        return [], ["assert-vex must define ACCEPT_AND_TRACK_DISPOSITIONS exactly once"]
+    value = assignments[0].value
+    if not isinstance(value, ast.Tuple) or len(value.elts) != 1:
+        return [], ["assert-vex accept-and-track allowlist must contain exactly one entry"]
+    call = value.elts[0]
+    if (
+        not isinstance(call, ast.Call)
+        or not isinstance(call.func, ast.Name)
+        or call.func.id != "AcceptAndTrackDisposition"
+        or call.args
+        or any(keyword.arg is None for keyword in call.keywords)
+    ):
+        return [], ["assert-vex accept-and-track entry must use one keyword-only AcceptAndTrackDisposition call"]
+    entry: dict[str, Any] = {}
+    try:
+        for keyword in call.keywords:
+            if keyword.arg is None or keyword.arg in entry:
+                return [], ["assert-vex accept-and-track entry contains a duplicate or expanded field"]
+            entry[keyword.arg] = ast.literal_eval(keyword.value)
+    except (ValueError, TypeError) as exc:
+        return [], [f"assert-vex accept-and-track entry fields must be literals: {exc}"]
+    return [entry], []
+
+
+def python_accept_and_track_allowlist_errors(entries: list[dict[str, Any]]) -> list[str]:
+    if entries == [PYTHON_ACCEPT_AND_TRACK_ENTRY]:
+        return []
+    return ["assert-vex accept-and-track allowlist must equal the exact TD-9 authorization"]
+
+
+def python_accept_and_track_expiry_errors(
+    entries: list[dict[str, Any]],
+    evaluation_date: date,
+) -> list[str]:
+    errors: list[str] = []
+    for entry in entries:
+        try:
+            review_by = date.fromisoformat(cast(str, entry["review_by"]))
+        except (KeyError, TypeError, ValueError):
+            errors.append("assert-vex accept-and-track entry has an invalid review-by date")
+            continue
+        if evaluation_date > review_by:
+            entry_packages = cast(tuple[tuple[str, str], ...], entry["packages"])
+            packages = ",".join(f"{name}@{version}" for name, version in entry_packages)
+            products = ",".join(cast(tuple[str, ...], entry["products"]))
+            errors.append(
+                "expired repository accept-and-track entry: "
+                f"{entry['vulnerability']} products={products} packages={packages} "
+                f"debt={entry['debt_id']} review-by={entry['review_by']}"
+            )
+    return errors
+
+
+def check_python_accept_and_track() -> None:
+    document = json.loads(read(PYTHON_ACCEPT_AND_TRACK_VEX_PATH))
+    require(isinstance(document, dict), "python accept-and-track VEX document must be a JSON object")
+    typed_document = cast(dict[str, Any], document)
+    require(
+        not python_accept_and_track_vex_errors(typed_document),
+        "python accept-and-track VEX must match every canonical field, key set, array length, and order",
+    )
+
+    script = read("tools/assert-vex.py")
+    script_tree = ast.parse(script)
+    action_assignments = [
+        node
+        for node in script_tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "ACCEPT_AND_TRACK_ACTION_STATEMENT" for target in node.targets
+        )
+    ]
+    require(
+        len(action_assignments) == 1,
+        "assert-vex must define ACCEPT_AND_TRACK_ACTION_STATEMENT exactly once",
+    )
+    try:
+        gate_action_statement = ast.literal_eval(action_assignments[0].value)
+    except (ValueError, TypeError) as exc:
+        raise VerifyError("assert-vex accept-and-track action statement must be a literal") from exc
+    require(
+        gate_action_statement == PYTHON_ACCEPT_AND_TRACK_ACTION,
+        "assert-vex accept-and-track action statement must equal the canonical VEX text",
+    )
+    entries, extraction_errors = extract_python_accept_and_track_entries(script)
+    require(not extraction_errors, "; ".join(extraction_errors))
+    require(not python_accept_and_track_allowlist_errors(entries), "assert-vex TD-9 allowlist authorization drifted")
+    require(
+        not python_accept_and_track_expiry_errors(entries, date.today()),
+        "; ".join(python_accept_and_track_expiry_errors(entries, date.today())),
+    )
+    for marker in [
+        "FindingRecord",
+        "accepted_accept_and_track_statement",
+        "valid fix evidence refuses accept-and-track disposition",
+        "duplicate accept-and-track statements",
+        "expired accept-and-track entry",
+        "undispositioned unfixed HIGH/CRITICAL findings",
+        "micro product evaluation remained byte-identical after review date",
+        "all-fixed target pair passed without an accept-and-track disposition",
+        "malformed accept-and-track scanner identity evidence",
+        "accept-and-track padded scanner vulnerability id",
+        "accept-and-track padded scanner package name",
+        "accept-and-track padded scanner version",
+    ]:
+        require(marker in script, f"assert-vex accept-and-track implementation missing marker: {marker}")
+
+    documentation_markers = {
+        "images/python/vex/README.md": [
+            "affected` satisfies the gate only for the exact, expiring CVE-2026-11940",
+            "python3.12` and `python3.12-libs",
+            "3.12.13-3.el9_8.1",
+            "TD-9",
+            "review-by 2026-10-01",
+            "tools/verify.py` independently expires a dormant",
+        ],
+        "docs/TECH-DEBT.md": [
+            "## TD-9: Expiring acceptance of CVE-2026-11940 in base-python",
+            "local/ubi9-base-python:ci-amd64",
+            "local/ubi9-base-python:ci-arm64",
+            "python3.12` and `python3.12-libs",
+            "3.12.13-3.el9_8.1",
+            "review-by 2026-10-01",
+            "the same pull request removes the in-tool allowlist entry",
+            "flips the OpenVEX statement to `fixed`",
+        ],
+        "docs/reference/gates.md": [
+            "The only `affected` status that satisfies the gate",
+            "TD-9 is separate from that fixable-CVE exception",
+            "Every other unfixed HIGH or CRITICAL finding remains default-denied",
+        ],
+        "docs/reference/verify.md": [
+            "The base-python gate has one additional, separate TD-9 authorization",
+            "known-affected unfixed HIGH `CVE-2026-11940`",
+            "does not make the image unaffected",
+            "not a TD-6 fixable-CVE scanner",
+        ],
+        "docs/compliance/vex.md": [
+            "Base-python has a distinct TD-9 accept-and-track disposition",
+            "This is the sole path on which `affected` satisfies the gate",
+            "does not claim that the",
+            "base-python image is unaffected",
+        ],
+        "docs/compliance/acceptance.md": [
+            "The sole `affected` exception is the exact TD-9 accept-and-track path",
+            "both the in-tool allowlist and canonical reviewed statement must match",
+            "This does not make base-python unaffected",
+        ],
+    }
+    for relative_path, markers in documentation_markers.items():
+        documentation = read(relative_path)
+        for marker in markers:
+            require(marker in documentation, f"{relative_path} missing TD-9 policy marker: {marker}")
+
+    vex_mutations: list[tuple[str, Callable[[dict[str, Any]], Any]]] = [
+        ("top-level key", lambda value: value.update(extra=True)),
+        ("document id", lambda value: value.update({"@id": "https://example.invalid/wrong"})),
+        ("author", lambda value: value.update(author="Other")),
+        ("timestamp", lambda value: value.update(timestamp="2026-08-14T00:00:00Z")),
+        ("version", lambda value: value.update(version=2)),
+        ("statement key", lambda value: value["statements"][0].update(extra=True)),
+        ("CVE", lambda value: value["statements"][0]["vulnerability"].update(name="CVE-2099-0000")),
+        ("alias", lambda value: value["statements"][0]["vulnerability"].update(aliases=[])),
+        ("product", lambda value: value["statements"][0]["products"][0].update({"@id": "wrong"})),
+        ("added product", lambda value: value["statements"][0]["products"].append({"@id": "wrong"})),
+        (
+            "first subcomponent",
+            lambda value: value["statements"][0]["products"][0]["subcomponents"][0].update({"@id": "wrong"}),
+        ),
+        (
+            "second subcomponent",
+            lambda value: value["statements"][0]["products"][0]["subcomponents"][1].update({"@id": "wrong"}),
+        ),
+        ("status", lambda value: value["statements"][0].update(status="fixed")),
+        ("action statement", lambda value: value["statements"][0].update(action_statement="wrong")),
+        (
+            "action timestamp",
+            lambda value: value["statements"][0].update(action_statement_timestamp="2026-08-14T00:00:00Z"),
+        ),
+        ("duplicate statement", lambda value: value["statements"].append(copy.deepcopy(value["statements"][0]))),
+    ]
+    for label, mutate in vex_mutations:
+        mutant = copy.deepcopy(typed_document)
+        mutate(mutant)
+        require(
+            python_accept_and_track_vex_errors(mutant),
+            f"python accept-and-track VEX lock mutation unexpectedly passed: {label}",
+        )
+
+    allowlist_mutations: list[tuple[str, Any]] = [
+        ("CVE", "CVE-2099-0000"),
+        ("products", ("local/ubi9-base-python:ci-other",)),
+        ("packages", (("python3.12", "wrong"),)),
+        ("debt_id", "TD-10"),
+        ("review_by", "2026-10-02"),
+        ("statement_path", "images/python/vex/wrong.openvex.json"),
+    ]
+    for field, replacement_value in allowlist_mutations:
+        mutant_entry = copy.deepcopy(PYTHON_ACCEPT_AND_TRACK_ENTRY)
+        mutant_entry[field] = replacement_value
+        require(
+            python_accept_and_track_allowlist_errors([mutant_entry]),
+            f"python accept-and-track allowlist lock mutation unexpectedly passed: {field}",
+        )
+    require(
+        python_accept_and_track_allowlist_errors([]),
+        "python accept-and-track allowlist lock accepted a missing entry",
+    )
+    require(
+        python_accept_and_track_allowlist_errors([PYTHON_ACCEPT_AND_TRACK_ENTRY, PYTHON_ACCEPT_AND_TRACK_ENTRY]),
+        "python accept-and-track allowlist lock accepted a duplicate entry",
+    )
+
+    expiry_fixture = python_accept_and_track_expiry_errors(
+        [PYTHON_ACCEPT_AND_TRACK_ENTRY],
+        date(2026, 10, 2),
+    )
+    expected_expiry = (
+        "expired repository accept-and-track entry: CVE-2026-11940 "
+        "products=local/ubi9-base-python:ci-amd64,local/ubi9-base-python:ci-arm64 "
+        "packages=python3.12@3.12.13-3.el9_8.1,python3.12-libs@3.12.13-3.el9_8.1 "
+        "debt=TD-9 review-by=2026-10-01"
+    )
+    require(
+        expiry_fixture == [expected_expiry],
+        f"python accept-and-track dormant-entry expiry fixture failed: {expiry_fixture}",
+    )
+    print(
+        "python accept-and-track locks: canonical VEX, exact one-entry allowlist, "
+        f"{len(vex_mutations)} VEX mutations, {len(allowlist_mutations) + 2} allowlist mutations, "
+        "and date-controlled dormant-entry expiry rejected"
+    )
+
+
 def check_build_script() -> None:
     text = read("tools/build.sh")
     for marker in [
@@ -12066,6 +12382,7 @@ def main(argv: list[str] | None = None) -> int:
         check_python_evidence,
         check_python_evidence_self_test,
         check_python_sqlite_vex,
+        check_python_accept_and_track,
         check_python_contract_schema,
         check_python_contract_schema_self_test,
         check_build_script,

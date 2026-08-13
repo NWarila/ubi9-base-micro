@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Security
 
+- Added an exact, expiring accept-and-track disposition for the known-affected
+  base-python `CVE-2026-11940` finding on `python3.12` and
+  `python3.12-libs` at `3.12.13-3.el9_8.1`. The two-key gate requires both the
+  closed in-tool authorization and the reviewed `affected` OpenVEX statement,
+  refuses the disposition when either scanner supplies valid fix evidence or a
+  raw vulnerability ID, package name, or installed version has surrounding
+  whitespace, and has `review-by 2026-10-01`. It suppresses no raw finding,
+  does not make the image unaffected, and is tracked as TD-9.
 - Removed `sqlite-libs`, `libsqlite3`, and Python's optional `sqlite3` surface
   from `images/python/` on both architectures. The component was outside the
   image's declared supported surface and was the source of five unfixed scanner

@@ -143,6 +143,20 @@ The push-only `rekor-rollup` job verifies that the full attestation set is Rekor
 
 OpenSCAP builds ComplianceAsCode/content `0.1.81` from SHA512-pinned source, runs `stig/rhel9-base-micro-tailoring.xml`, and attests the `https://nwarila.dev/attestations/stig-arf/v1` predicate per platform digest. The STIG summary embedded in that predicate includes every per-rule `idref` result and the deterministic rootfs identity assertion report when OpenSCAP reports a selected must-verify identity or ownership rule as `notapplicable`. Trivy and Grype are installed as checksum-verified pinned binaries (`TRIVY_VERSION` and `GRYPE_VERSION`), not as scanner actions. Before scan results are accepted, `tools/assert-scanner-db-freshness.py` fails closed unless Trivy metadata and Grype DB status are fresh, parseable, and within the configured schema and age bounds. Both scanners fail the workflow on fixable MEDIUM, HIGH, and CRITICAL findings, subject only to the version-pinned TD-6 exception for `CVE-2026-31790` covering `openssl-fips-provider` and `openssl-fips-provider-so` at `3.0.7-8.el9`, expiring on `2026-10-10`: Trivy uses `--severity MEDIUM,HIGH,CRITICAL --ignore-unfixed --exit-code 1` with `security/cve-ignore.trivyignore.yaml`, and Grype uses `--only-fixed --fail-on medium` with `security/cve-ignore.grype.yaml`. A separate scanner pass without those fixable-only filters feeds `tools/assert-vex.py`, which fails closed unless every unfixed HIGH or CRITICAL finding has a matching reviewed OpenVEX statement under the CODEOWNERS-gated `vex/` path. If no unfixed HIGH or CRITICAL findings exist and no VEX JSON exists, there is no OpenVEX attestation to verify.
 
+The base-python gate has one additional, separate TD-9 authorization for the
+known-affected unfixed HIGH `CVE-2026-11940`. It applies only to
+`local/ubi9-base-python:ci-amd64` and
+`local/ubi9-base-python:ci-arm64`, with exactly `python3.12` and
+`python3.12-libs` at `3.12.13-3.el9_8.1`. An in-tool allowlist entry and the
+reviewed `images/python/vex/cve-2026-11940.openvex.json` `affected` statement
+must match every field through `review-by 2026-10-01`; valid fix evidence from
+either scanner refuses the disposition. On this path, raw scanner vulnerability
+IDs, package names, and installed versions must already contain no surrounding
+whitespace; padded identity evidence is malformed rather than normalized into
+authorization. `tools/verify.py` independently expires the entry even if the
+scanner finding becomes dormant. This accept-and-track path does not make the image unaffected
+and is not a TD-6 fixable-CVE scanner suppression.
+
 ## SBOM Source
 
 BuildKit SBOM generation is disabled in the publish build with `--sbom=false`. The authoritative C3 evidence is the Syft rpmdb-derived SPDX and CycloneDX predicates emitted after push from the per-platform child digests. A gate-only Syft JSON inventory corroborates the required RPM names before the SPDX and CycloneDX predicates are attested, avoiding two competing SPDX documents with different source semantics.
