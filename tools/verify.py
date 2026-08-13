@@ -9440,6 +9440,27 @@ def check_python_accept_and_track() -> None:
     )
 
     script = read("tools/assert-vex.py")
+    script_tree = ast.parse(script)
+    action_assignments = [
+        node
+        for node in script_tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "ACCEPT_AND_TRACK_ACTION_STATEMENT" for target in node.targets
+        )
+    ]
+    require(
+        len(action_assignments) == 1,
+        "assert-vex must define ACCEPT_AND_TRACK_ACTION_STATEMENT exactly once",
+    )
+    try:
+        gate_action_statement = ast.literal_eval(action_assignments[0].value)
+    except (ValueError, TypeError) as exc:
+        raise VerifyError("assert-vex accept-and-track action statement must be a literal") from exc
+    require(
+        gate_action_statement == PYTHON_ACCEPT_AND_TRACK_ACTION,
+        "assert-vex accept-and-track action statement must equal the canonical VEX text",
+    )
     entries, extraction_errors = extract_python_accept_and_track_entries(script)
     require(not extraction_errors, "; ".join(extraction_errors))
     require(not python_accept_and_track_allowlist_errors(entries), "assert-vex TD-9 allowlist authorization drifted")

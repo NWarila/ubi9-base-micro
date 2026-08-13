@@ -57,7 +57,7 @@ Mutation = Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], Any]
 
 ACCEPT_AND_TRACK_ACTION_STATEMENT = (
     "This image ships the vulnerable CPython standard-library tarfile module in python3.12-libs "
-    "3.12.13-3.el9_8. As of 2026-08-13 Red Hat lists RHEL 9 python3.12 as Affected with no fixed RPM "
+    "3.12.13-3.el9_8.1. As of 2026-08-13 Red Hat lists RHEL 9 python3.12 as Affected with no fixed RPM "
     "(RHEL 9 python3.9 is fixed via RHSA-2026:54268; the upstream CPython 3.12 branch is fixed). "
     "Consumers must not rely on tarfile.extractall() 'data' or 'tar' filters to contain untrusted archives "
     "until a fixed RPM is absorbed; risk is realized only by a consumer that extracts attacker-supplied "
