@@ -33,9 +33,12 @@ the affected `python3.12` and `python3.12-libs` packages at
 document and the in-tool allowlist match every canonical product, package,
 version, and status, and the action statement contains the exact TD-9 and
 `review-by 2026-10-01` markers. The authorization is refused if either scanner
-supplies valid fix evidence. Gate expiry is scoped to a present matching
-candidate; `tools/verify.py` independently expires a dormant repository entry
-after the review date.
+supplies valid fix evidence. The raw scanner vulnerability ID, package name, and
+installed version must also be byte-canonical on this path: surrounding
+whitespace is malformed evidence and is rejected rather than normalized into an
+exact match. Gate expiry is scoped to a present matching candidate;
+`tools/verify.py` independently expires a dormant repository entry after the
+review date.
 
 `sqlite-component-not-present.openvex.json` records five distinct
 `not_affected` / `component_not_present` dispositions for CVE-2026-51296,

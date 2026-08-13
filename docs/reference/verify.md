@@ -150,10 +150,12 @@ known-affected unfixed HIGH `CVE-2026-11940`. It applies only to
 `python3.12-libs` at `3.12.13-3.el9_8.1`. An in-tool allowlist entry and the
 reviewed `images/python/vex/cve-2026-11940.openvex.json` `affected` statement
 must match every field through `review-by 2026-10-01`; valid fix evidence from
-either scanner refuses the disposition. `tools/verify.py` independently expires
-the entry even if the scanner finding becomes dormant. This accept-and-track
-path does not make the image unaffected and is not a TD-6 fixable-CVE scanner
-suppression.
+either scanner refuses the disposition. On this path, raw scanner vulnerability
+IDs, package names, and installed versions must already contain no surrounding
+whitespace; padded identity evidence is malformed rather than normalized into
+authorization. `tools/verify.py` independently expires the entry even if the
+scanner finding becomes dormant. This accept-and-track path does not make the
+image unaffected and is not a TD-6 fixable-CVE scanner suppression.
 
 ## SBOM Source
 

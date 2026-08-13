@@ -27,9 +27,12 @@ TD-9 accept-and-track disposition for known-affected `CVE-2026-11940` on the two
 base-python CI products, with the complete `python3.12` and `python3.12-libs`
 package set at `3.12.13-3.el9_8.1` and `review-by 2026-10-01`. Both the closed
 in-tool authorization and the canonical reviewed statement must match. Valid
-fix evidence from either scanner refuses the disposition. Every other
-`affected` statement remains documentary, and this path does not make the
-base-python image unaffected or suppress a raw scanner finding.
+fix evidence from either scanner refuses the disposition. Raw scanner
+vulnerability IDs, package names, and installed versions must also be
+byte-canonical on this path: surrounding whitespace is malformed evidence and
+is rejected rather than normalized into an exact match. Every other `affected`
+statement remains documentary, and this path does not make the base-python image
+unaffected or suppress a raw scanner finding.
 
 The OpenVEX classifier and the hardening decision-envelope generator apply the
 same fixability truth table. Trivy fix metadata grants a fix only when every
@@ -51,7 +54,8 @@ classification to the pull-request decision and nightly drift issue.
   fix or remove it from the unfixed OpenVEX set.
 - Unfixed findings require explicit reviewed status and justification.
 - A known-affected finding can pass only through the exact, expiring two-key
-  authorization above; all other unfixed findings remain default-denied.
+  authorization above, with byte-canonical raw scanner identity fields; all
+  other unfixed findings remain default-denied.
 - Empty VEX is not manufactured when there are no unfixed HIGH or CRITICAL
   findings.
 - Published VEX documents become signed supply-chain evidence, not comments in

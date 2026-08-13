@@ -191,7 +191,10 @@ the closed allowlist in `tools/assert-vex.py` and the reviewed disclosure in
 `images/python/vex/cve-2026-11940.openvex.json`. Both must match the CVE, the two
 CI products, the complete two-package set, the installed version, this debt id,
 and `review-by 2026-10-01`. Valid fix evidence from either scanner refuses the
-disposition. The image is not unaffected, and no scanner input or raw finding is
+disposition. On this path, each raw scanner vulnerability ID, package name, and
+installed version must already be byte-canonical: leading or trailing whitespace
+is malformed evidence and is rejected rather than normalized into an exact
+match. The image is not unaffected, and no scanner input or raw finding is
 suppressed.
 
 Review this entry by 2026-10-01 and monitor Red Hat for a fixed RHEL 9

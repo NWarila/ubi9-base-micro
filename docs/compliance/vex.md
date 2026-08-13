@@ -31,8 +31,11 @@ requires both the closed allowlist in `tools/assert-vex.py` and the canonical
 reviewed `affected` statement in
 `images/python/vex/cve-2026-11940.openvex.json`. A mismatch, a duplicate
 statement, or valid fix evidence from either scanner leaves the finding
-un-vexed. Candidate evaluations fail after the review date, and
-`tools/verify.py` expires the entry even when no matching finding remains.
+un-vexed. The raw scanner vulnerability ID, package name, and installed version
+must each have no leading or trailing whitespace on this path; padded identity
+evidence is malformed and is rejected rather than normalized into an exact
+match. Candidate evaluations fail after the review date, and `tools/verify.py`
+expires the entry even when no matching finding remains.
 
 This is the sole path on which `affected` satisfies the gate. All other
 `affected` statements remain documentary. TD-9 does not suppress raw scanner
