@@ -17,8 +17,27 @@ consumer check lives in
 | Boundary | Runs on | Proves | Does not prove |
 | --- | --- | --- | --- |
 | Pull request | `pull_request` to `main` | Repository contract, lint, local build, hardening, FIPS artifact checks, SBOM and scanner gates, OpenVEX policy, NIST predicate validation, tailored STIG ARF, byte-for-byte rootfs reproducibility, and the Python release exporter exercised against a loopback-bound ephemeral registry. | Project or external publication, published signatures or attestations, SLSA provenance over a consumer-resolvable digest, Rekor roll-up, or anonymous GHCR pull. |
-| Publish | `push` to `main` and `v*` tags | Multi-arch publish, Cosign keyless signature, Syft rpmdb-derived SPDX and CycloneDX attestations, NIST SP 800-190 and STIG ARF predicates, OpenVEX attestations when needed, SLSA L3 provenance, and Rekor roll-up. | The one-time public package visibility change required before anonymous GHCR verification can pass. |
+| Publish | Scope-eligible `push` to `main`, and every `v*` tag | Multi-arch publish, Cosign keyless signature, Syft rpmdb-derived SPDX and CycloneDX attestations, NIST SP 800-190 and STIG ARF predicates, OpenVEX attestations when needed, SLSA L3 provenance, and Rekor roll-up. | The one-time public package visibility change required before anonymous GHCR verification can pass. |
 | Post-publish audit | Clean unauthenticated verifier | Anonymous pull by digest and the full `cosign` plus `slsa-verifier` contract in [`verify.md`](verify.md). | Future rebuild currency or downstream family-coherence status. |
+
+## Micro publish scope
+
+For a push to `main`, the workflow compares the pushed revision with the
+revision label on the currently published `base-micro` image. It skips micro
+publication only when that diff is available and non-empty and every changed
+path matches this closed set:
+
+- the `images/` or `docs/` directory prefix; or
+- exactly `.github/workflows/python-ci.yaml`,
+  `.github/workflows/publish-python.yaml`, `tools/verify.py`, `README.md`,
+  `SUPPORT.md`, `CHANGELOG.md`, `SECURITY.md`, `CONTRIBUTING.md`, or
+  `CODE_OF_CONDUCT.md`.
+
+An unavailable diff base, an empty diff, or any path outside that set publishes
+fail-closed. Tag pushes also always publish. The policy applies only to micro
+publication; it does not define the Python image's publication scope. A skipped
+run creates no new micro publication and does not remove or re-point any
+already-published digest or revision-bound attestation.
 
 The Python CI workflow has an active CI-rootfs preflight for the unpublished
 `base-python` image. Its build and reproducibility matrices run for both

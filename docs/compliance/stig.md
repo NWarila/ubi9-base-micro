@@ -53,6 +53,8 @@ result, plus any equivalent assertion report used to cover a selected
 that summary unchanged.
 
 On `pull_request`, CI builds the datastream, runs the tailored scan, and emits
-the ARF and summary locally only. On `push` to `main` or `v*` tags, the publish
-workflow runs the same scan per platform child digest, signs the structured ARF
-summary predicate with Cosign keyless, and includes it in the Rekor roll-up.
+the ARF and summary locally only. On every `v*` tag, or on a `main` push for
+which the [micro publish-scope decision](../reference/verification-contract.md#micro-publish-scope)
+publishes, the publish workflow runs the same scan per platform child digest,
+signs the structured ARF summary predicate with Cosign keyless, and includes it
+in the Rekor roll-up.
