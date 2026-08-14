@@ -27,18 +27,48 @@ statement is documentary: it does not suppress the finding or satisfy the
 default-deny gate. The exact, expiring scanner suppression is maintained
 separately under `security/` and tracked as TD-6 in `docs/TECH-DEBT.md`.
 
-`cve-2026-11940.openvex.json` discloses that both base-python CI products ship
-the affected `python3.12` and `python3.12-libs` packages at
-`3.12.13-3.el9_8.1`. The gate accepts that known-affected finding only when the
+`cve-2026-11940.openvex.json` version 2 discloses that both base-python CI
+products ship the affected `python3.12` and `python3.12-libs` packages at
+`3.12.13-3.el9_8.1`. It also names the potential
+`ghcr.io/nwarila/ubi9-base-python` platform-child scope with the
+non-image-matchable policy IRI
+`https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-python/published-platform-children`.
+The IRI documents policy scope without becoming a bare repository wildcard and
+does not assert that any such image or index has been published.
+
+For the two legacy CI products, the gate accepts the finding only when the
 document and the in-tool allowlist match every canonical product, package,
 version, and status, and the action statement contains the exact TD-9 and
-`review-by 2026-10-01` markers. The authorization is refused if either scanner
-supplies valid fix evidence. The raw scanner vulnerability ID, package name, and
-installed version must also be byte-canonical on this path: surrounding
-whitespace is malformed evidence and is rejected rather than normalized into an
-exact match. Gate expiry is scoped to a present matching candidate;
-`tools/verify.py` independently expires a dormant repository entry after the
-review date.
+`review-by 2026-10-01` markers. For a digest-addressed child under the pinned
+GHCR repository, the dormant path instead requires the conjunction of fixed
+in-tool constraints, the same canonical reviewed statement, and paired index
+evidence. `--index-reference` identifies an index digest and
+`--index-manifest` supplies its exact bytes. The tool recomputes the byte digest,
+enforces an OCI index with exactly one `linux/amd64` child and one `linux/arm64`
+child with distinct digests plus only the locked BuildKit attestation shape,
+requires a unique digest for every descriptor in `manifests` across all roles,
+and binds the product to the child matching the scanner-reported architecture.
+The duplicate-or-contradictory descriptor diagnostic names the first and
+repeated positions. The index digest is never eligible, and a distinct
+attestation-descriptor digest is rejected when submitted as the product. The
+separate child/attestation digest-disjointness guard makes an alias malformed
+and rejects it before child-product eligibility is decided. Extra or duplicate
+runnable platforms, nested indexes, and architecture swaps are also rejected.
+
+The supplied index remains a dynamic authorization input, not a trusted one.
+There is no production caller and no evidence here that the index was actually
+published. A production publisher must obtain the bytes from the registry for
+the exact index it pushed and bind the same digest to signing, attestation, and
+aliases before this path can be activated. Until that dataflow is implemented
+and verifier-locked, the capability remains a self-tested dormant primitive and
+the child-binding defect is not closed end-to-end.
+
+The authorization is refused if either scanner supplies valid fix evidence. The
+raw scanner vulnerability ID, package name, and installed version must also be
+byte-canonical on both paths: surrounding whitespace is malformed evidence and
+is rejected rather than normalized into an exact match. Gate expiry is scoped
+to a present matching candidate; `tools/verify.py` independently expires a dormant
+repository entry after the review date.
 
 `sqlite-component-not-present.openvex.json` records five distinct
 `not_affected` / `component_not_present` dispositions for CVE-2026-51296,
