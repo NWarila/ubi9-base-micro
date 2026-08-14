@@ -9434,7 +9434,7 @@ PYTHON_ACCEPT_AND_TRACK_SURFACE_CONSTANTS = {
 }
 PYTHON_ACCEPT_AND_TRACK_SURFACE_FUNCTION_HASHES = {
     "digest_reference_parts": "3489448fc2b271bec570e344fe3ecc84bcb2ae75023bd0fcf13a56089203b7bf",
-    "validate_index_child_evidence": "932bf9d9663afe46fd85b3d392502e688b1c1cef8aa0827ef07a8f62d9f7cc4f",
+    "validate_index_child_evidence": "9292a5c921d5896395ea1c606613e371f5b125cb7010a84ce6dea567fba7c7ec",
     "accept_and_track_product_eligible": "e462c12a3bce5d1c7c30000257364d36cde65387566a2341c070e422322a6367",
     "expected_accept_and_track_document": "7c810e0ff2b02b87112d45acfd656dd17f8e7350bc5993c3356a56872a498cab",
     "disposition_identity_matches": "76eab1499d51525ffc51ca360bb17e8afc31a78d3cd45729db20f1dca81d2f82",

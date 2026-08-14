@@ -312,6 +312,10 @@ def validate_index_child_evidence(
             raise VexError(f"{label}.annotations must equal the locked BuildKit attestation shape")
         attestation_digests.add(descriptor_digest)
 
+    if not attestation_digests.isdisjoint(eligible_child_digests):
+        raise VexError(
+            "index manifest attestation descriptor digests must be disjoint from eligible platform child digests"
+        )
     if product_digest == index_digest:
         raise VexError("the index digest is never eligible as a published-child product")
     expected_child_digest = child_digests[architecture]
@@ -2769,6 +2773,94 @@ def self_test() -> int:
         published_trivy = copy.deepcopy(accept_trivy)
         published_grype = copy.deepcopy(accept_grype)
         bind_accept_reports(published_trivy, published_grype, published_product, "amd64")
+
+        def run_published_cli_fixture(
+            fixture_product: str,
+            raw_index: bytes,
+        ) -> tuple[int, str]:
+            fixture_trivy = copy.deepcopy(accept_trivy)
+            fixture_grype = copy.deepcopy(accept_grype)
+            bind_accept_reports(fixture_trivy, fixture_grype, fixture_product, "amd64")
+            index_manifest_path.write_bytes(raw_index)
+            for old_document in accept_vex_dir.glob("*.json"):
+                old_document.unlink()
+            write_json(accept_vex_dir / canonical_vex_name, canonical_vex)
+            write_json(trivy_json, fixture_trivy)
+            write_json(grype_json, fixture_grype)
+            write_json(package_floor, clean_floor)
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                result = main(
+                    [
+                        "--product",
+                        fixture_product,
+                        "--trivy-json",
+                        str(trivy_json),
+                        "--grype-json",
+                        str(grype_json),
+                        "--package-floor",
+                        str(package_floor),
+                        "--vex-dir",
+                        str(accept_vex_dir),
+                        "--index-reference",
+                        reference_for_index(raw_index),
+                        "--index-manifest",
+                        str(index_manifest_path),
+                    ]
+                )
+            return result, stdout.getvalue() + stderr.getvalue()
+
+        distinct_attestation_product = f"{PUBLISHED_PYTHON_REPOSITORY}@{attestation_digest}"
+        distinct_result, distinct_output = run_published_cli_fixture(
+            distinct_attestation_product,
+            valid_index_bytes,
+        )
+        distinct_reason = "published-child product digest identifies an attestation descriptor"
+        if distinct_result != 1 or f"assert-vex failed: {distinct_reason}" not in distinct_output:
+            print(
+                "self-test failed: full CLI distinct attestation digest rejected for wrong reason: "
+                f"result={distinct_result} output={distinct_output}",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"assert-vex self-test: full CLI distinct attestation digest rejected: {distinct_reason}")
+
+        legitimate_result, legitimate_output = run_published_cli_fixture(
+            published_product,
+            valid_index_bytes,
+        )
+        legitimate_disposition = next(
+            (line for line in legitimate_output.splitlines() if line.startswith("accept-and-track disposition:")),
+            None,
+        )
+        if legitimate_result != 0 or legitimate_disposition is None:
+            print(
+                "self-test failed: full CLI legitimate child did not pass: "
+                f"result={legitimate_result} output={legitimate_output}",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"assert-vex self-test: full CLI legitimate child accepted: {legitimate_disposition}")
+
+        aliased_attestation_bytes = mutated_index(lambda value: value["manifests"][2].update(digest=amd64_child_digest))
+        alias_result, alias_output = run_published_cli_fixture(
+            published_product,
+            aliased_attestation_bytes,
+        )
+        alias_reason = (
+            "index manifest attestation descriptor digests must be disjoint from eligible platform child digests"
+        )
+        if alias_result != 1 or f"assert-vex failed: {alias_reason}" not in alias_output:
+            print(
+                "self-test failed: full CLI aliased attestation digest rejected for wrong reason: "
+                f"result={alias_result} output={alias_output}",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"assert-vex self-test: full CLI aliased attestation digest rejected: {alias_reason}")
+
+        index_manifest_path.write_bytes(valid_index_bytes)
         published_result, published_output, published_error = run_accept_fixture(
             published_trivy,
             published_grype,
