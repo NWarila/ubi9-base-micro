@@ -39,13 +39,15 @@ conjunction of fixed in-tool constraints, the canonical reviewed statement, and
 index evidence supplied through paired `--index-reference` and
 `--index-manifest` inputs. The tool verifies the exact bytes against the
 reference digest, enforces the OCI image-index shape and the locked BuildKit
-attestation-descriptor convention, derives exactly one distinct `linux/amd64`
-and `linux/arm64` child, and requires the product digest to match the child for
-the architecture reported by both scanners. The index digest and attestation
-digests are never eligible. For an otherwise well-formed index, submitting a
-distinct attestation-descriptor digest is a product-eligibility rejection. If
-an attestation-descriptor digest aliases either platform-child digest, the
-entire index is malformed and is rejected before child-product eligibility is
+attestation-descriptor convention, derives exactly one `linux/amd64` child and
+one `linux/arm64` child with distinct digests, requires every descriptor digest
+in `manifests` to be unique across all roles, and requires the product digest to
+match the child for the architecture reported by both scanners. Its
+duplicate-or-contradictory descriptor diagnostic names the first and repeated
+positions. The index digest and attestation digests are never eligible. For an
+otherwise well-formed index, submitting a distinct attestation-descriptor digest
+is a product-eligibility rejection; the separate child/attestation
+digest-disjointness guard rejects an alias before child-product eligibility is
 decided. Version 2 of the canonical statement names this scope with a
 non-image-matchable policy IRI, so it is not a bare repository wildcard.
 

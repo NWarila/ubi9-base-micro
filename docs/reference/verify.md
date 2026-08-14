@@ -155,11 +155,15 @@ The gate also contains a dormant path for a digest-addressed
 `ghcr.io/nwarila/ubi9-base-python` platform child. It requires the conjunction
 of fixed in-tool constraints, version 2 of the canonical reviewed statement, and
 paired `--index-reference` plus `--index-manifest` evidence. The tool recomputes
-the digest of the exact supplied index bytes, enforces one distinct
-`linux/amd64` and `linux/arm64` child with only the locked BuildKit attestation
-shape otherwise present, and binds the eligible digest to the architecture
-reported by both scanners. The canonical document uses a non-image-matchable
-policy IRI for this scope rather than a repository wildcard.
+the digest of the exact supplied index bytes, enforces exactly one
+`linux/amd64` child and one `linux/arm64` child with distinct digests and only
+the locked BuildKit attestation shape otherwise present, requires every
+descriptor digest to be unique across all roles, and binds the eligible digest
+to the architecture reported by both scanners. The duplicate-or-contradictory
+descriptor diagnostic names the first and repeated positions, while the
+child/attestation digest-disjointness guard remains a separate rejection. The
+canonical document uses a non-image-matchable policy IRI for this scope rather
+than a repository wildcard.
 
 The supplied index is a dynamic authorization input and is not yet trusted.
 There is no production caller, and these checks neither publish base-python nor
@@ -175,7 +179,7 @@ already contain no surrounding whitespace; padded identity evidence is
 malformed rather than normalized into authorization. `tools/verify.py`
 independently expires the entry even if the scanner finding becomes dormant.
 It also locks seven published-child constants and nine function ASTs and reports
-rejection of 17 canonical-VEX mutations, 8 allowlist mutations, and 16
+rejection of 17 canonical-VEX mutations, 8 allowlist mutations, and 17
 published-child surface mutations. These are verifier self-test counts, not
 evidence of a production invocation. This accept-and-track path does not make the image unaffected
 and is not a TD-6 fixable-CVE scanner suppression.

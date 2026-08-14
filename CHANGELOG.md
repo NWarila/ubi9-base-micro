@@ -19,14 +19,18 @@ and this project adheres to
   A new dormant path can derive an eligible digest-addressed child under the
   pinned `ghcr.io/nwarila/ubi9-base-python` repository from exact,
   digest-verified OCI index bytes and bind it to the architecture reported by
-  both scanners. That path combines fixed in-tool constraints, the canonical
-  statement, and caller-supplied index evidence, which remains a dynamic,
-  untrusted authorization input. No production workflow calls the primitive,
-  base-python remains externally unpublished, and a trusted registry-origin
-  binding is still required before production use. Both paths refuse valid fix
-  evidence and byte-noncanonical scanner identities, expire after
-  `review-by 2026-10-01`, suppress no raw finding, and do not make the image
-  unaffected.
+  both scanners. Its closed descriptor policy requires exactly one
+  `linux/amd64` child and one `linux/arm64` child with distinct digests, permits
+  only the locked BuildKit attestation shape otherwise, requires every
+  descriptor digest to be unique across the index, and separately requires
+  child and attestation digests to be disjoint. That path combines fixed in-tool
+  constraints, the canonical statement, and caller-supplied index evidence,
+  which remains a dynamic, untrusted authorization input. No production
+  workflow calls the primitive, base-python remains externally unpublished, and
+  a trusted registry-origin binding is still required before production use.
+  Both paths refuse valid fix evidence and byte-noncanonical scanner identities,
+  expire after `review-by 2026-10-01`, suppress no raw finding, and do not make
+  the image unaffected.
 - Removed `sqlite-libs`, `libsqlite3`, and Python's optional `sqlite3` surface
   from `images/python/` on both architectures. The component was outside the
   image's declared supported surface and was the source of five unfixed scanner

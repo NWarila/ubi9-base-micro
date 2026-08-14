@@ -202,15 +202,17 @@ path the authorization is the conjunction of fixed in-tool constraints (the
 pinned repository, CVE, package/version pair, and expiry), that canonical
 reviewed statement, and supplied index evidence. The tool requires paired
 `--index-reference` and `--index-manifest` inputs, recomputes the digest of the
-exact index bytes, accepts exactly one distinct `linux/amd64` child and one
-distinct `linux/arm64` child plus only the locked BuildKit attestation-descriptor
-shape, and binds the gated product digest to the child for the architecture
-reported by both scanners. The index digest is never eligible. A distinct
-attestation-descriptor digest is rejected when submitted as the product, while
-any attestation-descriptor digest that aliases an eligible platform-child
-digest makes the index malformed and rejects it before child-product
-eligibility is decided. An extra or duplicate platform, a nested index, a wrong
-repository, and an architecture swap are also rejected.
+exact index bytes, accepts exactly one `linux/amd64` child and one
+`linux/arm64` child with distinct digests plus only the locked BuildKit
+attestation-descriptor shape, requires every descriptor digest in `manifests` to
+be unique across all roles, and binds the gated product digest to the child for
+the architecture reported by both scanners. The duplicate-or-contradictory
+descriptor diagnostic names the first and repeated positions; the
+child/attestation digest-disjointness guard remains separate with its own
+diagnostic. The index digest is never eligible, and a distinct
+attestation-descriptor digest is rejected when submitted as the product. An
+extra or duplicate platform, a nested index, a wrong repository, and an
+architecture swap are also rejected.
 
 Those checks prove only that a digest is a child of the caller-supplied,
 digest-verified index. The index evidence is a dynamic authorization input and

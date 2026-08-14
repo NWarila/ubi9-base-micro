@@ -44,14 +44,16 @@ GHCR repository, the dormant path instead requires the conjunction of fixed
 in-tool constraints, the same canonical reviewed statement, and paired index
 evidence. `--index-reference` identifies an index digest and
 `--index-manifest` supplies its exact bytes. The tool recomputes the byte digest,
-enforces an OCI index with exactly one distinct `linux/amd64` and
-`linux/arm64` child plus only the locked BuildKit attestation shape, and binds
-the product to the child matching the scanner-reported architecture. The index
-digest is never eligible, and a distinct attestation-descriptor digest is
-rejected when submitted as the product. An attestation descriptor that aliases
-either eligible child digest instead makes the index malformed and rejects it
-before child-product eligibility is decided. Extra or duplicate runnable
-platforms, nested indexes, and architecture swaps are also rejected.
+enforces an OCI index with exactly one `linux/amd64` child and one `linux/arm64`
+child with distinct digests plus only the locked BuildKit attestation shape,
+requires a unique digest for every descriptor in `manifests` across all roles,
+and binds the product to the child matching the scanner-reported architecture.
+The duplicate-or-contradictory descriptor diagnostic names the first and
+repeated positions. The index digest is never eligible, and a distinct
+attestation-descriptor digest is rejected when submitted as the product. The
+separate child/attestation digest-disjointness guard makes an alias malformed
+and rejects it before child-product eligibility is decided. Extra or duplicate
+runnable platforms, nested indexes, and architecture swaps are also rejected.
 
 The supplied index remains a dynamic authorization input, not a trusted one.
 There is no production caller and no evidence here that the index was actually
