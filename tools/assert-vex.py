@@ -229,6 +229,8 @@ def validate_index_child_evidence(
 
     children: dict[str, list[str]] = {architecture: [] for architecture in sorted(SUPPORTED_ARCHITECTURES)}
     attestations: list[tuple[int, str, dict[str, Any]]] = []
+    descriptor_digest_first_seen: dict[str, int] = {}
+    duplicate_descriptor_digest: tuple[str, int, int] | None = None
     for descriptor_index, raw_descriptor in enumerate(manifests):
         label = f"index manifest manifests[{descriptor_index}]"
         if not isinstance(raw_descriptor, dict):
@@ -240,6 +242,11 @@ def validate_index_child_evidence(
         if not isinstance(descriptor_media_type, str) or not descriptor_media_type:
             raise VexError(f"{label}.mediaType must be a non-empty string")
         descriptor_digest = content_digest(raw_descriptor["digest"], f"{label}.digest")
+        first_descriptor_index = descriptor_digest_first_seen.get(descriptor_digest)
+        if first_descriptor_index is None:
+            descriptor_digest_first_seen[descriptor_digest] = descriptor_index
+        elif duplicate_descriptor_digest is None:
+            duplicate_descriptor_digest = (descriptor_digest, first_descriptor_index, descriptor_index)
         descriptor_size = raw_descriptor["size"]
         if not isinstance(descriptor_size, int) or isinstance(descriptor_size, bool) or descriptor_size < 0:
             raise VexError(f"{label}.size must be a non-negative integer")
@@ -315,6 +322,13 @@ def validate_index_child_evidence(
     if not attestation_digests.isdisjoint(eligible_child_digests):
         raise VexError(
             "index manifest attestation descriptor digests must be disjoint from eligible platform child digests"
+        )
+    if duplicate_descriptor_digest is not None:
+        descriptor_digest, first_descriptor_index, duplicate_descriptor_index = duplicate_descriptor_digest
+        raise VexError(
+            f"index manifest descriptor digest {descriptor_digest} is repeated at "
+            f"manifests[{first_descriptor_index}] and manifests[{duplicate_descriptor_index}]; "
+            "duplicate or contradictory descriptors are forbidden"
         )
     if product_digest == index_digest:
         raise VexError("the index digest is never eligible as a published-child product")
@@ -2774,45 +2788,200 @@ def self_test() -> int:
         published_grype = copy.deepcopy(accept_grype)
         bind_accept_reports(published_trivy, published_grype, published_product, "amd64")
 
-        def run_published_cli_fixture(
+        def run_cli_fixture(
             fixture_product: str,
-            raw_index: bytes,
+            raw_index: bytes | None,
         ) -> tuple[int, str]:
             fixture_trivy = copy.deepcopy(accept_trivy)
             fixture_grype = copy.deepcopy(accept_grype)
             bind_accept_reports(fixture_trivy, fixture_grype, fixture_product, "amd64")
-            index_manifest_path.write_bytes(raw_index)
             for old_document in accept_vex_dir.glob("*.json"):
                 old_document.unlink()
             write_json(accept_vex_dir / canonical_vex_name, canonical_vex)
             write_json(trivy_json, fixture_trivy)
             write_json(grype_json, fixture_grype)
             write_json(package_floor, clean_floor)
-            stdout = io.StringIO()
-            stderr = io.StringIO()
-            with redirect_stdout(stdout), redirect_stderr(stderr):
-                result = main(
+            arguments = [
+                "--product",
+                fixture_product,
+                "--trivy-json",
+                str(trivy_json),
+                "--grype-json",
+                str(grype_json),
+                "--package-floor",
+                str(package_floor),
+                "--vex-dir",
+                str(accept_vex_dir),
+            ]
+            if raw_index is not None:
+                index_manifest_path.write_bytes(raw_index)
+                arguments.extend(
                     [
-                        "--product",
-                        fixture_product,
-                        "--trivy-json",
-                        str(trivy_json),
-                        "--grype-json",
-                        str(grype_json),
-                        "--package-floor",
-                        str(package_floor),
-                        "--vex-dir",
-                        str(accept_vex_dir),
                         "--index-reference",
                         reference_for_index(raw_index),
                         "--index-manifest",
                         str(index_manifest_path),
                     ]
                 )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                result = main(arguments)
             return result, stdout.getvalue() + stderr.getvalue()
 
+        def expect_cli_rejection(
+            label: str,
+            expected_reason: str,
+            *,
+            fixture_product: str = published_product,
+            raw_index: bytes = valid_index_bytes,
+        ) -> None:
+            result, output = run_cli_fixture(fixture_product, raw_index)
+            if result != 1 or f"assert-vex failed: {expected_reason}" not in output:
+                print(
+                    f"self-test failed: full CLI {label} rejected for wrong reason: result={result} output={output}",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            print(f"assert-vex self-test: full CLI {label} rejected: {expected_reason}")
+
+        duplicate_descriptor_reason = (
+            f"index manifest descriptor digest {attestation_digest} is repeated at manifests[2] and manifests[3]; "
+            "duplicate or contradictory descriptors are forbidden"
+        )
+        identical_duplicate_attestation_bytes = mutated_index(
+            lambda value: value["manifests"].append(copy.deepcopy(value["manifests"][2]))
+        )
+        contradictory_attestation_bytes = mutated_index(
+            lambda value: value["manifests"].append(attestation_descriptor(attestation_digest, arm64_child_digest))
+        )
+        duplicate_probe_failed = False
+        for label, raw_index in (
+            ("identical duplicate attestation descriptor", identical_duplicate_attestation_bytes),
+            ("same attestation digest with contradictory child annotations", contradictory_attestation_bytes),
+        ):
+            result, output = run_cli_fixture(published_product, raw_index)
+            if result != 1 or f"assert-vex failed: {duplicate_descriptor_reason}" not in output:
+                print(
+                    f"self-test failed: full CLI {label} rejected for wrong reason: result={result} output={output}",
+                    file=sys.stderr,
+                )
+                duplicate_probe_failed = True
+            else:
+                print(f"assert-vex self-test: full CLI {label} rejected: {duplicate_descriptor_reason}")
+        if duplicate_probe_failed:
+            return 1
+
+        missing_attestation_reference_bytes = mutated_index(
+            lambda value: value["manifests"][2]["annotations"].pop(BUILDKIT_ATTESTATION_DIGEST_ANNOTATION)
+        )
+        expect_cli_rejection(
+            "attestation descriptor missing reference-digest annotation",
+            "index manifest manifests[2].annotations['vnd.docker.reference.digest'] must be a non-empty string",
+            raw_index=missing_attestation_reference_bytes,
+        )
+        extra_attestation_annotation_bytes = mutated_index(
+            lambda value: value["manifests"][2]["annotations"].update({"org.example.extra": "forbidden"})
+        )
+        expect_cli_rejection(
+            "attestation descriptor with an extra annotation key",
+            "index manifest manifests[2].annotations must equal the locked BuildKit attestation shape",
+            raw_index=extra_attestation_annotation_bytes,
+        )
+
+        def attestation_without_descriptor_field(field: str) -> bytes:
+            return mutated_index(lambda value: value["manifests"][2].pop(field))
+
+        def index_with_descriptor_field(
+            descriptor_index: int,
+            field: str,
+            value: Any,
+        ) -> bytes:
+            def apply(document: dict[str, Any]) -> None:
+                document["manifests"][descriptor_index][field] = value
+
+            return mutated_index(apply)
+
+        def index_with_schema_version(value: Any) -> bytes:
+            def apply(document: dict[str, Any]) -> None:
+                document["schemaVersion"] = value
+
+            return mutated_index(apply)
+
+        for missing_field in ("mediaType", "digest", "size"):
+            expect_cli_rejection(
+                f"attestation descriptor missing {missing_field}",
+                f"index manifest manifests[2] is missing {missing_field}",
+                raw_index=attestation_without_descriptor_field(missing_field),
+            )
+        attestation_type_failures: tuple[tuple[str, str, Any, str], ...] = (
+            (
+                "mediaType",
+                "integer",
+                17,
+                "index manifest manifests[2].mediaType must be a non-empty string",
+            ),
+            (
+                "digest",
+                "integer",
+                17,
+                "index manifest manifests[2].digest must be a non-empty string",
+            ),
+            (
+                "size",
+                "string",
+                "567",
+                "index manifest manifests[2].size must be a non-negative integer",
+            ),
+        )
+        for field, invalid_type, invalid_value, expected_reason in attestation_type_failures:
+            type_failure_bytes = index_with_descriptor_field(2, field, invalid_value)
+            expect_cli_rejection(
+                f"attestation descriptor {field} with {invalid_type} type",
+                expected_reason,
+                raw_index=type_failure_bytes,
+            )
+
+        size_failures: tuple[tuple[str, Any], ...] = (
+            ("boolean", True),
+            ("float", 1234.5),
+            ("negative", -1),
+        )
+        for invalid_type, invalid_value in size_failures:
+            size_failure_bytes = index_with_descriptor_field(0, "size", invalid_value)
+            expect_cli_rejection(
+                f"descriptor size that is {invalid_type}",
+                "index manifest manifests[0].size must be a non-negative integer",
+                raw_index=size_failure_bytes,
+            )
+
+        for invalid_type, invalid_value in (("string", "2"), ("null", None)):
+            schema_failure_bytes = index_with_schema_version(invalid_value)
+            expect_cli_rejection(
+                f"schemaVersion with {invalid_type} type",
+                "index manifest schemaVersion must be an integer",
+                raw_index=schema_failure_bytes,
+            )
+
+        for repository_label, repository in (
+            ("unexpected", "ghcr.io/example/ubi9-base-python"),
+            ("look-alike", "ghcr.io/nwarila/ubi9-base-python-x"),
+        ):
+            expect_cli_rejection(
+                f"published-child product in {repository_label} repository",
+                f"published-child --product repository must be {PUBLISHED_PYTHON_REPOSITORY}",
+                fixture_product=f"{repository}@{amd64_child_digest}",
+            )
+
+        windows_platform_bytes = mutated_index(lambda value: value["manifests"][0]["platform"].update(os="windows"))
+        expect_cli_rejection(
+            "descriptor platform windows/amd64",
+            "index manifest contains unsupported descriptor platform windows/amd64",
+            raw_index=windows_platform_bytes,
+        )
+
         distinct_attestation_product = f"{PUBLISHED_PYTHON_REPOSITORY}@{attestation_digest}"
-        distinct_result, distinct_output = run_published_cli_fixture(
+        distinct_result, distinct_output = run_cli_fixture(
             distinct_attestation_product,
             valid_index_bytes,
         )
@@ -2826,7 +2995,7 @@ def self_test() -> int:
             return 1
         print(f"assert-vex self-test: full CLI distinct attestation digest rejected: {distinct_reason}")
 
-        legitimate_result, legitimate_output = run_published_cli_fixture(
+        legitimate_result, legitimate_output = run_cli_fixture(
             published_product,
             valid_index_bytes,
         )
@@ -2843,8 +3012,41 @@ def self_test() -> int:
             return 1
         print(f"assert-vex self-test: full CLI legitimate child accepted: {legitimate_disposition}")
 
+        second_attestation_digest = "sha256:" + ("4" * 64)
+        two_attestations_bytes = mutated_index(
+            lambda value: value["manifests"].append(
+                attestation_descriptor(second_attestation_digest, arm64_child_digest)
+            )
+        )
+        two_attestations_result, two_attestations_output = run_cli_fixture(
+            published_product,
+            two_attestations_bytes,
+        )
+        if two_attestations_result != 0 or not any(
+            line.startswith("accept-and-track disposition:") for line in two_attestations_output.splitlines()
+        ):
+            print(
+                "self-test failed: full CLI two distinct well-formed attestation descriptors did not pass: "
+                f"result={two_attestations_result} output={two_attestations_output}",
+                file=sys.stderr,
+            )
+            return 1
+        print("assert-vex self-test: full CLI two distinct well-formed attestation descriptors accepted")
+
+        legacy_result, legacy_output = run_cli_fixture(accept_product, None)
+        if legacy_result != 0 or not any(
+            line.startswith("accept-and-track disposition:") for line in legacy_output.splitlines()
+        ):
+            print(
+                "self-test failed: full CLI legacy local-product path did not pass: "
+                f"result={legacy_result} output={legacy_output}",
+                file=sys.stderr,
+            )
+            return 1
+        print("assert-vex self-test: full CLI legacy local-product path accepted")
+
         aliased_attestation_bytes = mutated_index(lambda value: value["manifests"][2].update(digest=amd64_child_digest))
-        alias_result, alias_output = run_published_cli_fixture(
+        alias_result, alias_output = run_cli_fixture(
             published_product,
             aliased_attestation_bytes,
         )
