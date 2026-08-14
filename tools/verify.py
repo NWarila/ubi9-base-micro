@@ -9298,6 +9298,15 @@ def check_python_sqlite_vex_self_test() -> None:
 
 
 PYTHON_ACCEPT_AND_TRACK_VEX_PATH = "images/python/vex/cve-2026-11940.openvex.json"
+PYTHON_PUBLISHED_REPOSITORY = "ghcr.io/nwarila/ubi9-base-python"
+PYTHON_PUBLISHED_CHILD_POLICY_PRODUCT = (
+    "https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-python/published-platform-children"
+)
+PYTHON_OCI_IMAGE_INDEX_MEDIA_TYPE = "application/vnd.oci.image.index.v1+json"
+PYTHON_OCI_IMAGE_MANIFEST_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json"
+PYTHON_BUILDKIT_ATTESTATION_TYPE_ANNOTATION = "vnd.docker.reference.type"
+PYTHON_BUILDKIT_ATTESTATION_TYPE = "attestation-manifest"
+PYTHON_BUILDKIT_ATTESTATION_DIGEST_ANNOTATION = "vnd.docker.reference.digest"
 PYTHON_ACCEPT_AND_TRACK_ACTION = (
     "This image ships the vulnerable CPython standard-library tarfile module in python3.12-libs "
     "3.12.13-3.el9_8.1. As of 2026-08-13 Red Hat lists RHEL 9 python3.12 as Affected with no fixed RPM "
@@ -9328,8 +9337,8 @@ def _expected_python_accept_and_track_vex() -> dict[str, Any]:
         "@context": "https://openvex.dev/ns/v0.2.0",
         "@id": "https://github.com/NWarila/ubi9-base-micro/images/python/vex/cve-2026-11940",
         "author": "NWarila",
-        "timestamp": "2026-08-13T00:00:00Z",
-        "version": 1,
+        "timestamp": "2026-08-14T00:00:00Z",
+        "version": 2,
         "statements": [
             {
                 "vulnerability": {"name": "CVE-2026-11940"},
@@ -9343,6 +9352,13 @@ def _expected_python_accept_and_track_vex() -> dict[str, Any]:
                     },
                     {
                         "@id": "local/ubi9-base-python:ci-arm64",
+                        "subcomponents": [
+                            {"@id": "pkg:rpm/redhat/python3.12@3.12.13-3.el9_8.1"},
+                            {"@id": "pkg:rpm/redhat/python3.12-libs@3.12.13-3.el9_8.1"},
+                        ],
+                    },
+                    {
+                        "@id": PYTHON_PUBLISHED_CHILD_POLICY_PRODUCT,
                         "subcomponents": [
                             {"@id": "pkg:rpm/redhat/python3.12@3.12.13-3.el9_8.1"},
                             {"@id": "pkg:rpm/redhat/python3.12-libs@3.12.13-3.el9_8.1"},
@@ -9407,6 +9423,73 @@ def python_accept_and_track_allowlist_errors(entries: list[dict[str, Any]]) -> l
     return ["assert-vex accept-and-track allowlist must equal the exact TD-9 authorization"]
 
 
+PYTHON_ACCEPT_AND_TRACK_SURFACE_CONSTANTS = {
+    "PUBLISHED_PYTHON_REPOSITORY": PYTHON_PUBLISHED_REPOSITORY,
+    "PUBLISHED_CHILD_POLICY_PRODUCT": PYTHON_PUBLISHED_CHILD_POLICY_PRODUCT,
+    "OCI_IMAGE_INDEX_MEDIA_TYPE": PYTHON_OCI_IMAGE_INDEX_MEDIA_TYPE,
+    "OCI_IMAGE_MANIFEST_MEDIA_TYPE": PYTHON_OCI_IMAGE_MANIFEST_MEDIA_TYPE,
+    "BUILDKIT_ATTESTATION_TYPE_ANNOTATION": PYTHON_BUILDKIT_ATTESTATION_TYPE_ANNOTATION,
+    "BUILDKIT_ATTESTATION_TYPE": PYTHON_BUILDKIT_ATTESTATION_TYPE,
+    "BUILDKIT_ATTESTATION_DIGEST_ANNOTATION": PYTHON_BUILDKIT_ATTESTATION_DIGEST_ANNOTATION,
+}
+PYTHON_ACCEPT_AND_TRACK_SURFACE_FUNCTION_HASHES = {
+    "digest_reference_parts": "3489448fc2b271bec570e344fe3ecc84bcb2ae75023bd0fcf13a56089203b7bf",
+    "validate_index_child_evidence": "932bf9d9663afe46fd85b3d392502e688b1c1cef8aa0827ef07a8f62d9f7cc4f",
+    "accept_and_track_product_eligible": "e462c12a3bce5d1c7c30000257364d36cde65387566a2341c070e422322a6367",
+    "expected_accept_and_track_document": "7c810e0ff2b02b87112d45acfd656dd17f8e7350bc5993c3356a56872a498cab",
+    "disposition_identity_matches": "76eab1499d51525ffc51ca360bb17e8afc31a78d3cd45729db20f1dca81d2f82",
+    "accepted_accept_and_track_statement": "cdec1876dc481b96e95b9af54d076e5c4008d2026ce5758e1d0d99b3d540e148",
+    "assert_vex": "2fbe7832496468380b119e278b0cf567f022e841f4746b4f3191b6011f8e658c",
+    "parse_args": "768a750e9576669c4016edffbb7be993192698d595dd8c550ac2a8e429b4e8a1",
+    "main": "a68074ebb31b0c7abe3e05570362d7051d880fbcfac23323c2e365e6fb91d764",
+}
+
+
+def python_accept_and_track_surface_errors(source: str) -> list[str]:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return [f"assert-vex published-child source does not parse: {exc}"]
+
+    errors: list[str] = []
+    assignments: dict[str, list[ast.Assign]] = {name: [] for name in PYTHON_ACCEPT_AND_TRACK_SURFACE_CONSTANTS}
+    functions: dict[str, list[ast.FunctionDef | ast.AsyncFunctionDef]] = {
+        name: [] for name in PYTHON_ACCEPT_AND_TRACK_SURFACE_FUNCTION_HASHES
+    }
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in assignments:
+                    assignments[target.id].append(node)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in functions:
+            functions[node.name].append(node)
+
+    for name, expected_value in PYTHON_ACCEPT_AND_TRACK_SURFACE_CONSTANTS.items():
+        sites = assignments[name]
+        if len(sites) != 1:
+            errors.append(f"assert-vex published-child constant {name} must be assigned exactly once")
+            continue
+        try:
+            actual_value = ast.literal_eval(sites[0].value)
+        except (ValueError, TypeError):
+            errors.append(f"assert-vex published-child constant {name} must be a literal")
+            continue
+        if actual_value != expected_value:
+            errors.append(f"assert-vex published-child constant {name} must equal {expected_value!r}")
+
+    for name, expected_hash in PYTHON_ACCEPT_AND_TRACK_SURFACE_FUNCTION_HASHES.items():
+        sites = functions[name]
+        if len(sites) != 1:
+            errors.append(f"assert-vex published-child function {name} must be defined exactly once")
+            continue
+        actual_hash = hashlib.sha256(
+            ast.dump(sites[0], annotate_fields=True, include_attributes=False).encode("utf-8")
+        ).hexdigest()
+        if actual_hash != expected_hash:
+            errors.append(f"assert-vex published-child function {name} AST drifted")
+    return errors
+
+
 def python_accept_and_track_expiry_errors(
     entries: list[dict[str, Any]],
     evaluation_date: date,
@@ -9440,6 +9523,8 @@ def check_python_accept_and_track() -> None:
     )
 
     script = read("tools/assert-vex.py")
+    surface_errors = python_accept_and_track_surface_errors(script)
+    require(not surface_errors, "; ".join(surface_errors))
     script_tree = ast.parse(script)
     action_assignments = [
         node
@@ -9481,6 +9566,13 @@ def check_python_accept_and_track() -> None:
         "accept-and-track padded scanner vulnerability id",
         "accept-and-track padded scanner package name",
         "accept-and-track padded scanner version",
+        "validate_index_child_evidence",
+        "accept_and_track_product_eligible",
+        "index manifest linux/amd64 and linux/arm64 child digests must be distinct",
+        "the index digest is never eligible as a published-child product",
+        "published-child product digest does not match the index child for scanner architecture",
+        "index evidence must not be supplied for a local accept-and-track product",
+        "verified published-child production shape accepted",
     ]:
         require(marker in script, f"assert-vex accept-and-track implementation missing marker: {marker}")
 
@@ -9535,13 +9627,17 @@ def check_python_accept_and_track() -> None:
         ("top-level key", lambda value: value.update(extra=True)),
         ("document id", lambda value: value.update({"@id": "https://example.invalid/wrong"})),
         ("author", lambda value: value.update(author="Other")),
-        ("timestamp", lambda value: value.update(timestamp="2026-08-14T00:00:00Z")),
-        ("version", lambda value: value.update(version=2)),
+        ("timestamp", lambda value: value.update(timestamp="2026-08-15T00:00:00Z")),
+        ("version", lambda value: value.update(version=3)),
         ("statement key", lambda value: value["statements"][0].update(extra=True)),
         ("CVE", lambda value: value["statements"][0]["vulnerability"].update(name="CVE-2099-0000")),
         ("alias", lambda value: value["statements"][0]["vulnerability"].update(aliases=[])),
         ("product", lambda value: value["statements"][0]["products"][0].update({"@id": "wrong"})),
         ("added product", lambda value: value["statements"][0]["products"].append({"@id": "wrong"})),
+        (
+            "published-child policy product",
+            lambda value: value["statements"][0]["products"][2].update({"@id": "https://example.invalid/wrong"}),
+        ),
         (
             "first subcomponent",
             lambda value: value["statements"][0]["products"][0]["subcomponents"][0].update({"@id": "wrong"}),
@@ -9590,6 +9686,120 @@ def check_python_accept_and_track() -> None:
         "python accept-and-track allowlist lock accepted a duplicate entry",
     )
 
+    surface_mutations = [
+        (
+            "pinned published repository",
+            script.replace(
+                'PUBLISHED_PYTHON_REPOSITORY = "ghcr.io/nwarila/ubi9-base-python"',
+                'PUBLISHED_PYTHON_REPOSITORY = "ghcr.io/nwarila/ubi9-base-python-x"',
+                1,
+            ),
+        ),
+        (
+            "published-child policy product",
+            script.replace('/published-platform-children"', '/published-platform-children-x"', 1),
+        ),
+        (
+            "OCI index media type",
+            script.replace(PYTHON_OCI_IMAGE_INDEX_MEDIA_TYPE, PYTHON_OCI_IMAGE_INDEX_MEDIA_TYPE + ".drift", 1),
+        ),
+        (
+            "OCI manifest media type",
+            script.replace(
+                PYTHON_OCI_IMAGE_MANIFEST_MEDIA_TYPE,
+                PYTHON_OCI_IMAGE_MANIFEST_MEDIA_TYPE + ".drift",
+                1,
+            ),
+        ),
+        (
+            "BuildKit reference-type annotation",
+            script.replace(
+                PYTHON_BUILDKIT_ATTESTATION_TYPE_ANNOTATION,
+                PYTHON_BUILDKIT_ATTESTATION_TYPE_ANNOTATION + ".drift",
+                1,
+            ),
+        ),
+        (
+            "BuildKit attestation type",
+            script.replace(
+                'BUILDKIT_ATTESTATION_TYPE = "attestation-manifest"',
+                'BUILDKIT_ATTESTATION_TYPE = "wrong"',
+                1,
+            ),
+        ),
+        (
+            "BuildKit reference-digest annotation",
+            script.replace(
+                PYTHON_BUILDKIT_ATTESTATION_DIGEST_ANNOTATION,
+                PYTHON_BUILDKIT_ATTESTATION_DIGEST_ANNOTATION + ".drift",
+                1,
+            ),
+        ),
+        (
+            "digest-qualified reference guard",
+            script.replace("if DIGEST_IMAGE_REFERENCE.fullmatch(reference) is None:", "if False:", 1),
+        ),
+        (
+            "index byte-digest guard",
+            script.replace("if actual_index_digest != index_digest:", "if False:", 1),
+        ),
+        (
+            "paired index-evidence guard",
+            script.replace(
+                "if (index_reference is None) != (index_manifest is None):",
+                "if False:",
+                1,
+            ),
+        ),
+        (
+            "canonical document revision",
+            script.replace('"timestamp": "2026-08-14T00:00:00Z"', '"timestamp": "2026-08-15T00:00:00Z"', 1),
+        ),
+        (
+            "disposition product conjunction",
+            script.replace(
+                "and (product in disposition.products or published_child_eligible)",
+                "and True",
+                1,
+            ),
+        ),
+        (
+            "single authorization candidate guard",
+            script.replace("if len(candidates) != 1:", "if False:", 1),
+        ),
+        (
+            "assertion-path eligibility guard",
+            script.replace(
+                "    accept_and_track_product_matches = accept_and_track_product_eligible(\n"
+                "        product,\n"
+                "        trivy_evidence.architecture,\n"
+                "        index_reference,\n"
+                "        index_manifest,\n"
+                "    )",
+                "    accept_and_track_product_matches = False",
+                1,
+            ),
+        ),
+        (
+            "index-reference CLI input",
+            script.replace(
+                '    parser.add_argument("--index-reference", '
+                'help="digest-qualified reference for exact registry index bytes")\n',
+                "",
+                1,
+            ),
+        ),
+        (
+            "index-reference invocation plumbing",
+            script.replace("            index_reference=args.index_reference,", "            index_reference=None,", 1),
+        ),
+    ]
+    for label, mutant_source in surface_mutations:
+        require(mutant_source != script, f"python accept-and-track surface mutation is a no-op: {label}")
+        mutation_errors = python_accept_and_track_surface_errors(mutant_source)
+        require(mutation_errors, f"python accept-and-track surface mutation unexpectedly passed: {label}")
+        print(f"python accept-and-track surface mutation rejected: {label}: {mutation_errors[0]}")
+
     expiry_fixture = python_accept_and_track_expiry_errors(
         [PYTHON_ACCEPT_AND_TRACK_ENTRY],
         date(2026, 10, 2),
@@ -9607,6 +9817,7 @@ def check_python_accept_and_track() -> None:
     print(
         "python accept-and-track locks: canonical VEX, exact one-entry allowlist, "
         f"{len(vex_mutations)} VEX mutations, {len(allowlist_mutations) + 2} allowlist mutations, "
+        f"{len(surface_mutations)} published-child surface mutations, "
         "and date-controlled dormant-entry expiry rejected"
     )
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import io
 import json
 import re
@@ -53,6 +54,15 @@ TRIVY_FIX_STATUSES = {
     "will_not_fix",
 }
 GRYPE_FIX_STATES = {"fixed", "not-fixed", "unknown", "wont-fix"}
+PUBLISHED_PYTHON_REPOSITORY = "ghcr.io/nwarila/ubi9-base-python"
+PUBLISHED_CHILD_POLICY_PRODUCT = (
+    "https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-python/published-platform-children"
+)
+OCI_IMAGE_INDEX_MEDIA_TYPE = "application/vnd.oci.image.index.v1+json"
+OCI_IMAGE_MANIFEST_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json"
+BUILDKIT_ATTESTATION_TYPE_ANNOTATION = "vnd.docker.reference.type"
+BUILDKIT_ATTESTATION_TYPE = "attestation-manifest"
+BUILDKIT_ATTESTATION_DIGEST_ANNOTATION = "vnd.docker.reference.digest"
 Mutation = Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], Any]
 
 ACCEPT_AND_TRACK_ACTION_STATEMENT = (
@@ -162,6 +172,176 @@ class GrypeEvidence:
     architecture: str | None
     distro_version: str
     repo_digests: tuple[str, ...]
+
+
+def digest_reference_parts(reference: str, label: str) -> tuple[str, str]:
+    if DIGEST_IMAGE_REFERENCE.fullmatch(reference) is None:
+        raise VexError(f"{label} must be a digest-qualified image reference")
+    repository, digest = reference.rsplit("@", 1)
+    return repository, digest
+
+
+def validate_index_child_evidence(
+    product: str,
+    architecture: str,
+    index_reference: str,
+    index_manifest: Path,
+) -> None:
+    product_repository, product_digest = digest_reference_parts(product, "published-child --product")
+    if product_repository != PUBLISHED_PYTHON_REPOSITORY:
+        raise VexError(f"published-child --product repository must be {PUBLISHED_PYTHON_REPOSITORY}")
+
+    index_repository, index_digest = digest_reference_parts(index_reference, "--index-reference")
+    if index_repository != PUBLISHED_PYTHON_REPOSITORY:
+        raise VexError(f"--index-reference repository must be {PUBLISHED_PYTHON_REPOSITORY}")
+
+    try:
+        index_bytes = index_manifest.read_bytes()
+    except FileNotFoundError as exc:
+        raise VexError(f"missing index manifest: {index_manifest}") from exc
+    actual_index_digest = "sha256:" + hashlib.sha256(index_bytes).hexdigest()
+    if actual_index_digest != index_digest:
+        raise VexError(
+            "index manifest digest mismatch: "
+            f"--index-reference declares {index_digest}, bytes compute to {actual_index_digest}"
+        )
+
+    try:
+        document = json.loads(index_bytes, object_pairs_hook=reject_duplicate_members)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise VexError(f"index manifest is malformed JSON: {exc}") from exc
+    if not isinstance(document, dict):
+        raise VexError("index manifest must be a top-level JSON object")
+    if "schemaVersion" not in document:
+        raise VexError("index manifest is missing schemaVersion")
+    schema_version = document["schemaVersion"]
+    if not isinstance(schema_version, int) or isinstance(schema_version, bool):
+        raise VexError("index manifest schemaVersion must be an integer")
+    if schema_version != 2:
+        raise VexError("index manifest schemaVersion must equal 2")
+    if document.get("mediaType") != OCI_IMAGE_INDEX_MEDIA_TYPE:
+        raise VexError(f"index manifest mediaType must be {OCI_IMAGE_INDEX_MEDIA_TYPE}")
+    manifests = document.get("manifests")
+    if not isinstance(manifests, list):
+        raise VexError("index manifest manifests must be a list")
+    if not manifests:
+        raise VexError("index manifest manifests must not be empty")
+
+    children: dict[str, list[str]] = {architecture: [] for architecture in sorted(SUPPORTED_ARCHITECTURES)}
+    attestations: list[tuple[int, str, dict[str, Any]]] = []
+    for descriptor_index, raw_descriptor in enumerate(manifests):
+        label = f"index manifest manifests[{descriptor_index}]"
+        if not isinstance(raw_descriptor, dict):
+            raise VexError(f"{label} must be an object")
+        for required_field in ("mediaType", "digest", "size"):
+            if required_field not in raw_descriptor:
+                raise VexError(f"{label} is missing {required_field}")
+        descriptor_media_type = raw_descriptor["mediaType"]
+        if not isinstance(descriptor_media_type, str) or not descriptor_media_type:
+            raise VexError(f"{label}.mediaType must be a non-empty string")
+        descriptor_digest = content_digest(raw_descriptor["digest"], f"{label}.digest")
+        descriptor_size = raw_descriptor["size"]
+        if not isinstance(descriptor_size, int) or isinstance(descriptor_size, bool) or descriptor_size < 0:
+            raise VexError(f"{label}.size must be a non-negative integer")
+        if descriptor_media_type == OCI_IMAGE_INDEX_MEDIA_TYPE:
+            raise VexError(f"{label} must not be a nested image index descriptor")
+        if descriptor_media_type != OCI_IMAGE_MANIFEST_MEDIA_TYPE:
+            raise VexError(f"{label}.mediaType must be {OCI_IMAGE_MANIFEST_MEDIA_TYPE}")
+
+        platform = raw_descriptor.get("platform")
+        if not isinstance(platform, dict):
+            raise VexError(f"{label}.platform must be an object")
+        operating_system = platform.get("os")
+        platform_architecture = platform.get("architecture")
+        if (
+            not isinstance(operating_system, str)
+            or not operating_system
+            or not isinstance(platform_architecture, str)
+            or not platform_architecture
+        ):
+            raise VexError(f"{label}.platform os and architecture must be non-empty strings")
+        if operating_system == "linux":
+            if platform_architecture not in SUPPORTED_ARCHITECTURES:
+                raise VexError(f"index manifest contains unsupported runnable platform linux/{platform_architecture}")
+            children[platform_architecture].append(descriptor_digest)
+            continue
+        if operating_system == "unknown" and platform_architecture == "unknown":
+            if set(platform) != {"os", "architecture"}:
+                raise VexError(f"{label}.platform must equal the locked unknown/unknown attestation platform")
+            attestations.append((descriptor_index, descriptor_digest, raw_descriptor))
+            continue
+        raise VexError(
+            f"index manifest contains unsupported descriptor platform {operating_system}/{platform_architecture}"
+        )
+
+    for required_architecture in sorted(SUPPORTED_ARCHITECTURES):
+        count = len(children[required_architecture])
+        if count != 1:
+            raise VexError(
+                "index manifest must contain exactly one "
+                f"linux/{required_architecture} image manifest descriptor; found {count}"
+            )
+    child_digests = {required_architecture: values[0] for required_architecture, values in children.items()}
+    if child_digests["amd64"] == child_digests["arm64"]:
+        raise VexError("index manifest linux/amd64 and linux/arm64 child digests must be distinct")
+
+    eligible_child_digests = frozenset(child_digests.values())
+    attestation_digests: set[str] = set()
+    locked_annotation_keys = {
+        BUILDKIT_ATTESTATION_TYPE_ANNOTATION,
+        BUILDKIT_ATTESTATION_DIGEST_ANNOTATION,
+    }
+    for descriptor_index, descriptor_digest, descriptor in attestations:
+        label = f"index manifest manifests[{descriptor_index}]"
+        annotations = descriptor.get("annotations")
+        if (
+            not isinstance(annotations, dict)
+            or annotations.get(BUILDKIT_ATTESTATION_TYPE_ANNOTATION) != BUILDKIT_ATTESTATION_TYPE
+        ):
+            raise VexError(
+                f"{label} unknown/unknown descriptor must carry "
+                f"{BUILDKIT_ATTESTATION_TYPE_ANNOTATION}={BUILDKIT_ATTESTATION_TYPE}"
+            )
+        reference_digest = content_digest(
+            annotations.get(BUILDKIT_ATTESTATION_DIGEST_ANNOTATION),
+            f"{label}.annotations[{BUILDKIT_ATTESTATION_DIGEST_ANNOTATION!r}]",
+        )
+        if reference_digest not in eligible_child_digests:
+            raise VexError(f"{label} attestation reference digest must name an eligible platform child")
+        if set(annotations) != locked_annotation_keys:
+            raise VexError(f"{label}.annotations must equal the locked BuildKit attestation shape")
+        attestation_digests.add(descriptor_digest)
+
+    if product_digest == index_digest:
+        raise VexError("the index digest is never eligible as a published-child product")
+    expected_child_digest = child_digests[architecture]
+    if product_digest == expected_child_digest:
+        return
+    if product_digest in attestation_digests:
+        raise VexError("published-child product digest identifies an attestation descriptor")
+    if product_digest in eligible_child_digests:
+        raise VexError(
+            f"published-child product digest does not match the index child for scanner architecture {architecture}"
+        )
+    raise VexError("published-child product digest is absent from the verified index")
+
+
+def accept_and_track_product_eligible(
+    product: str,
+    architecture: str,
+    index_reference: str | None,
+    index_manifest: Path | None,
+) -> bool:
+    if (index_reference is None) != (index_manifest is None):
+        raise VexError("--index-reference and --index-manifest must be supplied together")
+    if product in ACCEPT_AND_TRACK_DISPOSITIONS[0].products:
+        if index_reference is not None:
+            raise VexError("index evidence must not be supplied for a local accept-and-track product")
+        return True
+    if index_reference is None or index_manifest is None:
+        return False
+    validate_index_child_evidence(product, architecture, index_reference, index_manifest)
+    return True
 
 
 def load_json(path: Path) -> Any:
@@ -699,8 +879,8 @@ def expected_accept_and_track_document() -> dict[str, Any]:
         "@context": "https://openvex.dev/ns/v0.2.0",
         "@id": "https://github.com/NWarila/ubi9-base-micro/images/python/vex/cve-2026-11940",
         "author": "NWarila",
-        "timestamp": "2026-08-13T00:00:00Z",
-        "version": 1,
+        "timestamp": "2026-08-14T00:00:00Z",
+        "version": 2,
         "statements": [
             {
                 "vulnerability": {"name": "CVE-2026-11940"},
@@ -714,6 +894,13 @@ def expected_accept_and_track_document() -> dict[str, Any]:
                     },
                     {
                         "@id": "local/ubi9-base-python:ci-arm64",
+                        "subcomponents": [
+                            {"@id": "pkg:rpm/redhat/python3.12@3.12.13-3.el9_8.1"},
+                            {"@id": "pkg:rpm/redhat/python3.12-libs@3.12.13-3.el9_8.1"},
+                        ],
+                    },
+                    {
+                        "@id": PUBLISHED_CHILD_POLICY_PRODUCT,
                         "subcomponents": [
                             {"@id": "pkg:rpm/redhat/python3.12@3.12.13-3.el9_8.1"},
                             {"@id": "pkg:rpm/redhat/python3.12-libs@3.12.13-3.el9_8.1"},
@@ -736,10 +923,11 @@ def disposition_identity_matches(
     disposition: AcceptAndTrackDisposition,
     finding: Finding,
     product: str,
+    published_child_eligible: bool,
 ) -> bool:
     return (
         disposition.vulnerability == finding.vulnerability
-        and product in disposition.products
+        and (product in disposition.products or published_child_eligible)
         and finding_package_versions(finding) == frozenset(disposition.packages)
     )
 
@@ -816,6 +1004,7 @@ def accepted_accept_and_track_statement(
     statements: list[Statement],
     dispositions: tuple[AcceptAndTrackDisposition, ...],
     today: date,
+    published_child_eligible: bool,
 ) -> tuple[Statement | None, AcceptAndTrackDisposition | None, str | None]:
     identity_rejections = sorted({rejection for record in finding.records for rejection in record.identity_rejections})
     if identity_rejections:
@@ -825,7 +1014,9 @@ def accepted_accept_and_track_statement(
             "malformed accept-and-track scanner identity evidence: " + "; ".join(identity_rejections),
         )
     candidates = [
-        disposition for disposition in dispositions if disposition_identity_matches(disposition, finding, product)
+        disposition
+        for disposition in dispositions
+        if disposition_identity_matches(disposition, finding, product, published_child_eligible)
     ]
     if len(candidates) != 1:
         return None, None, "no exact in-tool accept-and-track allowlist entry"
@@ -878,6 +1069,8 @@ def assert_vex(
     *,
     accept_and_track: tuple[AcceptAndTrackDisposition, ...] = ACCEPT_AND_TRACK_DISPOSITIONS,
     today: date | None = None,
+    index_reference: str | None = None,
+    index_manifest: Path | None = None,
 ) -> int:
     trivy_document = scanner_document(trivy_json, "Trivy")
     grype_document = scanner_document(grype_json, "Grype")
@@ -885,6 +1078,15 @@ def assert_vex(
     grype_evidence = validate_grype_report(grype_document)
     validate_report_binding(product, trivy_evidence, grype_evidence)
     validate_contract_floor(package_floor, trivy_evidence.architecture, trivy_evidence.package_names)
+    accept_and_track_product_matches = accept_and_track_product_eligible(
+        product,
+        trivy_evidence.architecture,
+        index_reference,
+        index_manifest,
+    )
+    published_child_eligible = (
+        accept_and_track_product_matches and product not in ACCEPT_AND_TRACK_DISPOSITIONS[0].products
+    )
 
     findings = union_findings(parse_trivy(trivy_document) + parse_grype(grype_document))
     statements = load_vex_statements(vex_dir)
@@ -898,16 +1100,14 @@ def assert_vex(
     matched: list[tuple[Finding, Statement]] = []
     tracked: list[tuple[Finding, Statement, AcceptAndTrackDisposition]] = []
     for finding in findings:
-        if (
-            finding.vulnerability == ACCEPT_AND_TRACK_DISPOSITIONS[0].vulnerability
-            and product in ACCEPT_AND_TRACK_DISPOSITIONS[0].products
-        ):
+        if finding.vulnerability == ACCEPT_AND_TRACK_DISPOSITIONS[0].vulnerability and accept_and_track_product_matches:
             statement, disposition, rejection = accepted_accept_and_track_statement(
                 finding,
                 product,
                 statements,
                 accept_and_track,
                 evaluation_date,
+                published_child_eligible,
             )
             if statement is not None and disposition is not None:
                 tracked.append((finding, statement, disposition))
@@ -2144,10 +2344,14 @@ def self_test() -> int:
         ) -> None:
             trivy["ArtifactName"] = fixture_product
             trivy["Metadata"]["ImageConfig"]["architecture"] = architecture
-            trivy["Metadata"].pop("RepoDigests", None)
             grype["source"]["target"]["userInput"] = fixture_product
             grype["source"]["target"]["architecture"] = architecture
-            grype["source"]["target"]["repoDigests"] = []
+            if DIGEST_IMAGE_REFERENCE.fullmatch(fixture_product) is None:
+                trivy["Metadata"].pop("RepoDigests", None)
+                grype["source"]["target"]["repoDigests"] = []
+            else:
+                trivy["Metadata"]["RepoDigests"] = [fixture_product]
+                grype["source"]["target"]["repoDigests"] = [fixture_product]
 
         def run_accept_fixture(
             trivy: dict[str, Any],
@@ -2159,6 +2363,8 @@ def self_test() -> int:
             extra_documents: tuple[tuple[str, dict[str, Any]], ...] = (),
             dispositions: tuple[AcceptAndTrackDisposition, ...] = ACCEPT_AND_TRACK_DISPOSITIONS,
             evaluation_date: date = date(2026, 8, 13),
+            fixture_index_reference: str | None = None,
+            fixture_index_manifest: Path | None = None,
         ) -> tuple[int | None, str, VexError | None]:
             for old_document in accept_vex_dir.glob("*.json"):
                 old_document.unlink()
@@ -2182,6 +2388,8 @@ def self_test() -> int:
                         emit=True,
                         accept_and_track=dispositions,
                         today=evaluation_date,
+                        index_reference=fixture_index_reference,
+                        index_manifest=fixture_index_manifest,
                     )
             except VexError as exc:
                 return None, stdout.getvalue() + stderr.getvalue(), exc
@@ -2197,6 +2405,8 @@ def self_test() -> int:
             document: dict[str, Any] | None = canonical_vex,
             filename: str = canonical_vex_name,
             dispositions: tuple[AcceptAndTrackDisposition, ...] = ACCEPT_AND_TRACK_DISPOSITIONS,
+            fixture_index_reference: str | None = None,
+            fixture_index_manifest: Path | None = None,
         ) -> None:
             result, output, error = run_accept_fixture(
                 copy.deepcopy(trivy),
@@ -2205,6 +2415,8 @@ def self_test() -> int:
                 document=copy.deepcopy(document),
                 filename=filename,
                 dispositions=dispositions,
+                fixture_index_reference=fixture_index_reference,
+                fixture_index_manifest=fixture_index_manifest,
             )
             if error is not None or result != 1 or expected_reason not in output:
                 print(
@@ -2216,7 +2428,7 @@ def self_test() -> int:
             if any(line.startswith("accept-and-track disposition:") for line in output.splitlines()):
                 print(f"self-test failed: {label} emitted a disposition: {output}", file=sys.stderr)
                 raise SystemExit(1)
-            print(f"assert-vex self-test: {label} rejected at its expected discriminator")
+            print(f"assert-vex self-test: {label} rejected: {expected_reason}")
 
         baseline_result, baseline_output, baseline_error = run_accept_fixture(accept_trivy, accept_grype)
         baseline_markers = [
@@ -2239,6 +2451,434 @@ def self_test() -> int:
             )
             return 1
         print("assert-vex self-test: canonical accept-and-track disposition passed with zero undispositioned findings")
+
+        amd64_child_digest = "sha256:" + ("1" * 64)
+        arm64_child_digest = "sha256:" + ("2" * 64)
+        attestation_digest = "sha256:" + ("3" * 64)
+
+        def image_descriptor(digest: str, architecture: str) -> dict[str, Any]:
+            return {
+                "mediaType": OCI_IMAGE_MANIFEST_MEDIA_TYPE,
+                "digest": digest,
+                "size": 1234,
+                "platform": {"architecture": architecture, "os": "linux"},
+            }
+
+        def attestation_descriptor(digest: str, child_digest: str) -> dict[str, Any]:
+            return {
+                "mediaType": OCI_IMAGE_MANIFEST_MEDIA_TYPE,
+                "digest": digest,
+                "size": 567,
+                "annotations": {
+                    BUILDKIT_ATTESTATION_TYPE_ANNOTATION: BUILDKIT_ATTESTATION_TYPE,
+                    BUILDKIT_ATTESTATION_DIGEST_ANNOTATION: child_digest,
+                },
+                "platform": {"architecture": "unknown", "os": "unknown"},
+            }
+
+        valid_index: dict[str, Any] = {
+            "schemaVersion": 2,
+            "mediaType": OCI_IMAGE_INDEX_MEDIA_TYPE,
+            "manifests": [
+                image_descriptor(amd64_child_digest, "amd64"),
+                image_descriptor(arm64_child_digest, "arm64"),
+                attestation_descriptor(attestation_digest, amd64_child_digest),
+            ],
+        }
+        index_manifest_path = tmp / "python-index.json"
+
+        def serialize_index(document: Any) -> bytes:
+            return json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+        def reference_for_index(
+            raw_index: bytes,
+            repository: str = PUBLISHED_PYTHON_REPOSITORY,
+        ) -> str:
+            return f"{repository}@sha256:{hashlib.sha256(raw_index).hexdigest()}"
+
+        valid_index_bytes = serialize_index(valid_index)
+        valid_index_reference = reference_for_index(valid_index_bytes)
+        published_product = f"{PUBLISHED_PYTHON_REPOSITORY}@{amd64_child_digest}"
+
+        def mutated_index(apply: Callable[[dict[str, Any]], Any]) -> bytes:
+            mutant = copy.deepcopy(valid_index)
+            apply(mutant)
+            return serialize_index(mutant)
+
+        def expect_index_rejection(
+            label: str,
+            expected_reason: str,
+            *,
+            fixture_product: str = published_product,
+            raw_index: bytes = valid_index_bytes,
+            fixture_index_reference: str | None = None,
+            architecture: str = "amd64",
+            index_manifest_supplied: bool = True,
+        ) -> None:
+            index_manifest_path.write_bytes(raw_index)
+            supplied_reference = (
+                reference_for_index(raw_index) if fixture_index_reference is None else fixture_index_reference
+            )
+            supplied_manifest = index_manifest_path if index_manifest_supplied else None
+            try:
+                accept_and_track_product_eligible(
+                    fixture_product,
+                    architecture,
+                    supplied_reference,
+                    supplied_manifest,
+                )
+            except VexError as exc:
+                if str(exc) != expected_reason:
+                    print(
+                        f"self-test failed: {label} rejected for wrong reason: {exc}",
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(1) from exc
+            except Exception as exc:
+                print(
+                    f"self-test failed: {label} rejected for wrong reason: {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1) from exc
+            else:
+                print(f"self-test failed: {label} unexpectedly passed", file=sys.stderr)
+                raise SystemExit(1)
+            print(f"assert-vex self-test: {label} rejected: {expected_reason}")
+
+        wrong_digest_reference = f"{PUBLISHED_PYTHON_REPOSITORY}@sha256:{'0' * 64}"
+        actual_valid_digest = "sha256:" + hashlib.sha256(valid_index_bytes).hexdigest()
+        expect_index_rejection(
+            "index evidence declared digest mismatch",
+            "index manifest digest mismatch: "
+            f"--index-reference declares sha256:{'0' * 64}, bytes compute to {actual_valid_digest}",
+            fixture_index_reference=wrong_digest_reference,
+        )
+        reformatted_index = json.dumps(valid_index, indent=2, sort_keys=True).encode("utf-8")
+        reformatted_digest = "sha256:" + hashlib.sha256(reformatted_index).hexdigest()
+        expect_index_rejection(
+            "index evidence reformatted bytes",
+            "index manifest digest mismatch: "
+            f"--index-reference declares {actual_valid_digest}, bytes compute to {reformatted_digest}",
+            raw_index=reformatted_index,
+            fixture_index_reference=valid_index_reference,
+        )
+        for wrong_repository in (
+            "ghcr.io/nwarila/ubi9-base-micro",
+            "ghcr.io/nwarila/ubi9-base-python-x",
+        ):
+            expect_index_rejection(
+                f"index evidence wrong repository {wrong_repository}",
+                f"--index-reference repository must be {PUBLISHED_PYTHON_REPOSITORY}",
+                fixture_index_reference=reference_for_index(valid_index_bytes, wrong_repository),
+            )
+        non_index_bytes = mutated_index(lambda value: value.update(mediaType=OCI_IMAGE_MANIFEST_MEDIA_TYPE))
+        expect_index_rejection(
+            "index evidence non-index media type",
+            f"index manifest mediaType must be {OCI_IMAGE_INDEX_MEDIA_TYPE}",
+            raw_index=non_index_bytes,
+        )
+        malformed_index = b"{"
+        expect_index_rejection(
+            "index evidence malformed JSON",
+            "index manifest is malformed JSON: Expecting property name enclosed in double quotes: "
+            "line 1 column 2 (char 1)",
+            raw_index=malformed_index,
+        )
+        empty_index_bytes = mutated_index(lambda value: value.update(manifests=[]))
+        expect_index_rejection(
+            "index evidence empty manifests",
+            "index manifest manifests must not be empty",
+            raw_index=empty_index_bytes,
+        )
+
+        missing_schema_bytes = mutated_index(lambda value: value.pop("schemaVersion"))
+        expect_index_rejection(
+            "OCI index missing schemaVersion",
+            "index manifest is missing schemaVersion",
+            raw_index=missing_schema_bytes,
+        )
+        wrong_schema_bytes = mutated_index(lambda value: value.update(schemaVersion=3))
+        expect_index_rejection(
+            "OCI index schemaVersion other than 2",
+            "index manifest schemaVersion must equal 2",
+            raw_index=wrong_schema_bytes,
+        )
+        boolean_schema_bytes = mutated_index(lambda value: value.update(schemaVersion=True))
+        expect_index_rejection(
+            "OCI index boolean schemaVersion",
+            "index manifest schemaVersion must be an integer",
+            raw_index=boolean_schema_bytes,
+        )
+        non_object_index = serialize_index([])
+        expect_index_rejection(
+            "OCI index non-object top level",
+            "index manifest must be a top-level JSON object",
+            raw_index=non_object_index,
+        )
+        non_list_manifests = mutated_index(lambda value: value.update(manifests={}))
+        expect_index_rejection(
+            "OCI index non-list manifests",
+            "index manifest manifests must be a list",
+            raw_index=non_list_manifests,
+        )
+        for missing_field in ("mediaType", "digest", "size"):
+            missing_field_bytes = mutated_index(lambda value, field=missing_field: value["manifests"][0].pop(field))
+            expect_index_rejection(
+                f"OCI descriptor missing {missing_field}",
+                f"index manifest manifests[0] is missing {missing_field}",
+                raw_index=missing_field_bytes,
+            )
+        uppercase_digest_bytes = mutated_index(
+            lambda value: value["manifests"][0].update(digest="sha256:" + ("A" * 64))
+        )
+        expect_index_rejection(
+            "OCI descriptor non-lowercase digest",
+            "index manifest manifests[0].digest must be a sha256 content digest",
+            raw_index=uppercase_digest_bytes,
+        )
+        malformed_digest_bytes = mutated_index(lambda value: value["manifests"][0].update(digest="sha256:short"))
+        expect_index_rejection(
+            "OCI descriptor malformed digest",
+            "index manifest manifests[0].digest must be a sha256 content digest",
+            raw_index=malformed_digest_bytes,
+        )
+        non_integer_size_bytes = mutated_index(lambda value: value["manifests"][0].update(size="1234"))
+        expect_index_rejection(
+            "OCI descriptor non-integer size",
+            "index manifest manifests[0].size must be a non-negative integer",
+            raw_index=non_integer_size_bytes,
+        )
+
+        expect_index_rejection(
+            "index digest submitted as product",
+            "the index digest is never eligible as a published-child product",
+            fixture_product=valid_index_reference,
+        )
+        same_child_bytes = mutated_index(lambda value: value["manifests"][1].update(digest=amd64_child_digest))
+        expect_index_rejection(
+            "two platform descriptors carry the same digest",
+            "index manifest linux/amd64 and linux/arm64 child digests must be distinct",
+            raw_index=same_child_bytes,
+        )
+        third_platform_bytes = mutated_index(
+            lambda value: value["manifests"].append(image_descriptor("sha256:" + ("4" * 64), "s390x"))
+        )
+        expect_index_rejection(
+            "third runnable platform",
+            "index manifest contains unsupported runnable platform linux/s390x",
+            raw_index=third_platform_bytes,
+        )
+        duplicate_platform_bytes = mutated_index(
+            lambda value: value["manifests"].append(image_descriptor("sha256:" + ("4" * 64), "amd64"))
+        )
+        expect_index_rejection(
+            "duplicate linux/amd64 descriptor",
+            "index manifest must contain exactly one linux/amd64 image manifest descriptor; found 2",
+            raw_index=duplicate_platform_bytes,
+        )
+        missing_architecture_bytes = mutated_index(lambda value: value["manifests"].pop(1))
+        expect_index_rejection(
+            "missing linux/arm64 descriptor",
+            "index manifest must contain exactly one linux/arm64 image manifest descriptor; found 0",
+            raw_index=missing_architecture_bytes,
+        )
+        nested_index_bytes = mutated_index(
+            lambda value: value["manifests"].append(
+                {
+                    "mediaType": OCI_IMAGE_INDEX_MEDIA_TYPE,
+                    "digest": "sha256:" + ("4" * 64),
+                    "size": 42,
+                    "platform": {"architecture": "s390x", "os": "linux"},
+                }
+            )
+        )
+        expect_index_rejection(
+            "nested image-index descriptor",
+            "index manifest manifests[3] must not be a nested image index descriptor",
+            fixture_product=f"{PUBLISHED_PYTHON_REPOSITORY}@sha256:{'4' * 64}",
+            raw_index=nested_index_bytes,
+        )
+        missing_attestation_type_bytes = mutated_index(
+            lambda value: value["manifests"][2]["annotations"].pop(BUILDKIT_ATTESTATION_TYPE_ANNOTATION)
+        )
+        expect_index_rejection(
+            "unknown/unknown descriptor missing reference-type annotation",
+            "index manifest manifests[2] unknown/unknown descriptor must carry "
+            f"{BUILDKIT_ATTESTATION_TYPE_ANNOTATION}={BUILDKIT_ATTESTATION_TYPE}",
+            raw_index=missing_attestation_type_bytes,
+        )
+        unrelated_reference_digest = "sha256:" + ("5" * 64)
+        wrong_attestation_reference_bytes = mutated_index(
+            lambda value: value["manifests"][2]["annotations"].update(
+                {BUILDKIT_ATTESTATION_DIGEST_ANNOTATION: unrelated_reference_digest}
+            )
+        )
+        expect_index_rejection(
+            "unknown/unknown descriptor references neither eligible child",
+            "index manifest manifests[2] attestation reference digest must name an eligible platform child",
+            raw_index=wrong_attestation_reference_bytes,
+        )
+        expect_index_rejection(
+            "unknown/unknown attestation descriptor submitted as product",
+            "published-child product digest identifies an attestation descriptor",
+            fixture_product=f"{PUBLISHED_PYTHON_REPOSITORY}@{attestation_digest}",
+        )
+        swapped_mapping_bytes = mutated_index(
+            lambda value: (
+                value["manifests"][0]["platform"].update(architecture="arm64"),
+                value["manifests"][1]["platform"].update(architecture="amd64"),
+            )
+        )
+        expect_index_rejection(
+            "swapped amd64 and arm64 mapping",
+            "published-child product digest does not match the index child for scanner architecture amd64",
+            raw_index=swapped_mapping_bytes,
+        )
+        expect_index_rejection(
+            "product digest absent from index",
+            "published-child product digest is absent from the verified index",
+            fixture_product=f"{PUBLISHED_PYTHON_REPOSITORY}@sha256:{'6' * 64}",
+        )
+        expect_index_rejection(
+            "tag-addressed published-child product",
+            "published-child --product must be a digest-qualified image reference",
+            fixture_product=f"{PUBLISHED_PYTHON_REPOSITORY}:latest",
+        )
+        expect_index_rejection(
+            "wrong repository in published-child product",
+            f"published-child --product repository must be {PUBLISHED_PYTHON_REPOSITORY}",
+            fixture_product=f"ghcr.io/nwarila/ubi9-base-python-x@{amd64_child_digest}",
+        )
+        expect_index_rejection(
+            "index evidence supplied for local CI product",
+            "index evidence must not be supplied for a local accept-and-track product",
+            fixture_product=accept_product,
+        )
+        expect_index_rejection(
+            "unpaired index evidence",
+            "--index-reference and --index-manifest must be supplied together",
+            index_manifest_supplied=False,
+        )
+
+        published_trivy = copy.deepcopy(accept_trivy)
+        published_grype = copy.deepcopy(accept_grype)
+        bind_accept_reports(published_trivy, published_grype, published_product, "amd64")
+        published_result, published_output, published_error = run_accept_fixture(
+            published_trivy,
+            published_grype,
+            fixture_product=published_product,
+            fixture_index_reference=valid_index_reference,
+            fixture_index_manifest=index_manifest_path,
+        )
+        if (
+            published_error is not None
+            or published_result != 0
+            or any(marker not in published_output for marker in baseline_markers)
+        ):
+            print(
+                "self-test failed: verified published-child production-shape fixture did not pass: "
+                f"result={published_result} error={published_error} output={published_output}",
+                file=sys.stderr,
+            )
+            return 1
+        print(
+            "assert-vex self-test: verified published-child production shape accepted: "
+            + next(line for line in published_output.splitlines() if line.startswith("accept-and-track disposition:"))
+        )
+        expect_accept_rejection(
+            "published-child unavailable without index evidence",
+            expected_reason="un-vexed unfixed HIGH/CRITICAL findings",
+            trivy=published_trivy,
+            grype=published_grype,
+            fixture_product=published_product,
+        )
+
+        published_altered_vex = copy.deepcopy(canonical_vex)
+        published_altered_vex["statements"][0]["products"][2]["@id"] += "-altered"
+        expect_accept_rejection(
+            "published-child altered canonical document",
+            expected_reason="accept-and-track products and subcomponents must match the canonical ordered set",
+            trivy=published_trivy,
+            grype=published_grype,
+            fixture_product=published_product,
+            document=published_altered_vex,
+            fixture_index_reference=valid_index_reference,
+            fixture_index_manifest=index_manifest_path,
+        )
+        expect_accept_rejection(
+            "published-child canonical statement without in-tool authorization",
+            expected_reason="no exact in-tool accept-and-track allowlist entry",
+            trivy=published_trivy,
+            grype=published_grype,
+            fixture_product=published_product,
+            dispositions=(),
+            fixture_index_reference=valid_index_reference,
+            fixture_index_manifest=index_manifest_path,
+        )
+        published_padded_grype = copy.deepcopy(published_grype)
+        published_padded_grype["matches"][0]["artifact"]["name"] = " python3.12 "
+        expect_accept_rejection(
+            "published-child byte-noncanonical scanner identity",
+            expected_reason=(
+                "malformed accept-and-track scanner identity evidence: "
+                "Grype matches[0].artifact.name must not contain surrounding whitespace"
+            ),
+            trivy=published_trivy,
+            grype=published_padded_grype,
+            fixture_product=published_product,
+            fixture_index_reference=valid_index_reference,
+            fixture_index_manifest=index_manifest_path,
+        )
+        published_wrong_package_grype = copy.deepcopy(published_grype)
+        published_wrong_package_grype["matches"][0]["artifact"]["version"] = "3.12.13-3.el9_8.2"
+        expect_accept_rejection(
+            "published-child exact package-version pair",
+            expected_reason="no exact in-tool accept-and-track allowlist entry",
+            trivy=published_trivy,
+            grype=published_wrong_package_grype,
+            fixture_product=published_product,
+            fixture_index_reference=valid_index_reference,
+            fixture_index_manifest=index_manifest_path,
+        )
+        published_fixed_trivy = copy.deepcopy(published_trivy)
+        published_fixed_trivy["Results"][0]["Vulnerabilities"] = target_trivy_records(fixed=True)
+        expect_accept_rejection(
+            "published-child valid cross-scanner fix evidence",
+            expected_reason=(
+                "valid fix evidence refuses accept-and-track disposition: "
+                "trivy:python3.12@3.12.13-3.el9_8.1,trivy:python3.12-libs@3.12.13-3.el9_8.1"
+            ),
+            trivy=published_fixed_trivy,
+            grype=published_grype,
+            fixture_product=published_product,
+            fixture_index_reference=valid_index_reference,
+            fixture_index_manifest=index_manifest_path,
+        )
+        published_expired_result, _, published_expired_error = run_accept_fixture(
+            published_trivy,
+            published_grype,
+            fixture_product=published_product,
+            evaluation_date=date(2026, 10, 2),
+            fixture_index_reference=valid_index_reference,
+            fixture_index_manifest=index_manifest_path,
+        )
+        expected_published_expiry = (
+            "expired accept-and-track entry: CVE-2026-11940 "
+            f"product={published_product} "
+            "packages=python3.12@3.12.13-3.el9_8.1,python3.12-libs@3.12.13-3.el9_8.1 "
+            "debt=TD-9 review-by=2026-10-01"
+        )
+        if (
+            published_expired_result is not None
+            or published_expired_error is None
+            or str(published_expired_error) != expected_published_expiry
+        ):
+            print(
+                f"self-test failed: published-child elapsed entry rejected for wrong reason: {published_expired_error}",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"assert-vex self-test: published-child elapsed entry rejected: {expected_published_expiry}")
 
         padded_identity_probes: list[tuple[str, Callable[[dict[str, Any]], Any], str]] = [
             (
@@ -2551,7 +3191,7 @@ def self_test() -> int:
                 file=sys.stderr,
             )
             return 1
-        print("assert-vex self-test: elapsed candidate-scoped entry failed with its complete identity")
+        print(f"assert-vex self-test: elapsed candidate-scoped entry rejected: {expected_expiry}")
 
         micro_product = "ghcr.io/nwarila/ubi9-base-micro:base-micro"
         micro_trivy = copy.deepcopy(accept_trivy)
@@ -2696,6 +3336,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--grype-json", type=Path, help="Grype JSON report without --only-fixed")
     parser.add_argument("--package-floor", type=Path, help="contract containing the applicable package floor")
     parser.add_argument("--vex-dir", type=Path, default=Path("vex"), help="directory containing OpenVEX JSON")
+    parser.add_argument("--index-reference", help="digest-qualified reference for exact registry index bytes")
+    parser.add_argument("--index-manifest", type=Path, help="path to exact registry-served OCI index bytes")
     parser.add_argument("--self-test", action="store_true", help="prove default-deny behavior with synthetic data")
     args = parser.parse_args(argv)
 
@@ -2718,6 +3360,8 @@ def main(argv: list[str]) -> int:
             args.grype_json,
             args.package_floor,
             args.vex_dir,
+            index_reference=args.index_reference,
+            index_manifest=args.index_manifest,
         )
     except VexError as exc:
         print(f"assert-vex failed: {exc}", file=sys.stderr)
