@@ -2621,8 +2621,14 @@ def self_test() -> int:
             "index manifest manifests must be a list",
             raw_index=non_list_manifests,
         )
+
+        def index_without_descriptor_field(field: str) -> bytes:
+            mutant = copy.deepcopy(valid_index)
+            mutant["manifests"][0].pop(field)
+            return serialize_index(mutant)
+
         for missing_field in ("mediaType", "digest", "size"):
-            missing_field_bytes = mutated_index(lambda value, field=missing_field: value["manifests"][0].pop(field))
+            missing_field_bytes = index_without_descriptor_field(missing_field)
             expect_index_rejection(
                 f"OCI descriptor missing {missing_field}",
                 f"index manifest manifests[0] is missing {missing_field}",

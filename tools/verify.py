@@ -9465,12 +9465,12 @@ def python_accept_and_track_surface_errors(source: str) -> list[str]:
             functions[node.name].append(node)
 
     for name, expected_value in PYTHON_ACCEPT_AND_TRACK_SURFACE_CONSTANTS.items():
-        sites = assignments[name]
-        if len(sites) != 1:
+        assignment_sites = assignments[name]
+        if len(assignment_sites) != 1:
             errors.append(f"assert-vex published-child constant {name} must be assigned exactly once")
             continue
         try:
-            actual_value = ast.literal_eval(sites[0].value)
+            actual_value = ast.literal_eval(assignment_sites[0].value)
         except (ValueError, TypeError):
             errors.append(f"assert-vex published-child constant {name} must be a literal")
             continue
@@ -9478,12 +9478,12 @@ def python_accept_and_track_surface_errors(source: str) -> list[str]:
             errors.append(f"assert-vex published-child constant {name} must equal {expected_value!r}")
 
     for name, expected_hash in PYTHON_ACCEPT_AND_TRACK_SURFACE_FUNCTION_HASHES.items():
-        sites = functions[name]
-        if len(sites) != 1:
+        function_sites = functions[name]
+        if len(function_sites) != 1:
             errors.append(f"assert-vex published-child function {name} must be defined exactly once")
             continue
         actual_hash = hashlib.sha256(
-            ast.dump(sites[0], annotate_fields=True, include_attributes=False).encode("utf-8")
+            ast.dump(function_sites[0], annotate_fields=True, include_attributes=False).encode("utf-8")
         ).hexdigest()
         if actual_hash != expected_hash:
             errors.append(f"assert-vex published-child function {name} AST drifted")
