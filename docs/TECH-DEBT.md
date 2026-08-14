@@ -205,9 +205,12 @@ reviewed statement, and supplied index evidence. The tool requires paired
 exact index bytes, accepts exactly one distinct `linux/amd64` child and one
 distinct `linux/arm64` child plus only the locked BuildKit attestation-descriptor
 shape, and binds the gated product digest to the child for the architecture
-reported by both scanners. The index digest, attestation digests, an extra or
-duplicate platform, a nested index, a wrong repository, and an architecture
-swap are ineligible or rejected.
+reported by both scanners. The index digest is never eligible. A distinct
+attestation-descriptor digest is rejected when submitted as the product, while
+any attestation-descriptor digest that aliases an eligible platform-child
+digest makes the index malformed and rejects it before child-product
+eligibility is decided. An extra or duplicate platform, a nested index, a wrong
+repository, and an architecture swap are also rejected.
 
 Those checks prove only that a digest is a child of the caller-supplied,
 digest-verified index. The index evidence is a dynamic authorization input and

@@ -42,9 +42,12 @@ reference digest, enforces the OCI image-index shape and the locked BuildKit
 attestation-descriptor convention, derives exactly one distinct `linux/amd64`
 and `linux/arm64` child, and requires the product digest to match the child for
 the architecture reported by both scanners. The index digest and attestation
-digests are never eligible. Version 2 of the canonical statement names this
-scope with a non-image-matchable policy IRI, so it is not a bare repository
-wildcard.
+digests are never eligible. For an otherwise well-formed index, submitting a
+distinct attestation-descriptor digest is a product-eligibility rejection. If
+an attestation-descriptor digest aliases either platform-child digest, the
+entire index is malformed and is rejected before child-product eligibility is
+decided. Version 2 of the canonical statement names this scope with a
+non-image-matchable policy IRI, so it is not a bare repository wildcard.
 
 This index evidence is a dynamic authorization input, not a trusted origin.
 Digest verification proves what index bytes were supplied, but not that a

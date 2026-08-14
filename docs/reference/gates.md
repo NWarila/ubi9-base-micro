@@ -63,13 +63,16 @@ input: it accepts and tracks the known-affected unfixed HIGH
 `affected` statement must both match through `review-by 2026-10-01`. The
 dormant digest-addressed child path additionally requires paired index evidence
 whose exact bytes name one distinct child for each supported architecture under
-the pinned repository. The index digest itself, BuildKit attestation
-descriptors, and a child for the other scanner-reported architecture are not
-eligible. The caller-selected index remains a dynamic authorization input until
-a production publisher binds it to exact registry-served bytes; no current
-workflow supplies that evidence. Raw scanner vulnerability IDs, package names,
-and installed versions must already contain no surrounding whitespace; the gate
-rejects padded evidence instead of normalizing it into the disposition.
+the pinned repository. The index digest itself is never eligible, a distinct
+BuildKit attestation-descriptor digest is rejected as a product, and a child for
+the other scanner-reported architecture is not eligible. If an attestation
+descriptor aliases either eligible child digest, the index itself is malformed
+and is rejected before child-product eligibility is decided. The caller-selected
+index remains a dynamic authorization input until a production publisher binds
+it to exact registry-served bytes; no current workflow supplies that evidence.
+Raw scanner vulnerability IDs, package names, and installed versions must
+already contain no surrounding whitespace; the gate rejects padded evidence
+instead of normalizing it into the disposition.
 Candidate evaluations fail after that date, while `tools/verify.py` also expires
 the repository entry when dormant. Every other unfixed HIGH or CRITICAL finding remains default-denied.
 

@@ -47,8 +47,11 @@ evidence. `--index-reference` identifies an index digest and
 enforces an OCI index with exactly one distinct `linux/amd64` and
 `linux/arm64` child plus only the locked BuildKit attestation shape, and binds
 the product to the child matching the scanner-reported architecture. The index
-digest, attestation digests, extra or duplicate runnable platforms, nested
-indexes, and architecture swaps are rejected.
+digest is never eligible, and a distinct attestation-descriptor digest is
+rejected when submitted as the product. An attestation descriptor that aliases
+either eligible child digest instead makes the index malformed and rejects it
+before child-product eligibility is decided. Extra or duplicate runnable
+platforms, nested indexes, and architecture swaps are also rejected.
 
 The supplied index remains a dynamic authorization input, not a trusted one.
 There is no production caller and no evidence here that the index was actually

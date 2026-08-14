@@ -38,9 +38,12 @@ statement, and index evidence supplied through paired `--index-reference` and
 reference digest, requires the closed OCI descriptor shape of one distinct
 `linux/amd64` and `linux/arm64` image manifest plus only the locked BuildKit
 attestation convention, and binds the product digest to the child for the
-architecture reported by both scanners. The index digest, attestations, nested
-indexes, additional or duplicate runnable platforms, and architecture swaps are
-not eligible.
+architecture reported by both scanners. The index digest is never eligible, and
+a distinct attestation-descriptor digest is rejected when submitted as the
+product. An attestation descriptor that aliases either eligible child digest
+instead makes the index malformed and rejects it before child-product
+eligibility is decided. Nested indexes, additional or duplicate runnable
+platforms, and architecture swaps are also rejected.
 
 The descriptor classification locks a producer convention; index metadata
 alone does not prove that an `unknown/unknown` image-manifest descriptor is
