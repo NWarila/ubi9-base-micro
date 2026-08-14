@@ -12,12 +12,21 @@ and this project adheres to
 
 - Added an exact, expiring accept-and-track disposition for the known-affected
   base-python `CVE-2026-11940` finding on `python3.12` and
-  `python3.12-libs` at `3.12.13-3.el9_8.1`. The two-key gate requires both the
-  closed in-tool authorization and the reviewed `affected` OpenVEX statement,
-  refuses the disposition when either scanner supplies valid fix evidence or a
-  raw vulnerability ID, package name, or installed version has surrounding
-  whitespace, and has `review-by 2026-10-01`. It suppresses no raw finding,
-  does not make the image unaffected, and is tracked as TD-9.
+  `python3.12-libs` at `3.12.13-3.el9_8.1`. The legacy local-product path is a
+  two-key gate requiring both its closed in-tool authorization and the reviewed
+  `affected` OpenVEX statement. The statement is now version 2 and also names a
+  non-image-matchable policy scope for potential published platform children.
+  A new dormant path can derive an eligible digest-addressed child under the
+  pinned `ghcr.io/nwarila/ubi9-base-python` repository from exact,
+  digest-verified OCI index bytes and bind it to the architecture reported by
+  both scanners. That path combines fixed in-tool constraints, the canonical
+  statement, and caller-supplied index evidence, which remains a dynamic,
+  untrusted authorization input. No production workflow calls the primitive,
+  base-python remains externally unpublished, and a trusted registry-origin
+  binding is still required before production use. Both paths refuse valid fix
+  evidence and byte-noncanonical scanner identities, expire after
+  `review-by 2026-10-01`, suppress no raw finding, and do not make the image
+  unaffected.
 - Removed `sqlite-libs`, `libsqlite3`, and Python's optional `sqlite3` surface
   from `images/python/` on both architectures. The component was outside the
   image's declared supported surface and was the source of five unfixed scanner

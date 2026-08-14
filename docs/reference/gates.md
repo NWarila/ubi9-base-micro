@@ -20,7 +20,7 @@ it.
 | `tools/assert-scanner-canary.py` | Parses independent Grype and Trivy reports for a committed vulnerable SBOM and fails unless both databases and matchers detect the expected Log4Shell record; this probes content validity, not image cataloging. |
 | `tools/assert-ignore-scope.py` | Rejects missing, malformed, widened, version-unpinned, or expired fixable-CVE ignores and requires Grype gate evidence to contain exactly the two approved runtime suppressions. |
 | `images/python/tools/assert-raw-scanners-no-sqlite.py` | Requires `--trivy-json`, `--grype-json`, `--contract`, and `--arch` for normal execution. It rejects `sqlite-libs` or any of the five SQLite CVEs on either scanner surface. Trivy's `--list-all-pkgs` inventory must contain the policy-selected `python3.12-libs` package at the exact epoch, version, release, and RPM architecture derived from `runtime.shipped[arch]`. Grype must have valid identity, Red Hat distro, source shape, and per-match schema, but `matches: []` is a legal clean result. Malformed marker identities and whitespace-bearing package names fail before the absence decision. |
-| `tools/assert-vex.py` | Binds the Trivy and Grype product, image, architecture, distro, and repository-digest evidence, then fails unless every unfixed HIGH or CRITICAL scanner finding has a matching reviewed OpenVEX statement under the image's CODEOWNERS-gated VEX directory. The only `affected` status that satisfies the gate is the exact, expiring TD-9 accept-and-track disposition for CVE-2026-11940 on both base-python CI products, `python3.12` and `python3.12-libs` at `3.12.13-3.el9_8.1`, and `review-by 2026-10-01`; it requires both the in-tool allowlist and canonical statement, byte-canonical raw scanner vulnerability IDs, package names, and installed versions with no surrounding whitespace, and no valid fix evidence. Padded identity evidence is rejected as malformed rather than normalized into authorization. Malformed fix metadata does not establish a fix, so the finding remains on the default-deny path. |
+| `tools/assert-vex.py` | Binds the Trivy and Grype product, image, architecture, distro, and repository-digest evidence, then fails unless every unfixed HIGH or CRITICAL scanner finding has a matching reviewed OpenVEX statement under the image's CODEOWNERS-gated VEX directory. The only `affected` status that satisfies the gate is the exact, expiring TD-9 accept-and-track disposition for CVE-2026-11940, `python3.12` and `python3.12-libs` at `3.12.13-3.el9_8.1`, and `review-by 2026-10-01`. Its legacy local-product path requires both the exact in-tool allowlist and canonical statement. Its dormant published-child path accepts paired `--index-reference` and `--index-manifest` inputs only for a digest-addressed child of the pinned `ghcr.io/nwarila/ubi9-base-python` repository, verifies the index byte digest and a closed two-platform OCI descriptor shape, and binds the product to the scanner-reported architecture. That second path is the conjunction of fixed in-tool constraints, the canonical statement, and caller-supplied index evidence; the evidence is a dynamic authorization input that has no trusted registry-origin binding or production caller yet. Both paths require byte-canonical scanner identities and refuse valid fix evidence. Malformed fix metadata does not establish a fix, so the finding remains on the default-deny path. |
 | `tools/assert-no-rootfs-secrets.py` | Scans the exported runtime rootfs for high-confidence clear-text credential patterns before NIST SP 800-190 evidence can be generated. |
 | `tools/generate-nist-800-190-predicate.py` | Generates and validates the NIST SP 800-190 section 4.1 image-control predicate. |
 | `tools/assert-cosign-rekor.py` | Checks Cosign signature verification JSON for Rekor bundle fields and self-tests DSSE attestation-envelope parsing. |
@@ -56,12 +56,26 @@ forward-looking change blocks any other fixable Medium.
 
 TD-9 is separate from that fixable-CVE exception. It does not suppress scanner
 input: it accepts and tracks the known-affected unfixed HIGH
-`CVE-2026-11940` only for `local/ubi9-base-python:ci-amd64` and
-`local/ubi9-base-python:ci-arm64`, with the complete package set
-`python3.12` and `python3.12-libs` at `3.12.13-3.el9_8.1`. The exact in-tool
-allowlist and reviewed `affected` statement must both match through
-`review-by 2026-10-01`. Raw scanner vulnerability IDs, package names, and
-installed versions must already contain no surrounding whitespace; the gate
+`CVE-2026-11940` with the complete package set `python3.12` and
+`python3.12-libs` at `3.12.13-3.el9_8.1`. For
+`local/ubi9-base-python:ci-amd64` and
+`local/ubi9-base-python:ci-arm64`, the exact in-tool allowlist and reviewed
+`affected` statement must both match through `review-by 2026-10-01`. The
+dormant digest-addressed child path additionally requires paired index evidence
+whose exact bytes name one distinct child for each supported architecture under
+the pinned repository. The index digest itself, BuildKit attestation
+descriptors, and a child for the other scanner-reported architecture are not
+eligible. The caller-selected index remains a dynamic authorization input until
+a production publisher binds it to exact registry-served bytes; no current
+workflow supplies that evidence. Raw scanner vulnerability IDs, package names,
+and installed versions must already contain no surrounding whitespace; the gate
 rejects padded evidence instead of normalizing it into the disposition.
 Candidate evaluations fail after that date, while `tools/verify.py` also expires
 the repository entry when dormant. Every other unfixed HIGH or CRITICAL finding remains default-denied.
+
+Repository verification exact-locks the published-child surface through seven
+literal constants and nine function ASTs. Its accept-and-track summary now
+reports 17 canonical-VEX mutations, 8 allowlist mutations, and 16
+published-child surface mutations rejected, in addition to the date-controlled
+dormant-entry expiry fixture. These counts describe repository self-tests, not
+production invocations of the dormant path.

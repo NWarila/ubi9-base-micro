@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-06-21
-- Last reviewed: 2026-08-13
+- Last reviewed: 2026-08-14
 - Scope: repo
 
 ## Context
@@ -23,15 +23,41 @@ remains externally unpublished, so its `images/python/vex/` documents are
 pre-publication gate evidence rather than published attestations.
 
 The only `affected` statement that satisfies the gate is the exact, expiring
-TD-9 accept-and-track disposition for known-affected `CVE-2026-11940` on the two
-base-python CI products, with the complete `python3.12` and `python3.12-libs`
-package set at `3.12.13-3.el9_8.1` and `review-by 2026-10-01`. Both the closed
-in-tool authorization and the canonical reviewed statement must match. Valid
-fix evidence from either scanner refuses the disposition. Raw scanner
+TD-9 accept-and-track disposition for known-affected `CVE-2026-11940`, with the
+complete `python3.12` and `python3.12-libs` package set at
+`3.12.13-3.el9_8.1` and `review-by 2026-10-01`. The legacy local-product path
+is a two-key authorization: an exact in-tool allowlist for the two base-python
+CI products and the canonical reviewed statement must both match.
+
+The decision also permits a second, dormant product-eligibility path for a
+digest-addressed child under the in-tool pinned
+`ghcr.io/nwarila/ubi9-base-python` repository. That path is authorized only by
+the conjunction of the fixed in-tool constraints, the canonical reviewed
+statement, and index evidence supplied through paired `--index-reference` and
+`--index-manifest` inputs. The tool verifies the exact index bytes against the
+reference digest, requires the closed OCI descriptor shape of one distinct
+`linux/amd64` and `linux/arm64` image manifest plus only the locked BuildKit
+attestation convention, and binds the product digest to the child for the
+architecture reported by both scanners. The index digest, attestations, nested
+indexes, additional or duplicate runnable platforms, and architecture swaps are
+not eligible.
+
+The descriptor classification locks a producer convention; index metadata
+alone does not prove that an `unknown/unknown` image-manifest descriptor is
+non-runnable. More importantly, digest verification authenticates the supplied
+bytes only relative to the supplied digest. The caller-selected index is a
+dynamic authorization input and is not yet trusted. No production workflow
+calls this path, and base-python remains externally unpublished. Activation
+requires a verifier-locked publisher dataflow that obtains the exact
+registry-served bytes for the index it pushed and uses the same index digest for
+signing, attestation, and aliases. Until then the primitive is dormant and does
+not close the binding defect end-to-end.
+
+Valid fix evidence from either scanner refuses either product path. Raw scanner
 vulnerability IDs, package names, and installed versions must also be
-byte-canonical on this path: surrounding whitespace is malformed evidence and
-is rejected rather than normalized into an exact match. Every other `affected`
-statement remains documentary, and this path does not make the base-python image
+byte-canonical: surrounding whitespace is malformed evidence and is rejected
+rather than normalized into an exact match. Every other `affected` statement
+remains documentary, and this path does not make the base-python image
 unaffected or suppress a raw scanner finding.
 
 The OpenVEX classifier and the hardening decision-envelope generator apply the
@@ -53,9 +79,10 @@ classification to the pull-request decision and nightly drift issue.
 - Scanner summaries cannot upgrade malformed fix metadata into an actionable
   fix or remove it from the unfixed OpenVEX set.
 - Unfixed findings require explicit reviewed status and justification.
-- A known-affected finding can pass only through the exact, expiring two-key
-  authorization above, with byte-canonical raw scanner identity fields; all
-  other unfixed findings remain default-denied.
+- A known-affected finding can pass only through one of the exact, expiring
+  product paths above. The two-key description applies only to legacy local
+  products; the dormant child path additionally depends on caller-supplied
+  index evidence that is not trusted for production.
 - Empty VEX is not manufactured when there are no unfixed HIGH or CRITICAL
   findings.
 - Published VEX documents become signed supply-chain evidence, not comments in

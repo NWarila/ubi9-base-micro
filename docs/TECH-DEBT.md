@@ -186,18 +186,48 @@ RHEL 9 `python3.9` is fixed via RHSA-2026:54268, and the upstream CPython 3.12
 branch is fixed. Consumers must not rely on `tarfile.extractall()` `data` or
 `tar` filters to contain untrusted archives until a fixed RPM is absorbed.
 
-This known-affected state is accepted and tracked through two exact mechanisms:
-the closed allowlist in `tools/assert-vex.py` and the reviewed disclosure in
+The legacy local-product path is a two-key authorization: the closed allowlist
+in `tools/assert-vex.py` and the reviewed disclosure in
 `images/python/vex/cve-2026-11940.openvex.json`. Both must match the CVE, the two
 CI products, the complete two-package set, the installed version, this debt id,
-and `review-by 2026-10-01`. Valid fix evidence from either scanner refuses the
-disposition. On this path, each raw scanner vulnerability ID, package name, and
-installed version must already be byte-canonical: leading or trailing whitespace
-is malformed evidence and is rejected rather than normalized into an exact
-match. The image is not unaffected, and no scanner input or raw finding is
-suppressed.
+and `review-by 2026-10-01`.
+
+The same tool now contains a second, dormant product-eligibility primitive for
+a digest-addressed `ghcr.io/nwarila/ubi9-base-python` platform child. The
+canonical OpenVEX document was reissued as version 2 and names that policy scope
+with the non-image-matchable
+`https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-python/published-platform-children`
+IRI; it does not enumerate or prove the existence of a published image. For this
+path the authorization is the conjunction of fixed in-tool constraints (the
+pinned repository, CVE, package/version pair, and expiry), that canonical
+reviewed statement, and supplied index evidence. The tool requires paired
+`--index-reference` and `--index-manifest` inputs, recomputes the digest of the
+exact index bytes, accepts exactly one distinct `linux/amd64` child and one
+distinct `linux/arm64` child plus only the locked BuildKit attestation-descriptor
+shape, and binds the gated product digest to the child for the architecture
+reported by both scanners. The index digest, attestation digests, an extra or
+duplicate platform, a nested index, a wrong repository, and an architecture
+swap are ineligible or rejected.
+
+Those checks prove only that a digest is a child of the caller-supplied,
+digest-verified index. The index evidence is a dynamic authorization input and
+is not yet trusted: no production workflow calls this path, and no change here
+establishes that the supplied bytes came from an index actually published,
+signed, attested, or aliased by this repository. Before the primitive can be
+used in production, the publisher must fetch the exact registry-served bytes for
+the index it pushed and bind that same digest to signing, attestation, and alias
+operations. Until that registry-origin dataflow exists and is verifier-locked,
+the published-child path remains dormant and the end-to-end defect remains
+open.
+
+On both product paths, valid fix evidence from either scanner refuses the
+disposition. Each raw scanner vulnerability ID, package name, and installed
+version must already be byte-canonical: leading or trailing whitespace is
+malformed evidence and is rejected rather than normalized into an exact match.
+The image is not unaffected, and no scanner input or raw finding is suppressed.
 
 Review this entry by 2026-10-01 and monitor Red Hat for a fixed RHEL 9
 `python3.12` RPM. When Red Hat ships a fixed `python3.12` RPM, the rpm-lock
 refresh absorbs it and the same pull request removes the in-tool allowlist entry
-and flips the OpenVEX statement to `fixed`.
+and flips the OpenVEX statement to `fixed`; that change also removes the dormant
+published-child authorization.

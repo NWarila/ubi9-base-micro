@@ -144,17 +144,40 @@ The push-only `rekor-rollup` job verifies that the full attestation set is Rekor
 OpenSCAP builds ComplianceAsCode/content `0.1.81` from SHA512-pinned source, runs `stig/rhel9-base-micro-tailoring.xml`, and attests the `https://nwarila.dev/attestations/stig-arf/v1` predicate per platform digest. The STIG summary embedded in that predicate includes every per-rule `idref` result and the deterministic rootfs identity assertion report when OpenSCAP reports a selected must-verify identity or ownership rule as `notapplicable`. Trivy and Grype are installed as checksum-verified pinned binaries (`TRIVY_VERSION` and `GRYPE_VERSION`), not as scanner actions. Before scan results are accepted, `tools/assert-scanner-db-freshness.py` fails closed unless Trivy metadata and Grype DB status are fresh, parseable, and within the configured schema and age bounds. Both scanners fail the workflow on fixable MEDIUM, HIGH, and CRITICAL findings, subject only to the version-pinned TD-6 exception for `CVE-2026-31790` covering `openssl-fips-provider` and `openssl-fips-provider-so` at `3.0.7-8.el9`, expiring on `2026-10-10`: Trivy uses `--severity MEDIUM,HIGH,CRITICAL --ignore-unfixed --exit-code 1` with `security/cve-ignore.trivyignore.yaml`, and Grype uses `--only-fixed --fail-on medium` with `security/cve-ignore.grype.yaml`. A separate scanner pass without those fixable-only filters feeds `tools/assert-vex.py`, which fails closed unless every unfixed HIGH or CRITICAL finding has a matching reviewed OpenVEX statement under the CODEOWNERS-gated `vex/` path. If no unfixed HIGH or CRITICAL findings exist and no VEX JSON exists, there is no OpenVEX attestation to verify.
 
 The base-python gate has one additional, separate TD-9 authorization for the
-known-affected unfixed HIGH `CVE-2026-11940`. It applies only to
-`local/ubi9-base-python:ci-amd64` and
-`local/ubi9-base-python:ci-arm64`, with exactly `python3.12` and
-`python3.12-libs` at `3.12.13-3.el9_8.1`. An in-tool allowlist entry and the
-reviewed `images/python/vex/cve-2026-11940.openvex.json` `affected` statement
-must match every field through `review-by 2026-10-01`; valid fix evidence from
-either scanner refuses the disposition. On this path, raw scanner vulnerability
-IDs, package names, and installed versions must already contain no surrounding
-whitespace; padded identity evidence is malformed rather than normalized into
-authorization. `tools/verify.py` independently expires the entry even if the
-scanner finding becomes dormant. This accept-and-track path does not make the image unaffected
+known-affected unfixed HIGH `CVE-2026-11940`, with exactly `python3.12` and
+`python3.12-libs` at `3.12.13-3.el9_8.1`. For the legacy local-product path,
+an in-tool allowlist entry for `local/ubi9-base-python:ci-amd64` and
+`local/ubi9-base-python:ci-arm64` and the reviewed
+`images/python/vex/cve-2026-11940.openvex.json` `affected` statement must match
+every field through `review-by 2026-10-01`.
+
+The gate also contains a dormant path for a digest-addressed
+`ghcr.io/nwarila/ubi9-base-python` platform child. It requires the conjunction
+of fixed in-tool constraints, version 2 of the canonical reviewed statement, and
+paired `--index-reference` plus `--index-manifest` evidence. The tool recomputes
+the digest of the exact supplied index bytes, enforces one distinct
+`linux/amd64` and `linux/arm64` child with only the locked BuildKit attestation
+shape otherwise present, and binds the eligible digest to the architecture
+reported by both scanners. The canonical document uses a non-image-matchable
+policy IRI for this scope rather than a repository wildcard.
+
+The supplied index is a dynamic authorization input and is not yet trusted.
+There is no production caller, and these checks neither publish base-python nor
+prove that a supplied index came from a registry publication. Production use
+still requires a verifier-locked dataflow that fetches the exact registry-served
+index bytes for the digest just pushed and binds that digest to the publisher's
+signing, attestation, and alias operations. Until then the path remains a
+self-tested dormant primitive and the end-to-end child binding remains open.
+
+Valid fix evidence from either scanner refuses the disposition. On both paths,
+raw scanner vulnerability IDs, package names, and installed versions must
+already contain no surrounding whitespace; padded identity evidence is
+malformed rather than normalized into authorization. `tools/verify.py`
+independently expires the entry even if the scanner finding becomes dormant.
+It also locks seven published-child constants and nine function ASTs and reports
+rejection of 17 canonical-VEX mutations, 8 allowlist mutations, and 16
+published-child surface mutations. These are verifier self-test counts, not
+evidence of a production invocation. This accept-and-track path does not make the image unaffected
 and is not a TD-6 fixable-CVE scanner suppression.
 
 ## SBOM Source
