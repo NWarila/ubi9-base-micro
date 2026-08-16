@@ -6775,8 +6775,8 @@ def check_python_ci_preflight() -> None:
 
 
 PUBLISH_PYTHON_WORKFLOW = ".github/workflows/publish-python.yaml"
-PUBLISH_PYTHON_WORKFLOW_SHA256 = "efdb39a38bda815218cce6f8bb9437a13cd5715c9094c55dbfbce61cd6c699d5"
-PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH = 83854
+PUBLISH_PYTHON_WORKFLOW_SHA256 = "c49432dc63b65fa3634d1b9cebb8ed9de86017a28d57daa33b9ea38b71229b23"
+PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH = 84514
 PUBLISH_PYTHON_TRIGGER_BLOCK = "on:\n  pull_request:\n\n"
 PUBLISH_PYTHON_REGISTRY_IMAGE = (
     "docker.io/library/registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e"
@@ -8249,6 +8249,9 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
         and workflow.count('crane manifest "${IMAGE_REF}" > dist/python-index/index.json') == 1
         and "PUSH_DIGEST: ${{ steps.image.outputs.digest }}" in publish
         and '--fetch-reference "${IMAGE_REF}"' in publish
+        and workflow.count('set(metadata) != {"release"}') == 2
+        and workflow.count('target = metadata["release"]') == 2
+        and workflow.count('digest = target.get("containerimage.digest")') == 2
         and publish.count("tools/resolve-python-index.py") >= 1
         and gate_evidence.count("tools/resolve-python-index.py") >= 2
         and sign_attest.count("tools/resolve-python-index.py") >= 3
@@ -8487,6 +8490,13 @@ def _publish_python_workflow_fixtures(workflow: str) -> list[tuple[str, str, str
             'crane manifest "${IMAGE_REF}" > dist/python-index/index.json',
             'crane manifest "${IMAGE_REPOSITORY}:candidate" > dist/python-index/index.json',
             "Python publish trusted registry index dataflow mismatch",
+        ),
+        changed(
+            "metadata-shape",
+            'target = metadata["release"]',
+            "target = metadata",
+            "Python publish trusted registry index dataflow mismatch",
+            2,
         ),
         changed(
             "vex-production",

@@ -295,7 +295,12 @@ jobs:
           from pathlib import Path
 
           metadata = json.loads(Path("dist/release/image-metadata.json").read_text(encoding="utf-8"))
-          digest = metadata.get("containerimage.digest")
+          if not isinstance(metadata, dict) or set(metadata) != {"release"}:
+              raise SystemExit("release metadata must contain exactly the release target")
+          target = metadata["release"]
+          if not isinstance(target, dict):
+              raise SystemExit("release metadata target must be an object")
+          digest = target.get("containerimage.digest")
           if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
               raise SystemExit(f"release metadata index digest is invalid: {digest!r}")
           print(digest)
@@ -728,7 +733,12 @@ jobs:
           from pathlib import Path
 
           metadata = json.loads(Path("dist/python-publish/image-metadata.json").read_text(encoding="utf-8"))
-          digest = metadata.get("containerimage.digest")
+          if not isinstance(metadata, dict) or set(metadata) != {"release"}:
+              raise SystemExit("candidate metadata must contain exactly the release target")
+          target = metadata["release"]
+          if not isinstance(target, dict):
+              raise SystemExit("candidate metadata release target must be an object")
+          digest = target.get("containerimage.digest")
           if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
               raise SystemExit(f"candidate metadata digest is invalid: {digest!r}")
           print(digest)
