@@ -474,7 +474,7 @@ jobs:
           verify_architecture arm64
 
   slsa-generator-tag-integrity:
-    name: slsa generator tag integrity
+    name: python slsa generator tag integrity
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     if: >-
