@@ -38,6 +38,8 @@ ATTESTATION_TYPE = "attestation-manifest"
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 CHECKSUM_LINE = re.compile(r"^([0-9a-f]{64})  ([^\x00\r\n]+)$")
 CONSUMERS = frozenset({"sign", "attest", "vex", "alias"})
+RUNNABLE_DESCRIPTOR_KEYS = frozenset({"digest", "mediaType", "platform", "size"})
+ATTESTATION_DESCRIPTOR_KEYS = frozenset({"annotations", "digest", "mediaType", "platform", "size"})
 
 
 class PythonIndexError(Exception):
@@ -140,11 +142,19 @@ def validate_index(
         architecture = platform.get("architecture")
         if operating_system == "linux":
             require(
+                set(descriptor) == RUNNABLE_DESCRIPTOR_KEYS,
+                f"{label} must equal the locked runnable descriptor shape",
+            )
+            require(
                 architecture in children,
                 f"registry index contains unsupported runnable platform linux/{architecture}",
             )
             children[cast(str, architecture)].append(descriptor_digest)
         elif operating_system == "unknown" and architecture == "unknown":
+            require(
+                set(descriptor) == ATTESTATION_DESCRIPTOR_KEYS,
+                f"{label} must equal the locked BuildKit attestation descriptor shape",
+            )
             require(
                 set(platform) == {"os", "architecture"},
                 f"{label}.platform must equal the locked unknown/unknown attestation platform",
@@ -486,6 +496,17 @@ def agreement_rows(production_raw: bytes | None = None) -> list[tuple[str, str, 
         if isinstance(descriptor, dict) and descriptor.get("platform") == {"architecture": "unknown", "os": "unknown"}
     ]
     require(len(attestation_positions) == 2, "agreement production index attestation inventory changed")
+    runnable_positions = {
+        descriptor.get("platform", {}).get("architecture"): position
+        for position, descriptor in enumerate(manifests)
+        if isinstance(descriptor, dict)
+        and isinstance(descriptor.get("platform"), dict)
+        and descriptor["platform"].get("os") == "linux"
+    }
+    require(
+        set(runnable_positions) == {"amd64", "arm64"},
+        "agreement production index runnable inventory changed",
+    )
 
     cases: list[dict[str, Any]] = []
 
@@ -530,6 +551,18 @@ def agreement_rows(production_raw: bytes | None = None) -> list[tuple[str, str, 
     duplicate_reference = copy.deepcopy(baseline)
     duplicate_reference["manifests"][attestation_positions[1]]["annotations"][ATTESTATION_DIGEST_KEY] = amd64_digest
     add("duplicate attestation reference", duplicate_reference)
+    additional_fields = {
+        "urls": ["https://example.invalid/manifest"],
+        "data": "e30=",
+        "artifactType": "application/example",
+    }
+    for field, value in additional_fields.items():
+        runnable_additional = copy.deepcopy(baseline)
+        runnable_additional["manifests"][runnable_positions["amd64"]][field] = value
+        add(f"runnable descriptor additional {field}", runnable_additional)
+        attestation_additional = copy.deepcopy(baseline)
+        attestation_additional["manifests"][attestation_positions[0]][field] = value
+        add(f"attestation descriptor additional {field}", attestation_additional)
     add(
         "registry bytes differ from push digest",
         push_digest=other_digest,
@@ -610,6 +643,12 @@ def self_test(production_raw: bytes | None = None) -> None:
         "wrong attestation reference": ("REJECT", "REJECT"),
         "excess attestation": ("REJECT", "ACCEPT"),
         "duplicate attestation reference": ("REJECT", "ACCEPT"),
+        "runnable descriptor additional urls": ("REJECT", "ACCEPT"),
+        "attestation descriptor additional urls": ("REJECT", "ACCEPT"),
+        "runnable descriptor additional data": ("REJECT", "ACCEPT"),
+        "attestation descriptor additional data": ("REJECT", "ACCEPT"),
+        "runnable descriptor additional artifactType": ("REJECT", "ACCEPT"),
+        "attestation descriptor additional artifactType": ("REJECT", "ACCEPT"),
         "registry bytes differ from push digest": ("REJECT", "REJECT"),
         "tag-resolved fetch": ("REJECT", "ACCEPT"),
         "different digest reaches sign consumer": ("REJECT", "ACCEPT"),
