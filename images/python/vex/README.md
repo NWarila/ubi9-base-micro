@@ -66,7 +66,9 @@ the publish resolver, both child VEX calls, recursive signing, attestations,
 SLSA provenance, collision checks, and final aliases. This binds the dynamic
 authorization input to the index this run pushed and read back; it does not make
 the later resolve-then-apply alias operation atomic against an external writer.
-The VEX-side attestation-cardinality difference is tracked as TD-11.
+The VEX-side attestation-cardinality difference is tracked as TD-11. This caller
+is merged but its privileged job first executes after merge; no completed Python
+production gate or publication is claimed here.
 
 The authorization is refused if either scanner supplies valid fix evidence. The
 raw scanner vulnerability ID, package name, and installed version must also be

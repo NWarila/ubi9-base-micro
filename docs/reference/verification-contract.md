@@ -1,9 +1,9 @@
 # Verification Contract Summary
 
-`ubi9-base-micro` has three verification boundaries. Each boundary proves a
-different subset of the repository contract.
+The image family has three verification boundaries. Each boundary proves a
+different subset of an image-specific repository contract.
 
-The consumer-verifiable image contract is declared in
+The `base-micro` consumer-verifiable image contract is declared in
 [`../../contracts/image-manifest.json`](../../contracts/image-manifest.json) and
 validated by
 [`../../contracts/image-manifest.schema.json`](../../contracts/image-manifest.schema.json).
@@ -13,12 +13,18 @@ runtime package floor, footprint ceiling, Cosign identity, OIDC issuer, SLSA
 builder ID, and repository-generated attestation predicate types. A worked
 consumer check lives in
 [`../../contracts/examples/README.md`](../../contracts/examples/README.md).
+The unpublished `base-python` image has its distinct contract in
+[`../../images/python/contracts/image-manifest.json`](../../images/python/contracts/image-manifest.json),
+validated by its adjacent schema. That manifest also declares the Python
+workflow identity and its six repository-generated predicate types, including
+the index-only trust contract. It does not assert that those production
+attestations already exist.
 
 | Boundary | Runs on | Proves | Does not prove |
 | --- | --- | --- | --- |
 | Pull request | `pull_request` to `main` | Repository contract, lint, local build, hardening, FIPS artifact checks, SBOM and scanner gates, OpenVEX policy, NIST predicate validation, tailored STIG ARF, byte-for-byte rootfs reproducibility, and the Python release exporter exercised against a loopback-bound ephemeral registry. | Project or external publication, published signatures or attestations, SLSA provenance over a consumer-resolvable digest, Rekor roll-up, or anonymous GHCR pull. |
-| Publish | `push` to `main`, root-image `v*` tags, and Python `python/v*` tags | Multi-arch publish, Cosign keyless signature, Syft rpmdb-derived SPDX and CycloneDX attestations, NIST SP 800-190 and STIG ARF predicates, OpenVEX attestations when needed, SLSA L3 provenance, and Rekor roll-up. | The one-time public package visibility change required before anonymous GHCR verification can pass. |
-| Post-publish audit | Clean unauthenticated verifier | Anonymous pull by digest and the full `cosign` plus `slsa-verifier` contract in [`verify.md`](verify.md). | Future rebuild currency or downstream family-coherence status. |
+| Publish | `push` to `main`, root-image `v*` tags, and Python `python/v*` tags | After a successful image-specific run: multi-arch publish, Cosign keyless signature, Syft rpmdb-derived SPDX and CycloneDX attestations, NIST SP 800-190 and STIG ARF predicates, OpenVEX attestations when needed, SLSA L3 provenance, and Rekor roll-up. Python additionally requires the index-only trust contract. | For a newly created Python package, the one-time public visibility change required before anonymous GHCR verification can pass. The Python production jobs first execute after merge and have not yet produced this evidence. |
+| Post-publish audit | Clean unauthenticated verifier | Anonymous pull by digest and the full image-specific `cosign` plus `slsa-verifier` contract in [`verify.md`](verify.md) or [`../how-to/verify-a-published-image.md`](../how-to/verify-a-published-image.md#verify-base-python). | Future rebuild currency or downstream family-coherence status. |
 
 ## Micro publish scope
 
@@ -40,10 +46,31 @@ run creates no new micro publication and does not remove or re-point any
 already-published digest or revision-bound attestation.
 
 The Python publish boundary above describes repository capability, not a
-completed publication. This revision does not claim that
+completed publication. The publisher is merged and awaits its first successful
+production run. This revision does not claim that
 `ghcr.io/nwarila/ubi9-base-python` has been published, made public, or made
 consumable. The image is not publicly consumable at this revision. Those claims
 require evidence from the corresponding completed boundary.
+
+## Python publish scope
+
+The Python publisher uses `tools/decide-python-publish-scope.py`, not the micro
+policy. A `python/v*` tag always publishes. On `main`, the workflow reads the
+revision label from the currently published `base-python` alias and compares
+that commit with the pushed SHA. It publishes when any `images/python/**` path
+or any exact shared input consumed by the publisher changed. An absent or
+malformed published config, unavailable base commit, empty delta, or
+unclassified path also publishes fail-closed.
+
+Publication skips only when every changed path belongs to the closed unrelated
+set: `docs/**`, `.github/ISSUE_TEMPLATE/**`, or exactly `.editorconfig`,
+`.github/pull_request_template.md`, `.github/renovate.json`,
+`.github/zizmor.yml`, `.markdownlint-cli2.jsonc`, `.pre-commit-config.yaml`,
+`.shellcheckrc`, `.yamllint`, `CHANGELOG.md`, `CODE_OF_CONDUCT.md`,
+`CONTRIBUTING.md`, `LICENSE`, `README.md`, `SECURITY.md`, `SUPPORT.md`, or
+`images/README.md`. This scope decision does not claim that a skipped run
+creates or verifies an image; it only avoids replacing an already published
+Python digest when all changes are classified as unrelated.
 
 The Python CI workflow has an active CI-rootfs preflight for the unpublished
 `base-python` image. Its build and reproducibility matrices run for both
@@ -88,14 +115,16 @@ generator identity signs provenance:
 
 ```text
 https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@<ref>
+https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-python.yaml@<ref>
 https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0
 https://token.actions.githubusercontent.com
 ```
 
-## Base-python published evidence
+## Base-python published evidence contract (not yet produced)
 
-The Python publisher pushes an unaliased multi-architecture candidate by digest.
-It fetches the index bytes from the registry exactly once at the push-reported
+When its privileged job runs after merge, the Python publisher pushes an
+unaliased multi-architecture candidate by digest. It fetches the index bytes
+from the registry exactly once at the push-reported
 digest, requires SHA-256 over those bytes to corroborate that metadata, and
 checksums the artifact for every cross-job handoff. The same verified index
 digest selects every signing, attestation, VEX, provenance, collision-check, and
@@ -138,9 +167,9 @@ still private. That is distinct from public consumability. Only after the owner
 makes the package public and the separate cache-cold verification succeeds with
 no registry credentials may the image be described as publicly consumable.
 
-After setting `INDEX_DIGEST`, `AMD64_DIGEST`, `ARM64_DIGEST`, and the exact
-publishing ref, verify the repository-produced evidence with the contract
-identity:
+From a repository checkout at the publishing commit, set `INDEX_DIGEST`,
+`AMD64_DIGEST`, `ARM64_DIGEST`, the publishing SHA, and its exact ref. Then
+verify the repository-produced evidence with the contract identity:
 
 ```sh
 IMAGE="ghcr.io/nwarila/ubi9-base-python"
@@ -164,11 +193,25 @@ for DIGEST in "${AMD64_DIGEST}" "${ARM64_DIGEST}"; do
   done
 done
 
+PYTHON_TREE="$(git rev-parse "${PUBLISH_SHA}:images/python")"
+python3 tools/python-trust-contract.py \
+  --digest "${INDEX_DIGEST#sha256:}" \
+  --tree "${PYTHON_TREE}" --commit "${PUBLISH_SHA}" \
+  --predicate-out expected-trust-contract.predicate.json \
+  --statement-out expected-trust-contract.statement.json
+
 cosign verify-attestation \
   --type https://nwarila.dev/attestations/python-trust-contract/v1 \
   "${IMAGE}@${INDEX_DIGEST}" \
   --certificate-identity "${PUBLISH_IDENTITY}" \
-  --certificate-oidc-issuer "${ISSUER}"
+  --certificate-oidc-issuer "${ISSUER}" \
+  > verified-trust-contract.jsonl
+
+python3 tools/assert-python-attestation.py \
+  --verified verified-trust-contract.jsonl \
+  --image "${IMAGE}" --digest "${INDEX_DIGEST}" \
+  --predicate-type https://nwarila.dev/attestations/python-trust-contract/v1 \
+  --expected-statement expected-trust-contract.statement.json
 ```
 
 Verify index-only provenance at the generator's exact pinned identity and bind
@@ -184,7 +227,19 @@ cosign verify-attestation --type slsaprovenance \
   --certificate-oidc-issuer "${ISSUER}" \
   --certificate-github-workflow-repository NWarila/ubi9-base-micro \
   --certificate-github-workflow-sha "${PUBLISH_SHA}" \
-  --certificate-github-workflow-ref "${PUBLISH_REF}"
+  --certificate-github-workflow-ref "${PUBLISH_REF}" \
+  > verified-slsa.jsonl
+
+ATTESTATION_REF="$(cosign triangulate --type attestation "${IMAGE}@${INDEX_DIGEST}")"
+crane manifest "${ATTESTATION_REF}" > attestation-manifest.json
+SLSA_LAYER_DIGEST="$(python3 tools/assert-python-slsa-certificate.py \
+  --attestation-manifest attestation-manifest.json --print-layer-digest)"
+crane blob "${IMAGE}@${SLSA_LAYER_DIGEST}" > slsa-envelope.json
+python3 tools/assert-python-slsa-certificate.py \
+  --verified verified-slsa.jsonl \
+  --attestation-manifest attestation-manifest.json \
+  --envelope slsa-envelope.json \
+  --sha "${PUBLISH_SHA}" --ref "${PUBLISH_REF}"
 
 slsa-verifier verify-image "${IMAGE}@${INDEX_DIGEST}" \
   --source-uri github.com/NWarila/ubi9-base-micro \
@@ -211,5 +266,7 @@ consumer contract.
 
 `gh attestation verify` is intentionally outside this contract because this
 repository publishes Cosign OCI attestations, not GitHub-native Artifact
-Attestations. Use [`verify.md`](verify.md) for the copy-paste verification
-commands.
+Attestations. Use [`verify.md`](verify.md) for the published `base-micro`
+commands and
+[`../how-to/verify-a-published-image.md`](../how-to/verify-a-published-image.md#verify-base-python)
+for the post-publication Python procedure.

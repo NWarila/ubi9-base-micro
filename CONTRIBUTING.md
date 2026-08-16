@@ -76,9 +76,11 @@ python tools/assert-reproducible.py \
 ```
 
 The CI pull-request path runs `repo contract`, `actionlint`, `build and
-hardening`, and the amd64 and arm64 reproducibility gates. The publish-only
-signature, SBOM attestation, SLSA provenance, and Rekor roll-up jobs run only on
-`push` to `main` or `v*` tags.
+hardening`, and the amd64 and arm64 reproducibility gates. Privileged publish
+jobs do not run on pull requests: the root publisher uses pushes to `main` or
+`v*` tags, and the Python publisher uses pushes to `main` or `python/v*` tags.
+Signature, attestation, SLSA provenance, and Rekor evidence exist only after the
+corresponding production run succeeds.
 
 ### Base-python builder inputs
 
@@ -92,7 +94,8 @@ baselines. The release preflight exercises the registry exporter only against a
 loopback-bound ephemeral registry; it does not create an external or project
 publication. The `python / required` reducer is evidence aggregation, not a
 required repository status context, and the image remains externally
-unpublished.
+unpublished. Its publisher is merged and awaits its first successful production
+run; the pull-request preflight is not that run.
 
 Repository verification also requires each named builder-identity step to keep
 `set -euo pipefail` enabled, omit `continue-on-error`, and end with the

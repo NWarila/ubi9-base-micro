@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-06-21
-- Last reviewed: 2026-08-13
+- Last reviewed: 2026-08-16
 - Scope: repo
 
 ## Context

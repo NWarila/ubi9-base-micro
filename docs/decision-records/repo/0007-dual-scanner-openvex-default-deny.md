@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-06-21
-- Last reviewed: 2026-08-14
+- Last reviewed: 2026-08-16
 - Scope: repo
 
 ## Context
@@ -35,11 +35,11 @@ digest-addressed child under the in-tool pinned
 the conjunction of the fixed in-tool constraints, the canonical reviewed
 statement, and index evidence supplied through paired `--index-reference` and
 `--index-manifest` inputs. The tool verifies the exact index bytes against the
-reference digest, requires the closed OCI descriptor shape of exactly one
-`linux/amd64` image manifest and one `linux/arm64` image manifest with distinct
-digests plus only the locked BuildKit attestation convention, requires
-index-wide descriptor-digest uniqueness across all roles, and binds the product
-digest to the child for the architecture reported by both scanners. The
+reference digest, requires exactly one `linux/amd64` image manifest and one
+`linux/arm64` image manifest with distinct digests, admits only the locked
+BuildKit attestation convention otherwise, requires index-wide
+descriptor-digest uniqueness across all roles, and binds the product digest to
+the child for the architecture reported by both scanners. The
 duplicate-or-contradictory descriptor diagnostic names the first and repeated
 positions; the child/attestation digest-disjointness guard remains separate with
 its own diagnostic. The index digest is never eligible, and a distinct
@@ -52,12 +52,15 @@ attestation reference per child before any consumer runs.
 The descriptor classification locks a producer convention; index metadata
 alone does not prove that an `unknown/unknown` image-manifest descriptor is
 non-runnable. More importantly, digest verification authenticates the supplied
-bytes only relative to the supplied digest. The production caller binds that
-dynamic authorization input to the index it pushed: one digest-addressed
-registry readback is SHA-256-corroborated against push metadata, every cross-job
-transfer is checksum-verified, and signing, attestation, VEX, provenance,
-collision checks, and aliases all receive the same digest. TD-11 tracks the
-remaining VEX-side attestation-cardinality asymmetry.
+bytes only relative to the supplied digest. On each production run, the merged
+caller binds that dynamic authorization input to the index the same run pushed:
+one digest-addressed registry readback is SHA-256-corroborated against push
+metadata, every cross-job transfer is checksum-verified, and signing,
+attestation, VEX, provenance, collision checks, and aliases all receive the same
+digest. The first such production execution remains post-merge. This binding is
+limited to the index that run pushed and read back; it does not close the
+external-writer alias race. TD-11 tracks the remaining VEX-side
+attestation-cardinality asymmetry.
 
 Valid fix evidence from either scanner refuses either product path. Raw scanner
 vulnerability IDs, package names, and installed versions must also be

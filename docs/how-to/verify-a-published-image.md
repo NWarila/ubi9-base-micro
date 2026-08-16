@@ -1,7 +1,11 @@
 # Verify a Published Image
 
-Use this task after a publish run has produced a digest. The full command
-contract lives in [`../reference/verify.md`](../reference/verify.md).
+Use this task after a publish run has produced a digest. The completed
+`base-micro` command contract lives in
+[`../reference/verify.md`](../reference/verify.md). The Python-specific contract
+is summarized in
+[`../reference/verification-contract.md`](../reference/verification-contract.md#base-python-published-evidence-contract-not-yet-produced);
+the Python steps below apply only after its first production publish succeeds.
 
 ## Prerequisites
 
@@ -215,21 +219,57 @@ verify_python_child "${AMD64_REF}"
 verify_python_child "${ARM64_REF}"
 ```
 
-Verify the index-only trust contract and provenance:
+Verify the exact index-only trust contract. The checkout at the publishing
+commit supplies the expected `images/python/` tree identity:
 
 ```sh
+PYTHON_TREE="$(git rev-parse "${PUBLISH_SHA}:images/python")"
+python3 tools/python-trust-contract.py \
+  --digest "${INDEX_DIGEST#sha256:}" \
+  --tree "${PYTHON_TREE}" --commit "${PUBLISH_SHA}" \
+  --predicate-out "${VERIFY_AUTH_DIR}/expected-trust-contract.predicate.json" \
+  --statement-out "${VERIFY_AUTH_DIR}/expected-trust-contract.statement.json"
+
 cosign verify-attestation \
   --type https://nwarila.dev/attestations/python-trust-contract/v1 \
   "${INDEX_REF}" \
   --certificate-identity "${PUBLISH_IDENTITY}" \
-  --certificate-oidc-issuer "${ISSUER}"
+  --certificate-oidc-issuer "${ISSUER}" \
+  > "${VERIFY_AUTH_DIR}/verified-trust-contract.jsonl"
 
+python3 tools/assert-python-attestation.py \
+  --verified "${VERIFY_AUTH_DIR}/verified-trust-contract.jsonl" \
+  --image "${IMAGE}" --digest "${INDEX_DIGEST}" \
+  --predicate-type https://nwarila.dev/attestations/python-trust-contract/v1 \
+  --expected-statement "${VERIFY_AUTH_DIR}/expected-trust-contract.statement.json"
+```
+
+Verify provenance at the generator's exact identity, then bind the authenticated
+SLSA layer certificate to the pinned generator commit, publishing SHA/ref, and
+Python caller workflow:
+
+```sh
 cosign verify-attestation --type slsaprovenance "${INDEX_REF}" \
   --certificate-identity "${SLSA_IDENTITY}" \
   --certificate-oidc-issuer "${ISSUER}" \
   --certificate-github-workflow-repository NWarila/ubi9-base-micro \
   --certificate-github-workflow-sha "${PUBLISH_SHA}" \
-  --certificate-github-workflow-ref "${PUBLISH_REF}"
+  --certificate-github-workflow-ref "${PUBLISH_REF}" \
+  > "${VERIFY_AUTH_DIR}/verified-slsa.jsonl"
+
+ATTESTATION_REF="$(cosign triangulate --type attestation "${INDEX_REF}")"
+crane manifest "${ATTESTATION_REF}" \
+  > "${VERIFY_AUTH_DIR}/attestation-manifest.json"
+SLSA_LAYER_DIGEST="$(python3 tools/assert-python-slsa-certificate.py \
+  --attestation-manifest "${VERIFY_AUTH_DIR}/attestation-manifest.json" \
+  --print-layer-digest)"
+crane blob "${IMAGE}@${SLSA_LAYER_DIGEST}" \
+  > "${VERIFY_AUTH_DIR}/slsa-envelope.json"
+python3 tools/assert-python-slsa-certificate.py \
+  --verified "${VERIFY_AUTH_DIR}/verified-slsa.jsonl" \
+  --attestation-manifest "${VERIFY_AUTH_DIR}/attestation-manifest.json" \
+  --envelope "${VERIFY_AUTH_DIR}/slsa-envelope.json" \
+  --sha "${PUBLISH_SHA}" --ref "${PUBLISH_REF}"
 ```
 
 For a main publish, authenticate the source branch and print the provenance for
@@ -241,10 +281,10 @@ slsa-verifier verify-image "${INDEX_REF}" \
   --source-uri github.com/NWarila/ubi9-base-micro \
   --source-branch main \
   --builder-id "${SLSA_IDENTITY}" \
-  --print-provenance > verified-provenance.json
+  --print-provenance > "${VERIFY_AUTH_DIR}/verified-provenance.json"
 
 python3 tools/assert-python-provenance.py \
-  --provenance verified-provenance.json \
+  --provenance "${VERIFY_AUTH_DIR}/verified-provenance.json" \
   --image "${IMAGE}" --digest "${INDEX_DIGEST}" \
   --sha "${PUBLISH_SHA}" --ref "${PUBLISH_REF}"
 ```

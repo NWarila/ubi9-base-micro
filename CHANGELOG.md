@@ -19,12 +19,13 @@ and this project adheres to
   The production path can derive an eligible digest-addressed child under the
   pinned `ghcr.io/nwarila/ubi9-base-python` repository from exact,
   digest-verified OCI index bytes and bind it to the architecture reported by
-  both scanners. Its closed descriptor policy requires exactly one
-  `linux/amd64` child and one `linux/arm64` child with distinct digests, admits
-  only the locked BuildKit attestation shape otherwise, requires every
-  descriptor digest to be unique across the index, and separately requires
-  child and attestation digests to be disjoint. That path combines fixed in-tool
-  constraints, the canonical statement, and registry index evidence. The
+  both scanners. Its runnable-platform and descriptor-shape policy requires
+  exactly one `linux/amd64` child and one `linux/arm64` child with distinct
+  digests, admits only the locked BuildKit attestation shape otherwise,
+  requires every descriptor digest to be unique across the index, and
+  separately requires child and attestation digests to be disjoint. That path
+  combines fixed in-tool constraints, the canonical statement, and registry
+  index evidence. The
   publisher fetches those bytes once by the push-reported digest, corroborates
   their SHA-256, protects cross-job transfers, and uses that digest for every
   consumer. Its stricter publish-side resolver additionally requires exactly one
@@ -68,9 +69,9 @@ and this project adheres to
   entrypoint) and is gated in CI by tool self-tests, a functional stdlib battery
   with a real loopback TLS handshake, parent-subset invariance on the exported
   image, an OCI config contract, dual CVE scanners reading the combined rpmdb,
-  and a both-arch byte-identical double-build. The image is built and gated
-  only: it has no external or project publication, public or moving tag,
-  signature, or consumer-resolvable attestation or digest yet.
+  and a both-arch byte-identical double-build. The image remains unpublished: it
+  has no external or project publication, public or moving tag, signature, or
+  consumer-resolvable attestation or digest yet.
 - Added a registry-capable Python `release` Bake target and a pull-request-only
   preflight that invokes it once for both architectures. The preflight pushes a
   candidate index and unsigned BuildKit provenance to a loopback-bound ephemeral
@@ -83,8 +84,18 @@ and this project adheres to
   evidence and index-only trust/SLSA evidence, credentialed pre-alias
   verification, non-atomic collision detection with post-apply readback, and a
   separate anonymous post-visibility leg. This is publication capability only;
-  no Python package, public artifact, or consumable image is claimed by this
+  the publisher is merged and its first production execution is awaited. No
+  Python package, public artifact, or consumable image is claimed by this
   change.
+- Added a fail-closed Python publish-scope policy. Python release tags always
+  publish; a `main` push skips only when every changed path is in the closed
+  unrelated allowlist, while Python-tree changes, consumed shared inputs,
+  unknown paths, missing published-revision evidence, and empty deltas publish.
+- Added the index-only Python trust-contract predicate and exact provenance
+  policy. The predicate binds package, `images/python/` tree, workflow, and
+  commit to the published index; the SLSA checks additionally bind the verified
+  statement and Fulcio extensions to the exact source SHA/ref, Python caller,
+  and pinned generator commit.
 
 ### Changed
 

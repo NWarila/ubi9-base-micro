@@ -183,15 +183,16 @@ language variants are planned as `images/<variant>/` trees.
 | `base-node` | Planned | `FROM base-micro@sha256:<digest>` | Node.js runtime on the micro floor |
 | `base-java` | Planned | `FROM base-micro@sha256:<digest>` | OpenJDK runtime on the micro floor |
 
-The evidence contract for each image in the family is the same: cosign keyless
-signature, SLSA L3 provenance, rpmdb-derived SPDX and CycloneDX SBOMs, Trivy and
-Grype fixable-CVE gates, OpenVEX default-deny coverage for unfixed HIGH/CRITICAL
-findings, NIST SP 800-190 section 4.1 image evidence, tailored RHEL9 STIG ARF,
-and byte-for-byte reproducibility. Published signatures and attestations are
-Rekor-logged. `base-micro` and the `base-python` publication workflow implement
-that contract here; planned variants must carry the same evidence set under
-their `images/<variant>/` trees before publication, each publishing through its
-own path-scoped workflow.
+The common evidence floor is a cosign keyless signature, SLSA L3 provenance,
+rpmdb-derived SPDX and CycloneDX SBOMs, Trivy and Grype fixable-CVE gates,
+OpenVEX default-deny coverage for unfixed HIGH/CRITICAL findings, NIST SP
+800-190 section 4.1 image evidence, tailored RHEL9 STIG ARF, and byte-for-byte
+reproducibility. Published signatures and attestations are Rekor-logged. A
+variant also requires an index-only trust-contract predicate binding its digest,
+package, tree, workflow, and commit; the merged `base-python` publisher
+implements that requirement. Planned variants must carry the applicable full
+evidence set under their `images/<variant>/` trees before publication, each
+publishing through its own path-scoped workflow.
 
 Responsibility boundary: the base family owns a standard hardened floor through
 RPM hygiene (`install_weak_deps=0`, `--nodocs`, locale/man stripping, shell
@@ -219,11 +220,15 @@ Run the repository contract verifier:
 python tools/verify.py
 ```
 
-The repository namespace for publish work is:
+The published root-image namespace is:
 
 ```text
 ghcr.io/nwarila/ubi9-base-micro
 ```
+
+The merged Python publisher targets
+`ghcr.io/nwarila/ubi9-base-python`, but its first successful production run is
+still awaited; that target is not yet a published or publicly consumable image.
 
 ## Security and Compliance Posture
 

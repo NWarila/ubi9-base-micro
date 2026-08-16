@@ -14,8 +14,8 @@ satisfy that current release-binary plus exact-tag-identity contract and would
 change the observed identity; this does not rule out a redesigned SHA-based
 generator configuration with a different build and identity contract.
 
-The [publish workflow](../.github/workflows/publish-image.yaml) reduces the
-mutable-tag risk with a separate tag-to-SHA integrity job that asserts
+The [micro publish workflow](../.github/workflows/publish-image.yaml) reduces
+the mutable-tag risk with a separate tag-to-SHA integrity job that asserts
 `refs/tags/v2.1.0` resolves to
 `f7dd8c54c2067bafc12ca7a55595d5ee9b75204a` before publish. Provenance is
 verified only against the exact Fulcio identity
@@ -24,11 +24,21 @@ never a regular expression. The disabled Renovate rule keeps generator tag,
 SHA-guard, and identity updates manual and reviewed, never an automatic
 dependency pull request.
 
-This guard reduces but does not eliminate the mutable-tag window. It runs as a
-separate job before publish; `slsa-provenance` runs after publish and independently
-resolves `@v2.1.0`, so the tag can move between the check and the reusable
-invocation. The exact Fulcio identity proves that the tag reference was used,
-not that the tag still named the audited commit at invocation time.
+For micro, this guard reduces but does not eliminate the mutable-tag window. It
+runs as a separate job before publish; `slsa-provenance` runs after publish and
+independently resolves `@v2.1.0`, so the tag can move between the check and the
+reusable invocation. The exact Fulcio identity proves that the tag reference was
+used, not that the tag still named the audited commit at invocation time.
+
+The Python publisher retains the same pre-execution guard and adds a
+post-execution binding before aliases: after successful Cosign and
+`slsa-verifier` authentication, `tools/assert-python-slsa-certificate.py`
+requires the Fulcio Build Signer Digest extension to equal the pinned generator
+commit. It also binds the source SHA/ref and Python caller workflow through the
+source and build-config extensions. That closes this tag-movement ambiguity for
+the Python publication path at its implemented scope. Its first production
+execution is post-merge and has not yet produced Python evidence; the residual
+in this entry remains the micro publisher's weaker binding.
 
 ## TD-3: Per-architecture FIPS scope
 
@@ -192,7 +202,7 @@ in `tools/assert-vex.py` and the reviewed disclosure in
 CI products, the complete two-package set, the installed version, this debt id,
 and `review-by 2026-10-01`.
 
-The same tool contains a second product-eligibility primitive for
+The same tool contains a second product-eligibility path for
 a digest-addressed `ghcr.io/nwarila/ubi9-base-python` platform child. The
 canonical OpenVEX document was reissued as version 2 and names that policy scope
 with the non-image-matchable
@@ -203,25 +213,29 @@ pinned repository, CVE, package/version pair, and expiry), that canonical
 reviewed statement, and supplied index evidence. The tool requires paired
 `--index-reference` and `--index-manifest` inputs, recomputes the digest of the
 exact index bytes, accepts exactly one `linux/amd64` child and one
-`linux/arm64` child with distinct digests plus only the locked BuildKit
-attestation-descriptor shape, requires every descriptor digest in `manifests` to
-be unique across all roles, and binds the gated product digest to the child for
-the architecture reported by both scanners. The duplicate-or-contradictory
-descriptor diagnostic names the first and repeated positions; the
-child/attestation digest-disjointness guard remains separate with its own
-diagnostic. The index digest is never eligible, and a distinct
-attestation-descriptor digest is rejected when submitted as the product. An
-extra or duplicate platform, a nested index, a wrong repository, and an
-architecture swap are also rejected.
+`linux/arm64` child with distinct digests, admits only the locked BuildKit
+attestation-descriptor shape otherwise, requires every descriptor digest in
+`manifests` to be unique across all roles, and binds the gated product digest to
+the child for the architecture reported by both scanners. It does not constrain
+the number of attestation descriptors or their per-child reference cardinality.
+The duplicate-or-contradictory descriptor diagnostic names the first and
+repeated positions; the child/attestation digest-disjointness guard remains
+separate with its own diagnostic. The index digest is never eligible, and a
+distinct attestation-descriptor digest is rejected when submitted as the
+product. An extra or duplicate runnable platform, a nested index, a wrong
+repository, and an architecture swap are also rejected.
 
 Those checks prove that a digest is a child of the supplied, digest-verified
-index. The production workflow now establishes the missing origin binding: it
-fetches the index bytes once from the registry by the push-reported digest,
-independently corroborates their SHA-256, protects cross-job transfers with a
-checksum manifest, and requires the same digest for signing, attestation, VEX,
-provenance, collision checks, and aliases. The published-child path is therefore
-active. This does not close the external-writer alias race described in TD-10 or
-the VEX-side attestation-cardinality difference described in TD-11.
+index. The merged production caller supplies the previously missing origin
+binding on each run: it fetches the index bytes once from the registry by the
+push-reported digest, independently corroborates their SHA-256, protects
+cross-job transfers with a checksum manifest, and requires the same digest for
+signing, attestation, VEX, provenance, collision checks, and aliases. The
+published-child path is therefore wired to a production caller rather than
+dormant; its first production execution remains post-merge. This binding is
+only to the index that run pushed and read back. It does not close the
+external-writer alias race described in TD-10 or the VEX-side
+attestation-cardinality difference described in TD-11.
 
 On both product paths, valid fix evidence from either scanner refuses the
 disposition. Each raw scanner vulnerability ID, package name, and installed

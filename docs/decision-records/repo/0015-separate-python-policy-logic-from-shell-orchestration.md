@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-11
-- Last reviewed: 2026-07-31
+- Last reviewed: 2026-08-16
 - Scope: repo
 
 ## Context
@@ -107,6 +107,19 @@ The current-state ledger is:
   so an empty list is valid while every present match remains schema-checked.
   Cross-report product and image binding remains the responsibility of the
   immediately following `tools/assert-vex.py` gate.
+- `tools/decide-python-publish-scope.py` owns the closed, fail-closed decision
+  over Python publication inputs and unrelated paths.
+- `tools/resolve-python-index.py` owns the registry-index byte/digest
+  corroboration, closed publish-side descriptor matrix, cross-job bundle
+  verification, and one-index-digest consumer bindings. Its agreement self-test
+  deliberately records where the VEX-side policy is weaker.
+- `tools/assert-python-alias-policy.py`,
+  `tools/assert-python-attestation.py`,
+  `tools/assert-python-provenance.py`, and
+  `tools/assert-python-slsa-certificate.py` own the structured alias,
+  verified-envelope, SLSA statement, and Fulcio extension policies used by the
+  Python publisher. `tools/python-trust-contract.py` owns the exact index-only
+  trust-contract wire format.
 
 ### Declared boundaries
 
@@ -140,10 +153,11 @@ The current-state ledger is:
   loops, and embedded Python in `tests/hardening.sh:76-98,100-163,165-213` are
   pending extraction into testable Python helpers.
 - `.github/workflows/publish-python.yaml` retains inline Python for registry
-  publication inspection, resolved Bake-object and index assertions, and CI
-  rootfs flattening inside its release-preflight orchestration. Repository
-  verification mutation-tests the workflow contract, but these policy checks
-  remain pending extraction into directly testable Python helpers.
+  publication inspection, resolved Bake-object assertions, and CI rootfs
+  flattening inside its release-preflight and production orchestration. The
+  production index, alias, attestation, provenance, certificate, trust-contract,
+  and publish-scope policies have dedicated self-tested helpers; the remaining
+  inline policy checks are pending extraction.
 
 ## Consequences
 

@@ -60,6 +60,12 @@ At a high level, verification requires:
 - Exact certificate identities and the GitHub Actions OIDC issuer documented in
   the verification contract.
 
+The merged `base-python` publisher also requires its index-only trust-contract
+predicate. Its first successful publication is still awaited, so this is a
+verification requirement for a future produced digest, not evidence that a
+Python package or public image already exists. Use the image-specific commands
+in [`docs/how-to/verify-a-published-image.md`](docs/how-to/verify-a-published-image.md).
+
 Do not substitute `gh attestation verify` for this repository's release
 contract; the repository uses cosign OCI attestations for the published image
 evidence.

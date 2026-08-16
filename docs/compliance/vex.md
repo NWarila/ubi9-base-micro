@@ -33,8 +33,9 @@ statement in `images/python/vex/cve-2026-11940.openvex.json`, and applies only
 to `local/ubi9-base-python:ci-amd64` and
 `local/ubi9-base-python:ci-arm64`.
 
-The tool also implements an active production path for a digest-addressed child under the
-pinned `ghcr.io/nwarila/ubi9-base-python` repository. Its authorization is the
+The tool also implements a production-wired path for a digest-addressed child
+under the pinned `ghcr.io/nwarila/ubi9-base-python` repository. Its
+authorization is the
 conjunction of fixed in-tool constraints, the canonical reviewed statement, and
 index evidence supplied through paired `--index-reference` and
 `--index-manifest` inputs. The tool verifies the exact bytes against the
@@ -53,13 +54,15 @@ reference cardinality; the publish-side resolver requires exactly one
 attestation reference per child before this gate runs. Version 2 of the canonical statement names this scope with a
 non-image-matchable policy IRI, so it is not a bare repository wildcard.
 
-The production workflow binds this dynamic authorization input to a trusted
-origin for its run. It fetches the exact bytes once from the registry at the
+On each production run, the merged workflow binds this dynamic authorization
+input to a trusted origin for that run. It fetches the exact bytes once from the registry at the
 push-reported digest, corroborates their SHA-256, protects every cross-job
 transfer with a checksum manifest, and gives the same digest to signing,
 attestation, VEX, provenance, collision-check, and alias consumers. That binding
-does not make alias application atomic against an external writer, and TD-11
-tracks the VEX-side descriptor-cardinality asymmetry.
+is limited to the index that run pushed and read back. It does not make alias
+application atomic against an external writer, and TD-11 tracks the VEX-side
+descriptor-cardinality asymmetry. The privileged caller first executes after
+merge; no completed Python production invocation is claimed here.
 
 A mismatch, a duplicate statement, or valid fix evidence from either scanner
 leaves the finding un-vexed. The raw scanner vulnerability ID, package name, and

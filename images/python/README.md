@@ -113,6 +113,32 @@ baselines. See
 [`../../docs/explanation/reproducibility.md`](../../docs/explanation/reproducibility.md)
 for the complete scope.
 
+## Publication contract
+
+The merged publisher runs only for base-repository pushes to `main` or
+`python/v*`; pull requests run the unprivileged release preflight instead. Its
+Python-specific scope policy publishes for every `images/python/**` change,
+every enumerated shared input it consumes, and every missing or ambiguous diff.
+It skips only a delta entirely within its closed unrelated allowlist.
+
+A production run pushes one unaliased candidate by digest and reads its index
+bytes back from GHCR exactly once at the digest reported by Buildx metadata. It
+independently hashes those bytes, checksum-protects each cross-job handoff, and
+passes that same digest to signing, attestation, VEX, provenance, collision, and
+alias consumers. The publish resolver requires one runnable child and one
+BuildKit attestation reference for each of `linux/amd64` and `linux/arm64`. The
+VEX-side policy independently verifies runnable children and descriptor shape
+but does not constrain attestation count or duplicate per-child references; the
+measured difference is TD-11, and the stricter publish resolver runs first.
+
+The index and both children are signed recursively. SPDX, CycloneDX, OpenVEX,
+NIST SP 800-190, and STIG ARF attestations are required on each child. The exact
+Python trust contract and SLSA provenance are index-only. A fresh credentialed
+verification completes before aliases. Alias collision checks run before
+evidence, immediately before apply, and after apply, but they cannot make the
+resolve-then-write window atomic against an external package writer; TD-10
+records that residual.
+
 **Status: publisher merged; awaiting first successful publication.** The evidence
 machinery is exercised by the CI-rootfs preflight on every push to `main` and
 manual dispatch, and for Python-tree or shared-gate changes selected on pull
