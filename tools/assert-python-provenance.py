@@ -187,6 +187,11 @@ def self_test() -> None:
         lambda value: value["predicate"]["invocation"]["configSource"].__setitem__("entryPoint", "wrong"),
     )
     add(
+        "missing workflow",
+        "SLSA configSource workflow path mismatch",
+        lambda value: value["predicate"]["invocation"]["configSource"].pop("entryPoint"),
+    )
+    add(
         "missing github SHA",
         "SLSA github_sha1 mismatch",
         lambda value: value["predicate"]["invocation"]["environment"].pop("github_sha1"),

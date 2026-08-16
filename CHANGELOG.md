@@ -16,18 +16,20 @@ and this project adheres to
   two-key gate requiring both its closed in-tool authorization and the reviewed
   `affected` OpenVEX statement. The statement is now version 2 and also names a
   non-image-matchable policy scope for potential published platform children.
-  A new dormant path can derive an eligible digest-addressed child under the
+  The production path can derive an eligible digest-addressed child under the
   pinned `ghcr.io/nwarila/ubi9-base-python` repository from exact,
   digest-verified OCI index bytes and bind it to the architecture reported by
   both scanners. Its closed descriptor policy requires exactly one
-  `linux/amd64` child and one `linux/arm64` child with distinct digests, permits
+  `linux/amd64` child and one `linux/arm64` child with distinct digests, admits
   only the locked BuildKit attestation shape otherwise, requires every
   descriptor digest to be unique across the index, and separately requires
   child and attestation digests to be disjoint. That path combines fixed in-tool
-  constraints, the canonical statement, and caller-supplied index evidence,
-  which remains a dynamic, untrusted authorization input. No production
-  workflow calls the primitive, base-python remains externally unpublished, and
-  a trusted registry-origin binding is still required before production use.
+  constraints, the canonical statement, and registry index evidence. The
+  publisher fetches those bytes once by the push-reported digest, corroborates
+  their SHA-256, protects cross-job transfers, and uses that digest for every
+  consumer. Its stricter publish-side resolver additionally requires exactly one
+  BuildKit attestation reference per child; TD-11 tracks the VEX-side policy's
+  weaker attestation cardinality.
   Both paths refuse valid fix evidence and byte-noncanonical scanner identities,
   expire after `review-by 2026-10-01`, suppress no raw finding, and do not make
   the image unaffected.

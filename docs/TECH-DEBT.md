@@ -192,7 +192,7 @@ in `tools/assert-vex.py` and the reviewed disclosure in
 CI products, the complete two-package set, the installed version, this debt id,
 and `review-by 2026-10-01`.
 
-The same tool now contains a second, dormant product-eligibility primitive for
+The same tool contains a second product-eligibility primitive for
 a digest-addressed `ghcr.io/nwarila/ubi9-base-python` platform child. The
 canonical OpenVEX document was reissued as version 2 and names that policy scope
 with the non-image-matchable
@@ -214,16 +214,14 @@ attestation-descriptor digest is rejected when submitted as the product. An
 extra or duplicate platform, a nested index, a wrong repository, and an
 architecture swap are also rejected.
 
-Those checks prove only that a digest is a child of the caller-supplied,
-digest-verified index. The index evidence is a dynamic authorization input and
-is not yet trusted: no production workflow calls this path, and no change here
-establishes that the supplied bytes came from an index actually published,
-signed, attested, or aliased by this repository. Before the primitive can be
-used in production, the publisher must fetch the exact registry-served bytes for
-the index it pushed and bind that same digest to signing, attestation, and alias
-operations. Until that registry-origin dataflow exists and is verifier-locked,
-the published-child path remains dormant and the end-to-end defect remains
-open.
+Those checks prove that a digest is a child of the supplied, digest-verified
+index. The production workflow now establishes the missing origin binding: it
+fetches the index bytes once from the registry by the push-reported digest,
+independently corroborates their SHA-256, protects cross-job transfers with a
+checksum manifest, and requires the same digest for signing, attestation, VEX,
+provenance, collision checks, and aliases. The published-child path is therefore
+active. This does not close the external-writer alias race described in TD-10 or
+the VEX-side attestation-cardinality difference described in TD-11.
 
 On both product paths, valid fix evidence from either scanner refuses the
 disposition. Each raw scanner vulnerability ID, package name, and installed
@@ -234,7 +232,7 @@ The image is not unaffected, and no scanner input or raw finding is suppressed.
 Review this entry by 2026-10-01 and monitor Red Hat for a fixed RHEL 9
 `python3.12` RPM. When Red Hat ships a fixed `python3.12` RPM, the rpm-lock
 refresh absorbs it and the same pull request removes the in-tool allowlist entry
-and flips the OpenVEX statement to `fixed`; that change also removes the dormant
+and flips the OpenVEX statement to `fixed`; that change also removes the
 published-child authorization.
 
 ## TD-10: Base-python create-once alias external-writer race
@@ -252,3 +250,26 @@ resolve-then-apply window. The owner accepts this residual external-writer risk;
 the checks are mandatory collision detection, not an atomic create-once
 guarantee. Closing the window requires package settings or another owner-managed
 serialization mechanism outside repository code.
+
+## TD-11: Published-child VEX descriptor-cardinality asymmetry
+
+The publish-side resolver requires the pinned exporter shape exactly: one
+runnable `linux/amd64` child, one runnable `linux/arm64` child, and one unique
+BuildKit attestation descriptor referring to each child. It rejects a third
+otherwise valid attestation descriptor and a second reference to either child.
+
+`tools/assert-vex.py` deliberately remains unchanged by the publisher work. Its
+published-child index policy accepts three unique, correctly shaped attestation
+descriptors referring to `amd64`, `arm64`, and `amd64`, and likewise accepts two
+unique descriptors referring to the same child. It still excludes every
+attestation descriptor from `eligible_child_digests`, rejects an attestation
+digest used as the product, requires descriptor-digest uniqueness and
+child/attestation disjointness, and verifies the supplied bytes against the
+index digest. An added descriptor therefore cannot become an authorized product
+and cannot appear without moving the index digest bound to the push metadata.
+
+The stronger resolver runs before signing, scanning, attestation, or aliasing,
+so production rejects both cardinality classes despite the weaker secondary
+policy. Tightening `tools/assert-vex.py` to require one attestation reference per
+child remains separate follow-up work. Until then, future callers must not use
+the VEX-side validator alone as an exact exporter-cardinality oracle.

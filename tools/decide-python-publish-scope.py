@@ -50,9 +50,10 @@ PUBLISH_EXACT = frozenset(
         "tools/assert-python-alias-policy.py",
         "tools/assert-python-attestation.py",
         "tools/assert-python-provenance.py",
-        "tools/bind-python-openvex.py",
+        "tools/assert-python-slsa-certificate.py",
         "tools/decide-python-publish-scope.py",
         "tools/python-trust-contract.py",
+        "tools/resolve-python-index.py",
     }
 )
 

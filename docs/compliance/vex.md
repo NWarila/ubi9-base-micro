@@ -33,7 +33,7 @@ statement in `images/python/vex/cve-2026-11940.openvex.json`, and applies only
 to `local/ubi9-base-python:ci-amd64` and
 `local/ubi9-base-python:ci-arm64`.
 
-The tool also implements a dormant path for a digest-addressed child under the
+The tool also implements an active production path for a digest-addressed child under the
 pinned `ghcr.io/nwarila/ubi9-base-python` repository. Its authorization is the
 conjunction of fixed in-tool constraints, the canonical reviewed statement, and
 index evidence supplied through paired `--index-reference` and
@@ -48,18 +48,18 @@ positions. The index digest and attestation digests are never eligible. For an
 otherwise well-formed index, submitting a distinct attestation-descriptor digest
 is a product-eligibility rejection; the separate child/attestation
 digest-disjointness guard rejects an alias before child-product eligibility is
-decided. Version 2 of the canonical statement names this scope with a
+decided. The VEX-side policy does not constrain attestation count or per-child
+reference cardinality; the publish-side resolver requires exactly one
+attestation reference per child before this gate runs. Version 2 of the canonical statement names this scope with a
 non-image-matchable policy IRI, so it is not a bare repository wildcard.
 
-This index evidence is a dynamic authorization input, not a trusted origin.
-Digest verification proves what index bytes were supplied, but not that a
-publisher actually pushed those bytes. No production workflow supplies the new
-inputs, no production gate battery uses this path, and the base-python image
-remains externally unpublished. Production use requires a verifier-locked
-dataflow that obtains the exact registry-served bytes for the index just pushed
-and binds that index digest to signing, attestation, and alias operations. Until
-then the primitive is dormant and does not close the child-binding defect
-end-to-end.
+The production workflow binds this dynamic authorization input to a trusted
+origin for its run. It fetches the exact bytes once from the registry at the
+push-reported digest, corroborates their SHA-256, protects every cross-job
+transfer with a checksum manifest, and gives the same digest to signing,
+attestation, VEX, provenance, collision-check, and alias consumers. That binding
+does not make alias application atomic against an external writer, and TD-11
+tracks the VEX-side descriptor-cardinality asymmetry.
 
 A mismatch, a duplicate statement, or valid fix evidence from either scanner
 leaves the finding un-vexed. The raw scanner vulnerability ID, package name, and

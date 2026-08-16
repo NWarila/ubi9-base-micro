@@ -94,8 +94,13 @@ https://token.actions.githubusercontent.com
 
 ## Base-python published evidence
 
-The Python publisher pushes an unaliased multi-architecture candidate by digest,
-reruns every image and evidence gate, signs the index and children, attaches all
+The Python publisher pushes an unaliased multi-architecture candidate by digest.
+It fetches the index bytes from the registry exactly once at the push-reported
+digest, requires SHA-256 over those bytes to corroborate that metadata, and
+checksums the artifact for every cross-job handoff. The same verified index
+digest selects every signing, attestation, VEX, provenance, collision-check, and
+alias consumer; no later consumer re-resolves a tag. It then reruns every image
+and evidence gate, signs the index and children, attaches all
 five image-evidence predicates to each child, and attaches the trust-contract and
 SLSA provenance only to the index. The subject matrix is exact:
 
@@ -124,7 +129,7 @@ are not atomic because GHCR exposes no conditional manifest write. An external
 writer with package-write authority, including an owner, PAT, or another
 workflow, can race the final resolve-then-apply window. This residual race is
 explicitly accepted in
-[`../TECH-DEBT.md`](../TECH-DEBT.md#td-9-base-python-create-once-alias-external-writer-race).
+[`../TECH-DEBT.md`](../TECH-DEBT.md#td-10-base-python-create-once-alias-external-writer-race).
 
 The first cache-cold verification leg runs on a fresh runner with GHCR
 credentials against the candidate digest and completes before aliases are

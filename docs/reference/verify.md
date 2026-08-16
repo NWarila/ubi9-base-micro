@@ -151,7 +151,7 @@ an in-tool allowlist entry for `local/ubi9-base-python:ci-amd64` and
 `images/python/vex/cve-2026-11940.openvex.json` `affected` statement must match
 every field through `review-by 2026-10-01`.
 
-The gate also contains a dormant path for a digest-addressed
+The gate also contains an active production path for a digest-addressed
 `ghcr.io/nwarila/ubi9-base-python` platform child. It requires the conjunction
 of fixed in-tool constraints, version 2 of the canonical reviewed statement, and
 paired `--index-reference` plus `--index-manifest` evidence. The tool recomputes
@@ -163,25 +163,27 @@ to the architecture reported by both scanners. The duplicate-or-contradictory
 descriptor diagnostic names the first and repeated positions, while the
 child/attestation digest-disjointness guard remains a separate rejection. The
 canonical document uses a non-image-matchable policy IRI for this scope rather
-than a repository wildcard.
+than a repository wildcard. This VEX-side policy does not constrain attestation
+count or per-child reference cardinality; the publish-side resolver requires
+exactly one attestation reference per child before this gate runs.
 
-The supplied index is a dynamic authorization input and is not yet trusted.
-There is no production caller, and these checks neither publish base-python nor
-prove that a supplied index came from a registry publication. Production use
-still requires a verifier-locked dataflow that fetches the exact registry-served
-index bytes for the digest just pushed and binds that digest to the publisher's
-signing, attestation, and alias operations. Until then the path remains a
-self-tested dormant primitive and the end-to-end child binding remains open.
+The production caller fetches the exact index bytes once from the registry at
+the digest reported by its push metadata, corroborates their SHA-256, and
+checksum-protects every cross-job transfer. The same verified digest selects the
+VEX, signing, attestation, provenance, collision-check, and alias consumers.
+This closes the registry-origin dependency for the index this run pushed and
+read back; it does not make final alias application atomic against an external
+writer. TD-11 records the VEX-side descriptor-cardinality asymmetry.
 
 Valid fix evidence from either scanner refuses the disposition. On both paths,
 raw scanner vulnerability IDs, package names, and installed versions must
 already contain no surrounding whitespace; padded identity evidence is
 malformed rather than normalized into authorization. `tools/verify.py`
-independently expires the entry even if the scanner finding becomes dormant.
+independently expires the entry even if the scanner finding is absent.
 It also locks seven published-child constants and nine function ASTs and reports
 rejection of 17 canonical-VEX mutations, 8 allowlist mutations, and 17
-published-child surface mutations. These are verifier self-test counts, not
-evidence of a production invocation. This accept-and-track path does not make the image unaffected
+published-child surface mutations. The production workflow invokes the complete
+published-child CLI once for each architecture. This accept-and-track path does not make the image unaffected
 and is not a TD-6 fixable-CVE scanner suppression.
 
 ## SBOM Source

@@ -18,9 +18,9 @@ and CRITICAL findings fail closed in either scanner. A second pass collects unfi
 HIGH and CRITICAL findings, and `tools/assert-vex.py` requires each one to have
 a matching reviewed OpenVEX statement under the image's CODEOWNERS-gated VEX
 directory. Micro publish runs attach `vex/` documents with Cosign when present
-and verify the attestations with the repository workflow identity. Base-python
-remains externally unpublished, so its `images/python/vex/` documents are
-pre-publication gate evidence rather than published attestations.
+and verify the attestations with the repository workflow identity. The
+base-python publisher gates and attaches the byte-unmodified
+`images/python/vex/` documents to both platform children.
 
 The only `affected` statement that satisfies the gate is the exact, expiring
 TD-9 accept-and-track disposition for known-affected `CVE-2026-11940`, with the
@@ -29,7 +29,7 @@ complete `python3.12` and `python3.12-libs` package set at
 is a two-key authorization: an exact in-tool allowlist for the two base-python
 CI products and the canonical reviewed statement must both match.
 
-The decision also permits a second, dormant product-eligibility path for a
+The decision also permits a second product-eligibility path for a
 digest-addressed child under the in-tool pinned
 `ghcr.io/nwarila/ubi9-base-python` repository. That path is authorized only by
 the conjunction of the fixed in-tool constraints, the canonical reviewed
@@ -45,18 +45,19 @@ positions; the child/attestation digest-disjointness guard remains separate with
 its own diagnostic. The index digest is never eligible, and a distinct
 attestation-descriptor digest is rejected when submitted as the product. Nested
 indexes, additional or duplicate runnable platforms, and architecture swaps are
-also rejected.
+also rejected. This policy does not constrain attestation count or per-child
+reference cardinality; the base-python publish resolver requires exactly one
+attestation reference per child before any consumer runs.
 
 The descriptor classification locks a producer convention; index metadata
 alone does not prove that an `unknown/unknown` image-manifest descriptor is
 non-runnable. More importantly, digest verification authenticates the supplied
-bytes only relative to the supplied digest. The caller-selected index is a
-dynamic authorization input and is not yet trusted. No production workflow
-calls this path, and base-python remains externally unpublished. Activation
-requires a verifier-locked publisher dataflow that obtains the exact
-registry-served bytes for the index it pushed and uses the same index digest for
-signing, attestation, and aliases. Until then the primitive is dormant and does
-not close the binding defect end-to-end.
+bytes only relative to the supplied digest. The production caller binds that
+dynamic authorization input to the index it pushed: one digest-addressed
+registry readback is SHA-256-corroborated against push metadata, every cross-job
+transfer is checksum-verified, and signing, attestation, VEX, provenance,
+collision checks, and aliases all receive the same digest. TD-11 tracks the
+remaining VEX-side attestation-cardinality asymmetry.
 
 Valid fix evidence from either scanner refuses either product path. Raw scanner
 vulnerability IDs, package names, and installed versions must also be
@@ -86,13 +87,13 @@ classification to the pull-request decision and nightly drift issue.
 - Unfixed findings require explicit reviewed status and justification.
 - A known-affected finding can pass only through one of the exact, expiring
   product paths above. The two-key description applies only to legacy local
-  products; the dormant child path additionally depends on caller-supplied
-  index evidence that is not trusted for production.
+  products; the published-child path additionally depends on the production
+  workflow's registry-origin-bound index evidence.
 - Empty VEX is not manufactured when there are no unfixed HIGH or CRITICAL
   findings.
 - Published VEX documents become signed supply-chain evidence, not comments in
-  a workflow; reviewed documents for an unpublished image remain pre-publication
-  gate evidence.
+  a workflow; reviewed documents remain pre-publication gate evidence until a
+  publish succeeds.
 
 ## References
 

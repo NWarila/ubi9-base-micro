@@ -1,10 +1,11 @@
 # Image Family Trees
 
 Base-image variants live here, one tree per variant under `images/<variant>/`.
-`base-python` is publication-enabled through
-`.github/workflows/publish-python.yaml`; its first package is private by default
-and is not publicly consumable until the owner changes GHCR visibility and the
-anonymous verification succeeds. Node and Java variants remain planned. Each
+The `base-python` publisher is merged; it is awaiting its first successful
+publication through `.github/workflows/publish-python.yaml`. Its first package
+is private by default and is not publicly consumable until the owner changes
+GHCR visibility and the anonymous verification succeeds. Node and Java variants
+remain planned. Each
 variant must publish through its own path-scoped workflow and carry the full
 `base-micro` evidence parity set — cosign signature, SPDX and CycloneDX SBOMs,
 OpenVEX, NIST SP 800-190 evidence, a tailored STIG ARF, and SLSA provenance —

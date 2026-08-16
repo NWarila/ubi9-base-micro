@@ -113,7 +113,7 @@ baselines. See
 [`../../docs/explanation/reproducibility.md`](../../docs/explanation/reproducibility.md)
 for the complete scope.
 
-**Status: built and gated in CI, externally unpublished.** The evidence
+**Status: publisher merged; awaiting first successful publication.** The evidence
 machinery is exercised by the CI-rootfs preflight on every push to `main` and
 manual dispatch, and for Python-tree or shared-gate changes selected on pull
 requests — a tailored RHEL9 STIG profile evaluated fail-closed, rpmdb-derived
@@ -121,11 +121,11 @@ SPDX and CycloneDX SBOMs, dual CVE scanners with OpenVEX default-deny, a rootfs
 secret gate, and a NIST SP 800-190 image-control predicate. The pull-request
 release preflight additionally pushes a candidate tag and unsigned BuildKit
 provenance to its ephemeral loopback registry. A guarded two-phase production
-publisher is now committed, but this change adds capability only. No completed
+publisher is merged, but this change adds capability only. No completed
 run, project package, public or moving alias, production signature, Cosign
 attestation, SLSA or Rekor record, or consumer-resolvable digest exists for this
-image at this revision. Publication requires a later merge and successful
-publish run; public consumability additionally requires the owner to change GHCR
+image at this revision. Publication requires a successful publish run; public
+consumability additionally requires the owner to change GHCR
 visibility and a successful anonymous verification. See
 [`../../docs/how-to/verify-a-published-image.md`](../../docs/how-to/verify-a-published-image.md)
 for the post-publication procedure.

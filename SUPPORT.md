@@ -25,7 +25,7 @@ support unless the question is security-sensitive.
 ## Not supported here
 
 - Vulnerability reports filed publicly.
-- Support for `base-python` before a publish completes with its required
+- Support for `base-python` before its first successful publication completes with its required
   evidence, or before GHCR visibility and anonymous verification make it
   publicly consumable; `base-node` and `base-java` remain planned.
 - Third-party dependency vulnerabilities that need to be reported upstream.

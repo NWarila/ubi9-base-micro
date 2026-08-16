@@ -179,7 +179,7 @@ language variants are planned as `images/<variant>/` trees.
 | Image | Status | Base relationship | Runtime scope |
 | --- | --- | --- | --- |
 | `base-micro` | Current repository | Root image | glibc, CA trust, rpmdb, OpenSSL #4857 provider |
-| `base-python` | Publication-enabled; visibility-gated | `FROM base-micro@sha256:<digest>` | CPython runtime on the micro floor |
+| `base-python` | Publisher merged; awaiting first successful publication | `FROM base-micro@sha256:<digest>` | CPython runtime on the micro floor |
 | `base-node` | Planned | `FROM base-micro@sha256:<digest>` | Node.js runtime on the micro floor |
 | `base-java` | Planned | `FROM base-micro@sha256:<digest>` | OpenJDK runtime on the micro floor |
 

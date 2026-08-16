@@ -303,42 +303,12 @@ jobs:
           )"
           readonly RELEASE_DIGEST
           crane manifest "${RELEASE_REF}@${RELEASE_DIGEST}" > dist/release/index.json
-          python3.12 - <<'PY'
-          import json
-          import re
-          from pathlib import Path
-
-          index = json.loads(Path("dist/release/index.json").read_text(encoding="utf-8"))
-          found = {}
-          ignored = []
-          for descriptor in index.get("manifests") or []:
-              platform = descriptor.get("platform") or {}
-              os_name = platform.get("os")
-              architecture = platform.get("architecture")
-              digest = descriptor.get("digest")
-              if os_name == "linux" and architecture in {"amd64", "arm64"}:
-                  if architecture in found:
-                      raise SystemExit(f"duplicate Linux platform descriptor: {architecture}")
-                  if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
-                      raise SystemExit(f"invalid Linux platform digest for {architecture}: {digest!r}")
-                  found[architecture] = digest
-              else:
-                  ignored.append({"os": os_name, "architecture": architecture, "digest": digest})
-          if set(found) != {"amd64", "arm64"}:
-              raise SystemExit(f"registry index Linux platform set mismatch: {sorted(found)}")
-          if not any(item["os"] == "unknown" and item["architecture"] == "unknown" for item in ignored):
-              raise SystemExit("registry index is missing unknown/unknown provenance descriptors")
-          Path("dist/release/platform-digests.json").write_text(
-              json.dumps(found, sort_keys=True) + "\n", encoding="utf-8"
-          )
-          for item in ignored:
-              print(
-                  "ignored non-platform descriptor: "
-                  f"os={item['os']} architecture={item['architecture']} digest={item['digest']}"
-              )
-          for architecture in ("amd64", "arm64"):
-              print(f"registry-served child digest: architecture={architecture} digest={found[architecture]}")
-          PY
+          python3.12 tools/resolve-python-index.py \
+            --index-manifest dist/release/index.json \
+            --push-digest "${RELEASE_DIGEST}" \
+            --fetch-reference "${RELEASE_REF}@${RELEASE_DIGEST}" \
+            --repository "${RELEASE_REF}" \
+            --output dist/release/platform-digests.json
 
           short_sha="${GITHUB_SHA::12}"
           for alias in base-python "base-python-${short_sha}" "${OCI_VERSION}"; do
@@ -363,7 +333,11 @@ jobs:
           import sys
           from pathlib import Path
 
-          print(json.loads(Path("dist/release/platform-digests.json").read_text(encoding="utf-8"))[sys.argv[1]])
+          print(
+              json.loads(Path("dist/release/platform-digests.json").read_text(encoding="utf-8"))["children"][
+                  sys.argv[1]
+              ]
+          )
           PY
           )"
             local -r release_rootfs="dist/release/${arch}.rootfs.tar"
@@ -608,14 +582,14 @@ jobs:
     timeout-minutes: 180
     permissions:
       contents: read
-      id-token: write
       packages: write
     outputs:
       image: ${{ steps.image.outputs.image }}
       digest: ${{ steps.image.outputs.digest }}
       ref: ${{ steps.image.outputs.ref }}
-      amd64_digest: ${{ steps.platforms.outputs.amd64_digest }}
-      arm64_digest: ${{ steps.platforms.outputs.arm64_digest }}
+      amd64_digest: ${{ steps.index.outputs.amd64_digest }}
+      arm64_digest: ${{ steps.index.outputs.arm64_digest }}
+      index_bundle_digest: ${{ steps.bundle.outputs.digest }}
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -645,10 +619,6 @@ jobs:
           driver-opts: image=docker.io/moby/buildkit:v0.31.2@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
           buildkitd-flags: --debug=false
           cache-binary: false
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-        with:
-          cosign-release: v2.5.2
       - name: Read publication contract
         id: contract
         run: |
@@ -686,14 +656,10 @@ jobs:
           set -euo pipefail
           printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io --username "${REGISTRY_USER}" --password-stdin
           printf '%s' "${GHCR_TOKEN}" | sudo podman login ghcr.io --username "${REGISTRY_USER}" --password-stdin
-      - name: Install publication gate tools
+      - name: Install pinned registry client
         run: |
           set -euo pipefail
           bash tools/install-crane.sh
-          bash tools/install-syft.sh
-          bash tools/install-trivy.sh
-          bash tools/install-grype.sh
-          bash tools/install-openscap.sh
           printf '%s\n' "${PWD}/dist/tools" >> "${GITHUB_PATH}"
       - name: Build and push unaliased candidate
         id: image
@@ -773,38 +739,21 @@ jobs:
             printf 'digest=%s\n' "${digest}"
             printf 'ref=%s@%s\n' "${RELEASE_REF}" "${digest}"
           } >> "${GITHUB_OUTPUT}"
-      - name: Resolve exact platform children
-        id: platforms
+      - name: Read back and close the exact registry index
+        id: index
         env:
           IMAGE_REF: ${{ steps.image.outputs.ref }}
+          PUSH_DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           set -euo pipefail
-          crane manifest "${IMAGE_REF}" > dist/python-publish/index.json
-          python3 - <<'PY' >> "${GITHUB_OUTPUT}"
-          import json
-          import re
-          from pathlib import Path
-
-          index = json.loads(Path("dist/python-publish/index.json").read_text(encoding="utf-8"))
-          found = {}
-          for descriptor in index.get("manifests") or []:
-              platform = descriptor.get("platform") or {}
-              os_name = platform.get("os")
-              architecture = platform.get("architecture")
-              digest = descriptor.get("digest")
-              if os_name == "linux" and architecture in {"amd64", "arm64"}:
-                  if architecture in found:
-                      raise SystemExit(f"duplicate Linux platform child: {architecture}")
-                  if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
-                      raise SystemExit(f"invalid child digest: {architecture}={digest!r}")
-                  found[architecture] = digest
-              elif os_name != "unknown" or architecture != "unknown":
-                  raise SystemExit(f"unexpected non-platform descriptor: {os_name}/{architecture}")
-          if set(found) != {"amd64", "arm64"}:
-              raise SystemExit(f"Linux platform child set mismatch: {sorted(found)}")
-          for architecture in ("amd64", "arm64"):
-              print(f"{architecture}_digest={found[architecture]}")
-          PY
+          mkdir -p dist/python-index
+          crane manifest "${IMAGE_REF}" > dist/python-index/index.json
+          python3 tools/resolve-python-index.py \
+            --index-manifest dist/python-index/index.json \
+            --push-digest "${PUSH_DIGEST}" \
+            --fetch-reference "${IMAGE_REF}" \
+            --output dist/python-index/index-evidence.json \
+            --github-output "${GITHUB_OUTPUT}"
       - name: Check create-once aliases before evidence
         env:
           INDEX_DIGEST: ${{ steps.image.outputs.digest }}
@@ -819,10 +768,109 @@ jobs:
             --digest "${INDEX_DIGEST}" \
             --image "${IMAGE_REPOSITORY}" \
             --crane dist/tools/crane
+      - name: Seal registry index artifact
+        id: bundle
+        run: |
+          set -euo pipefail
+          cp dist/python-publish/image-metadata.json dist/python-index/image-metadata.json
+          (
+            cd dist/python-index
+            sha256sum image-metadata.json index-evidence.json index.json > SHA256SUMS
+          )
+          digest="sha256:$(sha256sum dist/python-index/SHA256SUMS | cut -d ' ' -f 1)"
+          printf 'digest=%s\n' "${digest}" >> "${GITHUB_OUTPUT}"
+          printf 'sealed registry index artifact: manifest=%s\n' "${digest}"
+      - name: Upload registry index artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: python-index-${{ github.sha }}
+          path: dist/python-index
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  gate-evidence:
+    name: registry-served gates and evidence
+    needs: publish
+    if: >-
+      ${{ github.repository == 'NWarila/ubi9-base-micro' &&
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/python/v')) &&
+      needs.publish.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      evidence_bundle_digest: ${{ steps.bundle.outputs.digest }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          token: ''
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          platforms: amd64,arm64
+          image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          cache-image: false
+      - name: Download registry index artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: python-index-${{ github.sha }}
+          path: dist/python-index
+      - name: Reverify registry index artifact before use
+        id: index
+        env:
+          INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
+          INDEX_BUNDLE_DIGEST: ${{ needs.publish.outputs.index_bundle_digest }}
+        run: |
+          set -euo pipefail
+          python3 tools/resolve-python-index.py \
+            --bundle-root dist/python-index \
+            --bundle-manifest dist/python-index/SHA256SUMS \
+            --bundle-digest "${INDEX_BUNDLE_DIGEST}" \
+            --require-file image-metadata.json \
+            --require-file index-evidence.json \
+            --require-file index.json
+          python3 tools/resolve-python-index.py \
+            --index-manifest dist/python-index/index.json \
+            --push-digest "${INDEX_DIGEST}" \
+            --fetch-reference "${IMAGE_REPOSITORY}@${INDEX_DIGEST}" \
+            --consumer "vex=${INDEX_DIGEST}" \
+            --github-output "${GITHUB_OUTPUT}"
+      - name: Log in to GHCR for read-only gates
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io --username "${REGISTRY_USER}" --password-stdin
+          printf '%s' "${GHCR_TOKEN}" | sudo podman login ghcr.io --username "${REGISTRY_USER}" --password-stdin
+      - name: Install publication gate tools
+        run: |
+          set -euo pipefail
+          bash tools/install-crane.sh
+          bash tools/install-syft.sh
+          bash tools/install-trivy.sh
+          bash tools/install-grype.sh
+          bash tools/install-openscap.sh
+          printf '%s\n' "${PWD}/dist/tools" >> "${GITHUB_PATH}"
       - name: Assert registry-served labels and byte contracts
         env:
-          AMD64_DIGEST: ${{ steps.platforms.outputs.amd64_digest }}
-          ARM64_DIGEST: ${{ steps.platforms.outputs.arm64_digest }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
         run: |
           set -euo pipefail
           expected_version="$(tr -d '[:space:]' < images/python/VERSION)"
@@ -869,8 +917,9 @@ jobs:
           done
       - name: Run runtime and evidence gates
         env:
-          AMD64_DIGEST: ${{ steps.platforms.outputs.amd64_digest }}
-          ARM64_DIGEST: ${{ steps.platforms.outputs.arm64_digest }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
+          INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
           CONTAINER_ENGINE: docker
         run: |
           set -euo pipefail
@@ -906,8 +955,7 @@ jobs:
             sbom_dir="dist/python-publish/evidence/sbom/${arch}"
             vuln_dir="dist/python-publish/evidence/vuln/${arch}"
             rootfs_dir="dist/python-publish/evidence/rootfs/${arch}"
-            vex_dir="dist/python-publish/evidence/vex/${arch}"
-            mkdir -p "${sbom_dir}" "${vuln_dir}" "${rootfs_dir}" "${vex_dir}"
+            mkdir -p "${sbom_dir}" "${vuln_dir}" "${rootfs_dir}"
             dist/tools/syft scan "${image_ref}" --platform "${platform}" \
               -o "json=${sbom_dir}/base-python.syft.json" \
               -o "spdx-json=${sbom_dir}/base-python.spdx.json" \
@@ -940,7 +988,10 @@ jobs:
               --product "${image_ref}" \
               --trivy-json "${vuln_dir}/base-python.trivy.all.json" \
               --grype-json "${vuln_dir}/base-python.grype.all.json" \
-              --package-floor images/python/rpm-lock/micro-floor.json --vex-dir "${vex_dir}"
+              --package-floor images/python/rpm-lock/micro-floor.json \
+              --vex-dir images/python/vex \
+              --index-reference "${IMAGE_REPOSITORY}@${INDEX_DIGEST}" \
+              --index-manifest dist/python-index/index.json
 
             tar --no-same-owner --no-same-permissions -xf "dist/python-publish/rootfs/base-python.${arch}.tar" -C "${rootfs_dir}"
             chmod -R u+rwX "${rootfs_dir}"
@@ -956,10 +1007,138 @@ jobs:
               --revision "${GITHUB_SHA}" --secret-scan-report "${secret_report}" --output "${nist}"
             python3 images/python/tools/generate-nist-800-190-predicate.py --validate "${nist}"
           done
+      - name: Seal generated evidence artifact
+        id: bundle
+        run: |
+          set -euo pipefail
+          evidence_root=dist/python-publish/evidence
+          (
+            cd "${evidence_root}"
+            find attestations sbom stig -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          )
+          digest="sha256:$(sha256sum "${evidence_root}/SHA256SUMS" | cut -d ' ' -f 1)"
+          printf 'digest=%s\n' "${digest}" >> "${GITHUB_OUTPUT}"
+          printf 'sealed evidence artifact: manifest=%s\n' "${digest}"
+      - name: Upload generated evidence artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: python-evidence-${{ github.sha }}
+          path: |
+            dist/python-publish/evidence/attestations
+            dist/python-publish/evidence/sbom
+            dist/python-publish/evidence/stig
+            dist/python-publish/evidence/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  sign-attest:
+    name: sign and attest verified subjects
+    needs:
+      - publish
+      - gate-evidence
+    if: >-
+      ${{ github.repository == 'NWarila/ubi9-base-micro' &&
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/python/v')) &&
+      needs.publish.result == 'success' && needs.gate-evidence.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v2.5.2
+      - name: Download registry index artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: python-index-${{ github.sha }}
+          path: dist/python-index
+      - name: Download generated evidence artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: python-evidence-${{ github.sha }}
+          path: dist/python-publish/evidence
+      - name: Reverify all cross-job artifacts before use
+        id: index
+        env:
+          INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
+          INDEX_BUNDLE_DIGEST: ${{ needs.publish.outputs.index_bundle_digest }}
+          EVIDENCE_BUNDLE_DIGEST: ${{ needs.gate-evidence.outputs.evidence_bundle_digest }}
+        run: |
+          set -euo pipefail
+          python3 tools/resolve-python-index.py \
+            --bundle-root dist/python-index \
+            --bundle-manifest dist/python-index/SHA256SUMS \
+            --bundle-digest "${INDEX_BUNDLE_DIGEST}" \
+            --require-file image-metadata.json \
+            --require-file index-evidence.json \
+            --require-file index.json
+          python3 tools/resolve-python-index.py \
+            --bundle-root dist/python-publish/evidence \
+            --bundle-manifest dist/python-publish/evidence/SHA256SUMS \
+            --bundle-digest "${EVIDENCE_BUNDLE_DIGEST}" \
+            --require-manifest-files
+          python3 tools/resolve-python-index.py \
+            --index-manifest dist/python-index/index.json \
+            --push-digest "${INDEX_DIGEST}" \
+            --fetch-reference "${IMAGE_REPOSITORY}@${INDEX_DIGEST}" \
+            --consumer "sign=${INDEX_DIGEST}" \
+            --consumer "attest=${INDEX_DIGEST}" \
+            --github-output "${GITHUB_OUTPUT}"
+      - name: Read publication contract
+        id: contract
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          contract = json.loads(Path("images/python/contracts/image-manifest.json").read_text(encoding="utf-8"))
+          if contract["image"]["name"] != "ubi9-base-python":
+              raise SystemExit("python publication contract image name mismatch")
+          provenance = contract["provenance"]
+          identity = provenance["cosign"]["certificate_identity"].replace("<ref>", os.environ["GITHUB_REF"])
+          expected_identity = (
+              "https://github.com/NWarila/ubi9-base-micro/"
+              f".github/workflows/publish-python.yaml@{os.environ['GITHUB_REF']}"
+          )
+          if identity != expected_identity:
+              raise SystemExit("python publication certificate identity mismatch")
+          values = {
+              "certificate_identity": identity,
+              "certificate_oidc_issuer": provenance["cosign"]["certificate_oidc_issuer"],
+              **provenance["attestation_predicate_types"],
+          }
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              for name, value in values.items():
+                  output.write(f"{name}={value}\n")
+          PY
+      - name: Log in to GHCR for direct signing and attestation
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io --username "${REGISTRY_USER}" --password-stdin
       - name: Sign index and children recursively
         env:
           COSIGN_YES: "true"
-          IMAGE_REF: ${{ steps.image.outputs.ref }}
+          IMAGE_REF: ${{ needs.publish.outputs.ref }}
         run: |
           set -euo pipefail
           cosign sign --recursive "${IMAGE_REF}"
@@ -967,9 +1146,9 @@ jobs:
         env:
           CERTIFICATE_IDENTITY: ${{ steps.contract.outputs.certificate_identity }}
           CERTIFICATE_OIDC_ISSUER: ${{ steps.contract.outputs.certificate_oidc_issuer }}
-          INDEX_DIGEST: ${{ steps.image.outputs.digest }}
-          AMD64_DIGEST: ${{ steps.platforms.outputs.amd64_digest }}
-          ARM64_DIGEST: ${{ steps.platforms.outputs.arm64_digest }}
+          INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
         run: |
           set -euo pipefail
           for digest in "${INDEX_DIGEST}" "${AMD64_DIGEST}" "${ARM64_DIGEST}"; do
@@ -983,8 +1162,8 @@ jobs:
       - name: Attest SPDX SBOMs on both children
         env:
           COSIGN_YES: "true"
-          AMD64_DIGEST: ${{ steps.platforms.outputs.amd64_digest }}
-          ARM64_DIGEST: ${{ steps.platforms.outputs.arm64_digest }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
         run: |
           set -euo pipefail
           for arch in amd64 arm64; do
@@ -997,8 +1176,8 @@ jobs:
         env:
           CERTIFICATE_IDENTITY: ${{ steps.contract.outputs.certificate_identity }}
           CERTIFICATE_OIDC_ISSUER: ${{ steps.contract.outputs.certificate_oidc_issuer }}
-          AMD64_DIGEST: ${{ steps.platforms.outputs.amd64_digest }}
-          ARM64_DIGEST: ${{ steps.platforms.outputs.arm64_digest }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
         run: |
           set -euo pipefail
           for arch in amd64 arm64; do
@@ -1018,8 +1197,8 @@ jobs:
       - name: Attest CycloneDX SBOMs on both children
         env:
           COSIGN_YES: "true"
-          AMD64_DIGEST: ${{ steps.platforms.outputs.amd64_digest }}
-          ARM64_DIGEST: ${{ steps.platforms.outputs.arm64_digest }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
         run: |
           set -euo pipefail
           for arch in amd64 arm64; do
@@ -1032,8 +1211,8 @@ jobs:
         env:
           CERTIFICATE_IDENTITY: ${{ steps.contract.outputs.certificate_identity }}
           CERTIFICATE_OIDC_ISSUER: ${{ steps.contract.outputs.certificate_oidc_issuer }}
-          AMD64_DIGEST: ${{ steps.platforms.outputs.amd64_digest }}
-          ARM64_DIGEST: ${{ steps.platforms.outputs.arm64_digest }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
         run: |
           set -euo pipefail
           for arch in amd64 arm64; do
@@ -1052,16 +1231,16 @@ jobs:
       - name: Attest OpenVEX predicates on both children
         env:
           COSIGN_YES: "true"
-          AMD64_DIGEST: ${{ steps.platforms.outputs.amd64_digest }}
-          ARM64_DIGEST: ${{ steps.platforms.outputs.arm64_digest }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
         run: |
           set -euo pipefail
           shopt -s nullglob
           for arch in amd64 arm64; do
             case "${arch}" in amd64) digest="${AMD64_DIGEST}" ;; arm64) digest="${ARM64_DIGEST}" ;; esac
-            predicates=(dist/python-publish/evidence/vex/"${arch}"/*.json)
+            predicates=(images/python/vex/*.json)
             if (( ${#predicates[@]} == 0 )); then
-              echo "no child-bound OpenVEX predicates were generated for ${arch}" >&2
+              echo "no reviewed OpenVEX predicates were found for ${arch}" >&2
               exit 1
             fi
             for predicate in "${predicates[@]}"; do
@@ -1073,8 +1252,8 @@ jobs:
         env:
           CERTIFICATE_IDENTITY: ${{ steps.contract.outputs.certificate_identity }}
           CERTIFICATE_OIDC_ISSUER: ${{ steps.contract.outputs.certificate_oidc_issuer }}
-          AMD64_DIGEST: ${{ steps.platforms.outputs.amd64_digest }}
-          ARM64_DIGEST: ${{ steps.platforms.outputs.arm64_digest }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -1085,7 +1264,7 @@ jobs:
               --certificate-identity "${CERTIFICATE_IDENTITY}" --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
               > "${verified}"
             expected=()
-            for predicate in dist/python-publish/evidence/vex/"${arch}"/*.json; do
+            for predicate in images/python/vex/*.json; do
               expected+=(--expected-predicate "${predicate}")
             done
             if (( ${#expected[@]} == 0 )); then
@@ -1099,8 +1278,8 @@ jobs:
       - name: Attest NIST SP 800-190 predicates on both children
         env:
           COSIGN_YES: "true"
-          AMD64_DIGEST: ${{ steps.platforms.outputs.amd64_digest }}
-          ARM64_DIGEST: ${{ steps.platforms.outputs.arm64_digest }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
         run: |
           set -euo pipefail
           for arch in amd64 arm64; do
@@ -1113,8 +1292,8 @@ jobs:
         env:
           CERTIFICATE_IDENTITY: ${{ steps.contract.outputs.certificate_identity }}
           CERTIFICATE_OIDC_ISSUER: ${{ steps.contract.outputs.certificate_oidc_issuer }}
-          AMD64_DIGEST: ${{ steps.platforms.outputs.amd64_digest }}
-          ARM64_DIGEST: ${{ steps.platforms.outputs.arm64_digest }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
         run: |
           set -euo pipefail
           for arch in amd64 arm64; do
@@ -1130,8 +1309,8 @@ jobs:
       - name: Attest STIG ARF predicates on both children
         env:
           COSIGN_YES: "true"
-          AMD64_DIGEST: ${{ steps.platforms.outputs.amd64_digest }}
-          ARM64_DIGEST: ${{ steps.platforms.outputs.arm64_digest }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
         run: |
           set -euo pipefail
           for arch in amd64 arm64; do
@@ -1144,8 +1323,8 @@ jobs:
         env:
           CERTIFICATE_IDENTITY: ${{ steps.contract.outputs.certificate_identity }}
           CERTIFICATE_OIDC_ISSUER: ${{ steps.contract.outputs.certificate_oidc_issuer }}
-          AMD64_DIGEST: ${{ steps.platforms.outputs.amd64_digest }}
-          ARM64_DIGEST: ${{ steps.platforms.outputs.arm64_digest }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
         run: |
           set -euo pipefail
           for arch in amd64 arm64; do
@@ -1160,7 +1339,7 @@ jobs:
           done
       - name: Generate trust-contract predicate and statement
         env:
-          INDEX_DIGEST: ${{ steps.image.outputs.digest }}
+          INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
         run: |
           set -euo pipefail
           tree="$(git rev-parse HEAD:images/python)"
@@ -1178,7 +1357,7 @@ jobs:
       - name: Attest index trust contract
         env:
           COSIGN_YES: "true"
-          INDEX_REF: ${{ steps.image.outputs.ref }}
+          INDEX_REF: ${{ needs.publish.outputs.ref }}
         run: |
           set -euo pipefail
           cosign attest --type "${{ steps.contract.outputs.trust_contract }}" \
@@ -1187,8 +1366,8 @@ jobs:
         env:
           CERTIFICATE_IDENTITY: ${{ steps.contract.outputs.certificate_identity }}
           CERTIFICATE_OIDC_ISSUER: ${{ steps.contract.outputs.certificate_oidc_issuer }}
-          INDEX_DIGEST: ${{ steps.image.outputs.digest }}
-          INDEX_REF: ${{ steps.image.outputs.ref }}
+          INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
+          INDEX_REF: ${{ needs.publish.outputs.ref }}
         run: |
           set -euo pipefail
           verified=dist/python-publish/evidence/verified/trust-contract.index.jsonl
@@ -1202,12 +1381,14 @@ jobs:
 
   slsa-provenance:
     name: slsa l3 provenance
-    needs: publish
+    needs:
+      - publish
+      - sign-attest
     if: >-
       ${{ github.repository == 'NWarila/ubi9-base-micro' &&
       github.event_name == 'push' &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/python/v')) &&
-      needs.publish.result == 'success' }}
+      needs.publish.result == 'success' && needs.sign-attest.result == 'success' }}
     permissions:
       actions: read
       contents: read
@@ -1225,12 +1406,14 @@ jobs:
     name: rekor roll-up and credentialed independent verification
     needs:
       - publish
+      - sign-attest
       - slsa-provenance
     if: >-
       ${{ github.repository == 'NWarila/ubi9-base-micro' &&
       github.event_name == 'push' &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/python/v')) &&
-      needs.publish.result == 'success' && needs.slsa-provenance.result == 'success' }}
+      needs.publish.result == 'success' && needs.sign-attest.result == 'success' &&
+      needs.slsa-provenance.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -1246,6 +1429,32 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+      - name: Download registry index artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: python-index-${{ github.sha }}
+          path: dist/python-index
+      - name: Reverify registry index artifact before independent use
+        id: index
+        env:
+          INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
+          INDEX_BUNDLE_DIGEST: ${{ needs.publish.outputs.index_bundle_digest }}
+        run: |
+          set -euo pipefail
+          python3 tools/resolve-python-index.py \
+            --bundle-root dist/python-index \
+            --bundle-manifest dist/python-index/SHA256SUMS \
+            --bundle-digest "${INDEX_BUNDLE_DIGEST}" \
+            --require-file image-metadata.json \
+            --require-file index-evidence.json \
+            --require-file index.json
+          python3 tools/resolve-python-index.py \
+            --index-manifest dist/python-index/index.json \
+            --push-digest "${INDEX_DIGEST}" \
+            --fetch-reference "${IMAGE_REPOSITORY}@${INDEX_DIGEST}" \
+            --consumer "sign=${INDEX_DIGEST}" \
+            --consumer "attest=${INDEX_DIGEST}" \
+            --github-output "${GITHUB_OUTPUT}"
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
@@ -1292,8 +1501,8 @@ jobs:
           CERTIFICATE_OIDC_ISSUER: ${{ steps.contract.outputs.certificate_oidc_issuer }}
           SLSA_BUILDER_ID: ${{ steps.contract.outputs.builder_id }}
           INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
-          AMD64_DIGEST: ${{ needs.publish.outputs.amd64_digest }}
-          ARM64_DIGEST: ${{ needs.publish.outputs.arm64_digest }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
         run: |
           set -euo pipefail
           mkdir -p dist/python-independent
@@ -1351,6 +1560,23 @@ jobs:
           python3 tools/assert-python-attestation.py --verified "${slsa_output}" \
             --image "${IMAGE_REPOSITORY}" --digest "${INDEX_DIGEST}" \
             --predicate-type https://slsa.dev/provenance/v0.2 --envelope-only
+      - name: Bind SLSA execution certificate to the pinned generator and caller
+        env:
+          INDEX_REF: ${{ needs.publish.outputs.ref }}
+        run: |
+          set -euo pipefail
+          attestation_ref="$(cosign triangulate --type attestation "${INDEX_REF}")"
+          crane manifest "${attestation_ref}" > dist/python-independent/attestation-manifest.json
+          layer_digest="$(python3 tools/assert-python-slsa-certificate.py \
+            --attestation-manifest dist/python-independent/attestation-manifest.json \
+            --print-layer-digest)"
+          crane blob "${IMAGE_REPOSITORY}@${layer_digest}" > dist/python-independent/slsa-envelope.json
+          python3 tools/assert-python-slsa-certificate.py \
+            --verified dist/python-independent/slsa.index.jsonl \
+            --attestation-manifest dist/python-independent/attestation-manifest.json \
+            --envelope dist/python-independent/slsa-envelope.json \
+            --sha "${GITHUB_SHA}" \
+            --ref "${GITHUB_REF}"
       - name: Run credentialed independent SLSA policy verification
         env:
           SLSA_BUILDER_ID: ${{ steps.contract.outputs.builder_id }}
@@ -1401,6 +1627,29 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
+      - name: Download registry index artifact for aliasing
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: python-index-${{ github.sha }}
+          path: dist/python-index
+      - name: Reverify registry index artifact before aliasing
+        env:
+          INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
+          INDEX_BUNDLE_DIGEST: ${{ needs.publish.outputs.index_bundle_digest }}
+        run: |
+          set -euo pipefail
+          python3 tools/resolve-python-index.py \
+            --bundle-root dist/python-index \
+            --bundle-manifest dist/python-index/SHA256SUMS \
+            --bundle-digest "${INDEX_BUNDLE_DIGEST}" \
+            --require-file image-metadata.json \
+            --require-file index-evidence.json \
+            --require-file index.json
+          python3 tools/resolve-python-index.py \
+            --index-manifest dist/python-index/index.json \
+            --push-digest "${INDEX_DIGEST}" \
+            --fetch-reference "${IMAGE_REPOSITORY}@${INDEX_DIGEST}" \
+            --consumer "alias=${INDEX_DIGEST}"
       - name: Install Crane
         run: |
           set -euo pipefail

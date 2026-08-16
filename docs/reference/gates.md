@@ -20,7 +20,8 @@ it.
 | `tools/assert-scanner-canary.py` | Parses independent Grype and Trivy reports for a committed vulnerable SBOM and fails unless both databases and matchers detect the expected Log4Shell record; this probes content validity, not image cataloging. |
 | `tools/assert-ignore-scope.py` | Rejects missing, malformed, widened, version-unpinned, or expired fixable-CVE ignores and requires Grype gate evidence to contain exactly the two approved runtime suppressions. |
 | `images/python/tools/assert-raw-scanners-no-sqlite.py` | Requires `--trivy-json`, `--grype-json`, `--contract`, and `--arch` for normal execution. It rejects `sqlite-libs` or any of the five SQLite CVEs on either scanner surface. Trivy's `--list-all-pkgs` inventory must contain the policy-selected `python3.12-libs` package at the exact epoch, version, release, and RPM architecture derived from `runtime.shipped[arch]`. Grype must have valid identity, Red Hat distro, source shape, and per-match schema, but `matches: []` is a legal clean result. Malformed marker identities and whitespace-bearing package names fail before the absence decision. |
-| `tools/assert-vex.py` | Binds the Trivy and Grype product, image, architecture, distro, and repository-digest evidence, then fails unless every unfixed HIGH or CRITICAL scanner finding has a matching reviewed OpenVEX statement under the image's CODEOWNERS-gated VEX directory. The only `affected` status that satisfies the gate is the exact, expiring TD-9 accept-and-track disposition for CVE-2026-11940, `python3.12` and `python3.12-libs` at `3.12.13-3.el9_8.1`, and `review-by 2026-10-01`. Its legacy local-product path requires both the exact in-tool allowlist and canonical statement. Its dormant published-child path accepts paired `--index-reference` and `--index-manifest` inputs only for a digest-addressed child of the pinned `ghcr.io/nwarila/ubi9-base-python` repository. It verifies the index byte digest and enforces a closed OCI descriptor policy: exactly one child for each supported platform with distinct child digests, only the locked BuildKit attestation shape otherwise, a unique digest for every descriptor across all roles, and separate child/attestation digest disjointness. It then binds the product to the scanner-reported architecture. That second path is the conjunction of fixed in-tool constraints, the canonical statement, and caller-supplied index evidence; the evidence is a dynamic authorization input that has no trusted registry-origin binding or production caller yet. Both paths require byte-canonical scanner identities and refuse valid fix evidence. Malformed fix metadata does not establish a fix, so the finding remains on the default-deny path. |
+| `tools/assert-vex.py` | Binds the Trivy and Grype product, image, architecture, distro, and repository-digest evidence, then fails unless every unfixed HIGH or CRITICAL scanner finding has a matching reviewed OpenVEX statement under the image's CODEOWNERS-gated VEX directory. The only `affected` status that satisfies the gate is the exact, expiring TD-9 accept-and-track disposition for CVE-2026-11940, `python3.12` and `python3.12-libs` at `3.12.13-3.el9_8.1`, and `review-by 2026-10-01`. Its legacy local-product path requires both the exact in-tool allowlist and canonical statement. Its active published-child path accepts paired `--index-reference` and `--index-manifest` inputs only for a digest-addressed child of the pinned `ghcr.io/nwarila/ubi9-base-python` repository. It verifies the index byte digest, requires exactly one child for each supported platform with distinct child digests, admits only the locked BuildKit attestation shape otherwise, requires a unique digest for every descriptor across all roles, and enforces child/attestation digest disjointness. It does not constrain attestation count or per-child reference cardinality; the stricter publish-side resolver does. The production caller supplies registry-served bytes fetched once by the push-reported digest after independently corroborating their SHA-256, and re-verifies the checksummed artifact after every cross-job download. Both paths require byte-canonical scanner identities and refuse valid fix evidence. Malformed fix metadata does not establish a fix, so the finding remains on the default-deny path. |
+| `tools/resolve-python-index.py` | Enforces the publish-side closed descriptor matrix: exactly one runnable `linux/amd64` child, one runnable `linux/arm64` child, and exactly one correctly shaped BuildKit attestation descriptor referring to each child. It corroborates the push-reported digest against the exact registry readback bytes, locks the same index digest into signing, attestation, VEX, and alias consumers, and verifies checksummed cross-job artifacts before use. Its agreement self-test records the intentional attestation-cardinality difference from `tools/assert-vex.py`. |
 | `tools/assert-no-rootfs-secrets.py` | Scans the exported runtime rootfs for high-confidence clear-text credential patterns before NIST SP 800-190 evidence can be generated. |
 | `tools/generate-nist-800-190-predicate.py` | Generates and validates the NIST SP 800-190 section 4.1 image-control predicate. |
 | `tools/assert-cosign-rekor.py` | Checks Cosign signature verification JSON for Rekor bundle fields and self-tests DSSE attestation-envelope parsing. |
@@ -61,7 +62,7 @@ input: it accepts and tracks the known-affected unfixed HIGH
 `local/ubi9-base-python:ci-amd64` and
 `local/ubi9-base-python:ci-arm64`, the exact in-tool allowlist and reviewed
 `affected` statement must both match through `review-by 2026-10-01`. The
-dormant digest-addressed child path additionally requires paired index evidence
+active digest-addressed child path additionally requires paired index evidence
 whose exact bytes name one child for each supported architecture with distinct
 child digests under the pinned repository, permits only the locked BuildKit
 attestation shape otherwise, and requires every descriptor digest to be unique
@@ -70,18 +71,22 @@ The index digest itself is never eligible, a distinct BuildKit
 attestation-descriptor digest is rejected as a product, and a child for the
 other scanner-reported architecture is not eligible. The separate
 child/attestation digest-disjointness guard rejects an alias before child-product
-eligibility is decided. The caller-selected index remains a dynamic
-authorization input until a production publisher binds it to exact
-registry-served bytes; no current workflow supplies that evidence.
+eligibility is decided. The production caller fetches the index once from the
+registry by the push-reported digest, corroborates the exact bytes against that
+digest, and carries the same verified digest through the VEX, sign, attest, and
+alias consumers. Downloaded cross-job artifacts are checksummed before use.
+`assert-vex.py` intentionally remains weaker on attestation count and duplicate
+references; the publish-side resolver rejects those cases before any consumer
+runs, as tracked in TD-11.
 Raw scanner vulnerability IDs, package names, and installed versions must
 already contain no surrounding whitespace; the gate rejects padded evidence
 instead of normalizing it into the disposition.
 Candidate evaluations fail after that date, while `tools/verify.py` also expires
-the repository entry when dormant. Every other unfixed HIGH or CRITICAL finding remains default-denied.
+the repository entry. Every other unfixed HIGH or CRITICAL finding remains default-denied.
 
 Repository verification exact-locks the published-child surface through seven
 literal constants and nine function ASTs. Its accept-and-track summary now
 reports 17 canonical-VEX mutations, 8 allowlist mutations, and 17
 published-child surface mutations rejected, in addition to the date-controlled
-dormant-entry expiry fixture. These counts describe repository self-tests, not
-production invocations of the dormant path.
+repository-entry expiry fixture. These counts describe repository self-tests;
+production also invokes the published-child path once per platform child.
