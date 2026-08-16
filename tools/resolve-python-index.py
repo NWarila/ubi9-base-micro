@@ -451,11 +451,7 @@ def vex_message(
         disposition = next((line for line in output if line.startswith("accept-and-track disposition:")), "accepted")
         return f"ACCEPT: {disposition}"
     diagnostic = next(
-        (
-            line.removeprefix("assert-vex failed: ")
-            for line in output
-            if line.startswith("assert-vex failed: ")
-        ),
+        (line.removeprefix("assert-vex failed: ") for line in output if line.startswith("assert-vex failed: ")),
         next(
             (line for line in output if line.startswith("accept-and-track rejected for ")),
             next((line for line in reversed(output) if line), "no diagnostic"),
@@ -487,8 +483,7 @@ def agreement_rows(production_raw: bytes | None = None) -> list[tuple[str, str, 
     attestation_positions = [
         position
         for position, descriptor in enumerate(manifests)
-        if isinstance(descriptor, dict)
-        and descriptor.get("platform") == {"architecture": "unknown", "os": "unknown"}
+        if isinstance(descriptor, dict) and descriptor.get("platform") == {"architecture": "unknown", "os": "unknown"}
     ]
     require(len(attestation_positions) == 2, "agreement production index attestation inventory changed")
 
@@ -527,9 +522,7 @@ def agreement_rows(production_raw: bytes | None = None) -> list[tuple[str, str, 
     unannotated["manifests"][attestation_positions[0]].pop("annotations")
     add("unannotated unknown descriptor", unannotated)
     wrong_reference = copy.deepcopy(baseline)
-    wrong_reference["manifests"][attestation_positions[0]]["annotations"][ATTESTATION_DIGEST_KEY] = (
-        "sha256:" + "6" * 64
-    )
+    wrong_reference["manifests"][attestation_positions[0]]["annotations"][ATTESTATION_DIGEST_KEY] = "sha256:" + "6" * 64
     add("wrong attestation reference", wrong_reference)
     excess = copy.deepcopy(baseline)
     excess["manifests"].append(attestation_descriptor("5", amd64_digest))
