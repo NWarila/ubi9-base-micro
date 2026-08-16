@@ -128,12 +128,14 @@ passes that same digest to signing, attestation, VEX, provenance, collision, and
 alias consumers. The publish resolver requires one runnable child and one
 BuildKit attestation reference for each of `linux/amd64` and `linux/arm64`, and
 exact-checks the runnable descriptor's four top-level keys and the attestation
-descriptor's five. It rejects `urls`, `data`, and `artifactType` additions on
-both descriptor kinds. The VEX-side policy independently verifies runnable
-children, the attestation platform and annotations, and digest relationships,
-but it neither closes the descriptor top-level key sets nor constrains
-attestation count or duplicate per-child references. TD-11 tracks both measured
-differences, and the stricter publish resolver runs first.
+descriptor's five, and exact-checks both platform objects as `architecture`
+plus `os`. It rejects `urls`, `data`, and `artifactType` additions on both
+descriptor kinds. The VEX-side policy independently verifies runnable children,
+the attestation platform and annotations, and digest relationships, but it
+neither closes the descriptor top-level key sets nor the runnable platform key
+set, and it does not constrain attestation count or duplicate per-child
+references. TD-11 tracks all three measured differences, and the stricter
+publish resolver runs first.
 
 The index and both children are signed recursively. SPDX, CycloneDX, OpenVEX,
 NIST SP 800-190, and STIG ARF attestations are required on each child. The exact

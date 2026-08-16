@@ -173,9 +173,11 @@ canonical document uses a non-image-matchable policy IRI for this scope rather
 than a repository wildcard. This VEX-side policy does not constrain attestation
 count or per-child reference cardinality and does not close the top-level key
 set of either descriptor kind; measured `urls`, `data`, and `artifactType`
-additions are accepted on both kinds. Before this gate runs, the publish-side
-resolver exact-checks the four-key runnable and five-key attestation shapes and
-requires exactly one attestation reference per child.
+additions are accepted on both kinds. It also accepts an invented key on a
+runnable `platform` object. Before this gate runs, the publish-side resolver
+exact-checks the four-key runnable and five-key attestation shapes, requires
+exact `architecture` and `os` platform objects, and requires exactly one
+attestation reference per child.
 
 On each run, the merged production caller fetches the exact index bytes once
 from the registry at the digest reported by its push metadata, corroborates
@@ -184,7 +186,7 @@ digest selects the VEX, signing, attestation, provenance, collision-check, and
 alias consumers. This closes the registry-origin dependency for the index that
 run pushed and read back; it does not make final alias application atomic
 against an external writer. The first privileged execution remains post-merge.
-TD-11 records both VEX-side descriptor-policy asymmetries.
+TD-11 records all three VEX-side descriptor-policy asymmetries.
 
 Valid fix evidence from either scanner refuses the disposition. On both paths,
 raw scanner vulnerability IDs, package names, and installed versions must

@@ -51,10 +51,11 @@ across all roles, and binds the product to the child matching the
 scanner-reported architecture. It does not constrain attestation count or
 per-child reference cardinality, and it accepts measured `urls`, `data`, and
 `artifactType` additions on both descriptor kinds because it does not close
-their top-level key sets. Before any consumer runs, the production publish
+their top-level key sets. It also accepts an invented member in a runnable
+child's `platform` object. Before any consumer runs, the production publish
 resolver requires exactly the four-key runnable and five-key attestation
-descriptor shapes and exactly one attestation descriptor referring to each
-child.
+descriptor shapes, exact `architecture` and `os` platform objects, and exactly
+one attestation descriptor referring to each child.
 The duplicate-or-contradictory descriptor diagnostic names the first and
 repeated positions. The index digest is never eligible, and a distinct
 attestation-descriptor digest is rejected when submitted as the product. The
@@ -70,7 +71,7 @@ the publish resolver, both child VEX calls, recursive signing, attestations,
 SLSA provenance, collision checks, and final aliases. This binds the dynamic
 authorization input to the index this run pushed and read back; it does not make
 the later resolve-then-apply alias operation atomic against an external writer.
-Both VEX-side descriptor-policy differences are tracked as TD-11. This caller
+All three VEX-side descriptor-policy differences are tracked as TD-11. This caller
 is merged but its privileged job first executes after merge; no completed Python
 production gate or publication is claimed here.
 

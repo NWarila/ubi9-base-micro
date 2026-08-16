@@ -52,9 +52,11 @@ digest-disjointness guard rejects an alias before child-product eligibility is
 decided. The VEX-side policy does not constrain attestation count or per-child
 reference cardinality, and does not close the top-level key set of either
 descriptor kind: it accepts measured `urls`, `data`, and `artifactType`
-additions on runnable and attestation descriptors. Before this gate runs, the
-publish-side resolver requires exactly the four-key runnable and five-key
-attestation descriptor shapes and exactly one attestation reference per child.
+additions on runnable and attestation descriptors. It also does not close the
+runnable `platform` key set, accepting an invented member there. Before this
+gate runs, the publish-side resolver requires exactly the four-key runnable and
+five-key attestation descriptor shapes, exact `architecture` and `os` platform
+objects, and exactly one attestation reference per child.
 Version 2 of the canonical statement names this scope with a
 non-image-matchable policy IRI, so it is not a bare repository wildcard.
 
@@ -64,8 +66,8 @@ push-reported digest, corroborates their SHA-256, protects every cross-job
 transfer with a checksum manifest, and gives the same digest to signing,
 attestation, VEX, provenance, collision-check, and alias consumers. That binding
 is limited to the index that run pushed and read back. It does not make alias
-application atomic against an external writer, and TD-11 tracks both VEX-side
-descriptor-policy asymmetries. The privileged caller first executes after
+application atomic against an external writer, and TD-11 tracks all three
+VEX-side descriptor-policy asymmetries. The privileged caller first executes after
 merge; no completed Python production invocation is claimed here.
 
 A mismatch, a duplicate statement, or valid fix evidence from either scanner

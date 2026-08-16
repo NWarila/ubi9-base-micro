@@ -38,8 +38,12 @@ ATTESTATION_TYPE = "attestation-manifest"
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 CHECKSUM_LINE = re.compile(r"^([0-9a-f]{64})  ([^\x00\r\n]+)$")
 CONSUMERS = frozenset({"sign", "attest", "vex", "alias"})
-RUNNABLE_DESCRIPTOR_KEYS = frozenset({"digest", "mediaType", "platform", "size"})
-ATTESTATION_DESCRIPTOR_KEYS = frozenset({"annotations", "digest", "mediaType", "platform", "size"})
+INSPECTED_OBJECT_KEYS = {
+    "runnable_descriptor": frozenset({"digest", "mediaType", "platform", "size"}),
+    "attestation_descriptor": frozenset({"annotations", "digest", "mediaType", "platform", "size"}),
+    "runnable_platform": frozenset({"architecture", "os"}),
+    "attestation_platform": frozenset({"architecture", "os"}),
+}
 
 
 class PythonIndexError(Exception):
@@ -142,8 +146,12 @@ def validate_index(
         architecture = platform.get("architecture")
         if operating_system == "linux":
             require(
-                set(descriptor) == RUNNABLE_DESCRIPTOR_KEYS,
+                set(descriptor) == INSPECTED_OBJECT_KEYS["runnable_descriptor"],
                 f"{label} must equal the locked runnable descriptor shape",
+            )
+            require(
+                set(platform) == INSPECTED_OBJECT_KEYS["runnable_platform"],
+                f"{label}.platform must equal the locked linux runnable platform",
             )
             require(
                 architecture in children,
@@ -152,11 +160,11 @@ def validate_index(
             children[cast(str, architecture)].append(descriptor_digest)
         elif operating_system == "unknown" and architecture == "unknown":
             require(
-                set(descriptor) == ATTESTATION_DESCRIPTOR_KEYS,
+                set(descriptor) == INSPECTED_OBJECT_KEYS["attestation_descriptor"],
                 f"{label} must equal the locked BuildKit attestation descriptor shape",
             )
             require(
-                set(platform) == {"os", "architecture"},
+                set(platform) == INSPECTED_OBJECT_KEYS["attestation_platform"],
                 f"{label}.platform must equal the locked unknown/unknown attestation platform",
             )
             attestations.append((position, descriptor_digest, descriptor))
@@ -563,6 +571,19 @@ def agreement_rows(production_raw: bytes | None = None) -> list[tuple[str, str, 
         attestation_additional = copy.deepcopy(baseline)
         attestation_additional["manifests"][attestation_positions[0]][field] = value
         add(f"attestation descriptor additional {field}", attestation_additional)
+    invented_key = "invented.key"
+    runnable_descriptor_invented = copy.deepcopy(baseline)
+    runnable_descriptor_invented["manifests"][runnable_positions["amd64"]][invented_key] = "unexpected"
+    add("runnable descriptor invented key", runnable_descriptor_invented)
+    attestation_descriptor_invented = copy.deepcopy(baseline)
+    attestation_descriptor_invented["manifests"][attestation_positions[0]][invented_key] = "unexpected"
+    add("attestation descriptor invented key", attestation_descriptor_invented)
+    runnable_platform_invented = copy.deepcopy(baseline)
+    runnable_platform_invented["manifests"][runnable_positions["amd64"]]["platform"][invented_key] = "unexpected"
+    add("runnable platform invented key", runnable_platform_invented)
+    attestation_platform_invented = copy.deepcopy(baseline)
+    attestation_platform_invented["manifests"][attestation_positions[0]]["platform"][invented_key] = "unexpected"
+    add("attestation platform invented key", attestation_platform_invented)
     add(
         "registry bytes differ from push digest",
         push_digest=other_digest,
@@ -649,6 +670,10 @@ def self_test(production_raw: bytes | None = None) -> None:
         "attestation descriptor additional data": ("REJECT", "ACCEPT"),
         "runnable descriptor additional artifactType": ("REJECT", "ACCEPT"),
         "attestation descriptor additional artifactType": ("REJECT", "ACCEPT"),
+        "runnable descriptor invented key": ("REJECT", "ACCEPT"),
+        "attestation descriptor invented key": ("REJECT", "ACCEPT"),
+        "runnable platform invented key": ("REJECT", "ACCEPT"),
+        "attestation platform invented key": ("REJECT", "REJECT"),
         "registry bytes differ from push digest": ("REJECT", "REJECT"),
         "tag-resolved fetch": ("REJECT", "ACCEPT"),
         "different digest reaches sign consumer": ("REJECT", "ACCEPT"),

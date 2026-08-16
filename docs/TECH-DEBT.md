@@ -218,7 +218,8 @@ platform and annotation maps, requires every descriptor digest in `manifests`
 to be unique across all roles, and binds the gated product digest to the child
 for the architecture reported by both scanners. It does not constrain the
 number of attestation descriptors or their per-child reference cardinality, and
-it does not close the top-level key set of either descriptor kind.
+it does not close the top-level key set of either descriptor kind or the key
+set of a runnable child's `platform` object.
 The duplicate-or-contradictory descriptor diagnostic names the first and
 repeated positions; the child/attestation digest-disjointness guard remains
 separate with its own diagnostic. The index digest is never eligible, and a
@@ -292,9 +293,18 @@ In particular, `urls` can direct a client to an external location for the
 descriptor content, so the publish-side policy rejects all six cases before
 the index can be signed, scanned, attested, or aliased.
 
+They also differ on runnable-platform closure. The publish-side resolver
+requires both runnable and attestation `platform` objects to contain exactly
+`architecture` and `os`. The VEX-side policy applies that exact check only to
+the attestation platform. It accepts a runnable platform carrying `variant`,
+`os.version`, `os.features`, or an invented key. `variant` can alter platform
+matching, so the publish-side resolver rejects these shapes before any child is
+selected for signing, scanning, attestation, or aliasing.
+
 The stronger resolver runs before signing, scanning, attestation, or aliasing,
-so production rejects both cardinality classes and every additional-field case
-despite the weaker secondary policy. Tightening `tools/assert-vex.py` to require
-exact descriptor key sets and one attestation reference per child remains
-separate follow-up work. Until then, future callers must not use the VEX-side
-validator alone as an exact exporter-shape or cardinality oracle.
+so production rejects both cardinality classes, every descriptor
+additional-field case, and every runnable-platform additional-key case despite
+the weaker secondary policy. Tightening `tools/assert-vex.py` to require exact
+descriptor and runnable-platform key sets and one attestation reference per
+child remains separate follow-up work. Until then, future callers must not use
+the VEX-side validator alone as an exact exporter-shape or cardinality oracle.
