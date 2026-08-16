@@ -235,7 +235,7 @@ published-child path is therefore wired to a production caller rather than
 dormant; its first production execution remains post-merge. This binding is
 only to the index that run pushed and read back. It does not close the
 external-writer alias race described in TD-10 or the VEX-side
-attestation-cardinality difference described in TD-11.
+descriptor-policy differences described in TD-11.
 
 On both product paths, valid fix evidence from either scanner refuses the
 disposition. Each raw scanner vulnerability ID, package name, and installed
@@ -282,8 +282,18 @@ child/attestation disjointness, and verifies the supplied bytes against the
 index digest. An added descriptor therefore cannot become an authorized product
 and cannot appear without moving the index digest bound to the push metadata.
 
+The policies also differ on descriptor top-level closure. The publish-side
+resolver requires runnable descriptors to contain exactly `digest`,
+`mediaType`, `platform`, and `size`, and attestation descriptors to contain
+exactly those four keys plus `annotations`. The VEX-side policy accepts an
+additional `urls`, `data`, or `artifactType` field on either descriptor kind.
+In particular, `urls` can direct a client to an external location for the
+descriptor content, so the publish-side policy rejects all six cases before
+the index can be signed, scanned, attested, or aliased.
+
 The stronger resolver runs before signing, scanning, attestation, or aliasing,
-so production rejects both cardinality classes despite the weaker secondary
-policy. Tightening `tools/assert-vex.py` to require one attestation reference per
-child remains separate follow-up work. Until then, future callers must not use
-the VEX-side validator alone as an exact exporter-cardinality oracle.
+so production rejects both cardinality classes and every additional-field case
+despite the weaker secondary policy. Tightening `tools/assert-vex.py` to require
+exact descriptor key sets and one attestation reference per child remains
+separate follow-up work. Until then, future callers must not use the VEX-side
+validator alone as an exact exporter-shape or cardinality oracle.
