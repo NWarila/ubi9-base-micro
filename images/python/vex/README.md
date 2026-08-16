@@ -45,12 +45,16 @@ in-tool constraints, the same canonical reviewed statement, and paired index
 evidence. `--index-reference` identifies an index digest and
 `--index-manifest` supplies its exact bytes. The tool recomputes the byte digest,
 enforces an OCI index with exactly one `linux/amd64` child and one `linux/arm64`
-child with distinct digests plus only the locked BuildKit attestation shape,
-requires a unique digest for every descriptor in `manifests` across all roles,
-and binds the product to the child matching the scanner-reported architecture.
-It does not constrain attestation count or per-child reference cardinality; the
-production publish resolver separately requires exactly one attestation
-descriptor referring to each child before any consumer runs.
+child with distinct digests, locks the BuildKit attestation platform and
+annotations, requires a unique digest for every descriptor in `manifests`
+across all roles, and binds the product to the child matching the
+scanner-reported architecture. It does not constrain attestation count or
+per-child reference cardinality, and it accepts measured `urls`, `data`, and
+`artifactType` additions on both descriptor kinds because it does not close
+their top-level key sets. Before any consumer runs, the production publish
+resolver requires exactly the four-key runnable and five-key attestation
+descriptor shapes and exactly one attestation descriptor referring to each
+child.
 The duplicate-or-contradictory descriptor diagnostic names the first and
 repeated positions. The index digest is never eligible, and a distinct
 attestation-descriptor digest is rejected when submitted as the product. The
@@ -66,7 +70,7 @@ the publish resolver, both child VEX calls, recursive signing, attestations,
 SLSA provenance, collision checks, and final aliases. This binds the dynamic
 authorization input to the index this run pushed and read back; it does not make
 the later resolve-then-apply alias operation atomic against an external writer.
-The VEX-side attestation-cardinality difference is tracked as TD-11. This caller
+Both VEX-side descriptor-policy differences are tracked as TD-11. This caller
 is merged but its privileged job first executes after merge; no completed Python
 production gate or publication is claimed here.
 

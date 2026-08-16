@@ -36,8 +36,8 @@ the conjunction of the fixed in-tool constraints, the canonical reviewed
 statement, and index evidence supplied through paired `--index-reference` and
 `--index-manifest` inputs. The tool verifies the exact index bytes against the
 reference digest, requires exactly one `linux/amd64` image manifest and one
-`linux/arm64` image manifest with distinct digests, admits only the locked
-BuildKit attestation convention otherwise, requires index-wide
+`linux/arm64` image manifest with distinct digests, locks the BuildKit
+attestation platform and annotations, requires index-wide
 descriptor-digest uniqueness across all roles, and binds the product digest to
 the child for the architecture reported by both scanners. The
 duplicate-or-contradictory descriptor diagnostic names the first and repeated
@@ -46,8 +46,12 @@ its own diagnostic. The index digest is never eligible, and a distinct
 attestation-descriptor digest is rejected when submitted as the product. Nested
 indexes, additional or duplicate runnable platforms, and architecture swaps are
 also rejected. This policy does not constrain attestation count or per-child
-reference cardinality; the base-python publish resolver requires exactly one
-attestation reference per child before any consumer runs.
+reference cardinality, and it does not exact-check either descriptor kind's
+top-level keys: measured `urls`, `data`, and `artifactType` additions are
+accepted on runnable and attestation descriptors. Before any consumer runs, the
+base-python publish resolver requires exactly `digest`, `mediaType`, `platform`,
+and `size` on runnable descriptors, those four keys plus `annotations` on
+attestation descriptors, and exactly one attestation reference per child.
 
 The descriptor classification locks a producer convention; index metadata
 alone does not prove that an `unknown/unknown` image-manifest descriptor is
@@ -59,8 +63,8 @@ metadata, every cross-job transfer is checksum-verified, and signing,
 attestation, VEX, provenance, collision checks, and aliases all receive the same
 digest. The first such production execution remains post-merge. This binding is
 limited to the index that run pushed and read back; it does not close the
-external-writer alias race. TD-11 tracks the remaining VEX-side
-attestation-cardinality asymmetry.
+external-writer alias race. TD-11 tracks the remaining VEX-side descriptor-key-set
+and attestation-cardinality asymmetries.
 
 Valid fix evidence from either scanner refuses either product path. Raw scanner
 vulnerability IDs, package names, and installed versions must also be

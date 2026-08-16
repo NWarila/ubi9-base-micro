@@ -56,10 +56,10 @@ require evidence from the corresponding completed boundary.
 
 The Python publisher uses `tools/decide-python-publish-scope.py`, not the micro
 policy. A `python/v*` tag always publishes. On `main`, the workflow reads the
-revision label from the currently published `base-python` alias and compares
+revision label from the `base-python` alias when that alias exists and compares
 that commit with the pushed SHA. It publishes when any `images/python/**` path
-or any exact shared input consumed by the publisher changed. An absent or
-malformed published config, unavailable base commit, empty delta, or
+or any exact shared input consumed by the publisher changed. An absent alias,
+absent or malformed published config, unavailable base commit, empty delta, or
 unclassified path also publishes fail-closed.
 
 Publication skips only when every changed path belongs to the closed unrelated
@@ -69,8 +69,8 @@ set: `docs/**`, `.github/ISSUE_TEMPLATE/**`, or exactly `.editorconfig`,
 `.shellcheckrc`, `.yamllint`, `CHANGELOG.md`, `CODE_OF_CONDUCT.md`,
 `CONTRIBUTING.md`, `LICENSE`, `README.md`, `SECURITY.md`, `SUPPORT.md`, or
 `images/README.md`. This scope decision does not claim that a skipped run
-creates or verifies an image; it only avoids replacing an already published
-Python digest when all changes are classified as unrelated.
+creates or verifies an image; once a prior publication exists, it avoids
+replacing that Python digest when all changes are classified as unrelated.
 
 The Python CI workflow has an active CI-rootfs preflight for the unpublished
 `base-python` image. Its build and reproducibility matrices run for both

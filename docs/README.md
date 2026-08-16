@@ -53,4 +53,4 @@ Documentation for this repository follows the Diataxis framework.
 - [`TECH-DEBT.md`](TECH-DEBT.md) - tracked repository debt and scoped exceptions,
   including the Python identity-step static-analysis boundary, expiring
   known-affected CVE disposition, external-writer alias race, and measured
-  VEX-side attestation-cardinality asymmetry.
+  VEX-side descriptor-key-set and attestation-cardinality asymmetries.

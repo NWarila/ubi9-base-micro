@@ -110,9 +110,10 @@ The current-state ledger is:
 - `tools/decide-python-publish-scope.py` owns the closed, fail-closed decision
   over Python publication inputs and unrelated paths.
 - `tools/resolve-python-index.py` owns the registry-index byte/digest
-  corroboration, closed publish-side descriptor matrix, cross-job bundle
-  verification, and one-index-digest consumer bindings. Its agreement self-test
-  deliberately records where the VEX-side policy is weaker.
+  corroboration, exact four-key runnable and five-key attestation descriptor
+  shapes, one attestation reference per child, cross-job bundle verification,
+  and one-index-digest consumer bindings. Its agreement self-test deliberately
+  records the VEX-side key-set and attestation-cardinality gaps.
 - `tools/assert-python-alias-policy.py`,
   `tools/assert-python-attestation.py`,
   `tools/assert-python-provenance.py`, and

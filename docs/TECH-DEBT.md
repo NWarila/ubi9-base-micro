@@ -213,11 +213,12 @@ pinned repository, CVE, package/version pair, and expiry), that canonical
 reviewed statement, and supplied index evidence. The tool requires paired
 `--index-reference` and `--index-manifest` inputs, recomputes the digest of the
 exact index bytes, accepts exactly one `linux/amd64` child and one
-`linux/arm64` child with distinct digests, admits only the locked BuildKit
-attestation-descriptor shape otherwise, requires every descriptor digest in
-`manifests` to be unique across all roles, and binds the gated product digest to
-the child for the architecture reported by both scanners. It does not constrain
-the number of attestation descriptors or their per-child reference cardinality.
+`linux/arm64` child with distinct digests, locks the BuildKit attestation
+platform and annotation maps, requires every descriptor digest in `manifests`
+to be unique across all roles, and binds the gated product digest to the child
+for the architecture reported by both scanners. It does not constrain the
+number of attestation descriptors or their per-child reference cardinality, and
+it does not close the top-level key set of either descriptor kind.
 The duplicate-or-contradictory descriptor diagnostic names the first and
 repeated positions; the child/attestation digest-disjointness guard remains
 separate with its own diagnostic. The index digest is never eligible, and a

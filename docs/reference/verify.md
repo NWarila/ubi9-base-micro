@@ -163,16 +163,19 @@ The gate also contains a production-wired path for a digest-addressed
 of fixed in-tool constraints, version 2 of the canonical reviewed statement, and
 paired `--index-reference` plus `--index-manifest` evidence. The tool recomputes
 the digest of the exact supplied index bytes, enforces exactly one
-`linux/amd64` child and one `linux/arm64` child with distinct digests and only
-the locked BuildKit attestation shape otherwise present, requires every
-descriptor digest to be unique across all roles, and binds the eligible digest
-to the architecture reported by both scanners. The duplicate-or-contradictory
+`linux/amd64` child and one `linux/arm64` child with distinct digests, locks the
+BuildKit attestation platform and annotations, requires every descriptor digest
+to be unique across all roles, and binds the eligible digest to the architecture
+reported by both scanners. The duplicate-or-contradictory
 descriptor diagnostic names the first and repeated positions, while the
 child/attestation digest-disjointness guard remains a separate rejection. The
 canonical document uses a non-image-matchable policy IRI for this scope rather
 than a repository wildcard. This VEX-side policy does not constrain attestation
-count or per-child reference cardinality; the publish-side resolver requires
-exactly one attestation reference per child before this gate runs.
+count or per-child reference cardinality and does not close the top-level key
+set of either descriptor kind; measured `urls`, `data`, and `artifactType`
+additions are accepted on both kinds. Before this gate runs, the publish-side
+resolver exact-checks the four-key runnable and five-key attestation shapes and
+requires exactly one attestation reference per child.
 
 On each run, the merged production caller fetches the exact index bytes once
 from the registry at the digest reported by its push metadata, corroborates
@@ -181,7 +184,7 @@ digest selects the VEX, signing, attestation, provenance, collision-check, and
 alias consumers. This closes the registry-origin dependency for the index that
 run pushed and read back; it does not make final alias application atomic
 against an external writer. The first privileged execution remains post-merge.
-TD-11 records the VEX-side descriptor-cardinality asymmetry.
+TD-11 records both VEX-side descriptor-policy asymmetries.
 
 Valid fix evidence from either scanner refuses the disposition. On both paths,
 raw scanner vulnerability IDs, package names, and installed versions must

@@ -39,19 +39,23 @@ authorization is the
 conjunction of fixed in-tool constraints, the canonical reviewed statement, and
 index evidence supplied through paired `--index-reference` and
 `--index-manifest` inputs. The tool verifies the exact bytes against the
-reference digest, enforces the OCI image-index shape and the locked BuildKit
-attestation-descriptor convention, derives exactly one `linux/amd64` child and
-one `linux/arm64` child with distinct digests, requires every descriptor digest
-in `manifests` to be unique across all roles, and requires the product digest to
-match the child for the architecture reported by both scanners. Its
+reference digest, derives exactly one `linux/amd64` child and one `linux/arm64`
+child with distinct digests, locks the BuildKit attestation platform and
+annotations, requires every descriptor digest in `manifests` to be unique
+across all roles, and requires the product digest to match the child for the
+architecture reported by both scanners. Its
 duplicate-or-contradictory descriptor diagnostic names the first and repeated
 positions. The index digest and attestation digests are never eligible. For an
 otherwise well-formed index, submitting a distinct attestation-descriptor digest
 is a product-eligibility rejection; the separate child/attestation
 digest-disjointness guard rejects an alias before child-product eligibility is
 decided. The VEX-side policy does not constrain attestation count or per-child
-reference cardinality; the publish-side resolver requires exactly one
-attestation reference per child before this gate runs. Version 2 of the canonical statement names this scope with a
+reference cardinality, and does not close the top-level key set of either
+descriptor kind: it accepts measured `urls`, `data`, and `artifactType`
+additions on runnable and attestation descriptors. Before this gate runs, the
+publish-side resolver requires exactly the four-key runnable and five-key
+attestation descriptor shapes and exactly one attestation reference per child.
+Version 2 of the canonical statement names this scope with a
 non-image-matchable policy IRI, so it is not a bare repository wildcard.
 
 On each production run, the merged workflow binds this dynamic authorization
@@ -60,8 +64,8 @@ push-reported digest, corroborates their SHA-256, protects every cross-job
 transfer with a checksum manifest, and gives the same digest to signing,
 attestation, VEX, provenance, collision-check, and alias consumers. That binding
 is limited to the index that run pushed and read back. It does not make alias
-application atomic against an external writer, and TD-11 tracks the VEX-side
-descriptor-cardinality asymmetry. The privileged caller first executes after
+application atomic against an external writer, and TD-11 tracks both VEX-side
+descriptor-policy asymmetries. The privileged caller first executes after
 merge; no completed Python production invocation is claimed here.
 
 A mismatch, a duplicate statement, or valid fix evidence from either scanner

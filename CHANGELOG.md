@@ -19,18 +19,22 @@ and this project adheres to
   The production path can derive an eligible digest-addressed child under the
   pinned `ghcr.io/nwarila/ubi9-base-python` repository from exact,
   digest-verified OCI index bytes and bind it to the architecture reported by
-  both scanners. Its runnable-platform and descriptor-shape policy requires
-  exactly one `linux/amd64` child and one `linux/arm64` child with distinct
-  digests, admits only the locked BuildKit attestation shape otherwise,
-  requires every descriptor digest to be unique across the index, and
-  separately requires child and attestation digests to be disjoint. That path
+  both scanners. The VEX-side policy requires exactly one `linux/amd64` child
+  and one `linux/arm64` child with distinct digests, locks the BuildKit
+  attestation platform and annotations, requires every descriptor digest to be
+  unique across the index, and separately requires child and attestation
+  digests to be disjoint. It does not close either descriptor kind's top-level
+  key set or constrain attestation cardinality: measured `urls`, `data`, and
+  `artifactType` additions on runnable and attestation descriptors are accepted,
+  as are excess or duplicate per-child attestation references. That path
   combines fixed in-tool constraints, the canonical statement, and registry
   index evidence. The
   publisher fetches those bytes once by the push-reported digest, corroborates
   their SHA-256, protects cross-job transfers, and uses that digest for every
-  consumer. Its stricter publish-side resolver additionally requires exactly one
-  BuildKit attestation reference per child; TD-11 tracks the VEX-side policy's
-  weaker attestation cardinality.
+  consumer. Its stricter publish-side resolver requires exactly the four-key
+  runnable descriptor and five-key attestation descriptor shapes, and exactly
+  one BuildKit attestation reference per child. TD-11 tracks both measured
+  VEX-side gaps.
   Both paths refuse valid fix evidence and byte-noncanonical scanner identities,
   expire after `review-by 2026-10-01`, suppress no raw finding, and do not make
   the image unaffected.
@@ -93,9 +97,9 @@ and this project adheres to
   unknown paths, missing published-revision evidence, and empty deltas publish.
 - Added the index-only Python trust-contract predicate and exact provenance
   policy. The predicate binds package, `images/python/` tree, workflow, and
-  commit to the published index; the SLSA checks additionally bind the verified
-  statement and Fulcio extensions to the exact source SHA/ref, Python caller,
-  and pinned generator commit.
+  commit to the candidate index during a successful publish; the SLSA checks
+  additionally bind the verified statement and Fulcio extensions to the exact
+  source SHA/ref, Python caller, and pinned generator commit.
 
 ### Changed
 
