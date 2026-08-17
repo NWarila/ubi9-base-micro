@@ -20,5 +20,4 @@
 - [ ] No image-affecting change is included without a fresh amd64 and arm64 byte-for-byte reproducibility proof.
 - [ ] For image, gate, RPM lock, or release-evidence changes, `bash tools/run-test-gates.sh` passes for the affected platform.
 - [ ] For image or release-evidence changes, FIPS, STIG, footprint, SBOM, VEX, Trivy, Grype, NIST SP 800-190, SLSA, and Rekor evidence remain covered by the documented gates.
-- [ ] `docs/reference/verify.md` still matches the published digest verification contract.
-
+- [ ] `docs/reference/verify.md`, `docs/reference/verification-contract.md`, and `docs/how-to/verify-a-published-image.md` still match the image-specific published digest verification contracts.

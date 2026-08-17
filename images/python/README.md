@@ -52,11 +52,12 @@ binding before findings are evaluated against OpenVEX.
 build sites. Its shared target owns the context, Dockerfile, runtime build
 target, two supported platforms, `SOURCE_DATE_EPOCH`, and `OCI_CREATED`. The
 `ci` target selects the local Docker exporter. The registry-exporting `release`
-target takes its only tag from the fail-closed `RELEASE_REF`, emits maximum-mode
-BuildKit provenance, disables exporter SBOM, and keeps
-`rewrite-timestamp=true`. The `repro` target selects no-cache double builds,
-disables BuildKit provenance and SBOM, and applies the same timestamp-rewrite
-policy to its docker-tar exporter.
+target takes its repository destination from the fail-closed `RELEASE_REF`,
+binds the protected OCI revision, source, and version arguments, emits
+maximum-mode BuildKit provenance, disables exporter SBOM, and uses
+`rewrite-timestamp=true`, `push-by-digest=true`, and `name-canonical=true`. The
+`repro` target selects no-cache double builds, disables BuildKit provenance and
+SBOM, and applies the same timestamp-rewrite policy to its docker-tar exporter.
 
 The same file carries the Buildx version, expected commit, Linux-amd64 release
 asset SHA-256, and version-plus-digest BuildKit driver reference. Before either
@@ -92,17 +93,15 @@ the committed contract, and compares each rootfs with a same-commit `ci` build.
 The preflight pushes a candidate tag and unsigned BuildKit provenance only to
 that local registry; it does not create an external or project publication.
 
-Each Python workflow's `GITHUB_TOKEN` grants `contents: read` only, and the
-committed YAML contains no configured registry credential or login surface.
-Repository verification binds each complete workflow to an expected SHA-256 and
-byte length, requiring a corresponding visible verifier edit when its YAML
-changes. Those locks do not cover separately invoked scripts or pinned external
-code. Outside the specifically checked invocations, repository verification
-does not interpret arbitrary Bake command-line overrides, reject alternate
-direct-build spellings, or discover and count build callers. The double-build
-harness continues to use one per-side Bake descriptor for both resolved-report
-data and execution; that is the current harness behavior, not a repository-wide
-invocation guarantee or a claim about a future publisher.
+The Python CI and pull-request preflight jobs grant `contents: read` only and
+contain no external registry credential or login surface. The production
+publisher grants package-write or OIDC authority only to jobs that need it,
+guards every independently executable privileged job to the base repository,
+and accepts only `main` or `python/v*` pushes. Repository verification binds each
+complete workflow to an expected SHA-256 and byte length and also locks the
+publisher's closed Bake invocation, digest-only export, subject matrix, identity,
+two-phase alias ordering, and fail-closed guards. Those locks do not cover
+pinned external code.
 
 Renovate tracks the Buildx release version and the BuildKit
 version-plus-digest reference through separate managers with automerge disabled.
@@ -114,19 +113,54 @@ baselines. See
 [`../../docs/explanation/reproducibility.md`](../../docs/explanation/reproducibility.md)
 for the complete scope.
 
-**Status: built and gated in CI, externally unpublished.** The evidence
+## Publication contract
+
+The merged publisher runs only for base-repository pushes to `main` or
+`python/v*`; pull requests run the unprivileged release preflight instead. Its
+Python-specific scope policy publishes for every `images/python/**` change,
+every enumerated shared input it consumes, and every missing or ambiguous diff.
+It skips only a delta entirely within its closed unrelated allowlist.
+
+A production run pushes one unaliased candidate by digest and reads its index
+bytes back from GHCR exactly once at the digest reported by Buildx metadata. It
+independently hashes those bytes, checksum-protects each cross-job handoff, and
+passes that same digest to signing, attestation, VEX, provenance, collision, and
+alias consumers. The publish resolver requires one runnable child and one
+BuildKit attestation reference for each of `linux/amd64` and `linux/arm64`, and
+exact-checks the runnable descriptor's four top-level keys and the attestation
+descriptor's five, and exact-checks both platform objects as `architecture`
+plus `os`. It rejects `urls`, `data`, and `artifactType` additions on both
+descriptor kinds. The VEX-side policy independently verifies runnable children,
+the attestation platform and annotations, and digest relationships, but it
+neither closes the descriptor top-level key sets nor the runnable platform key
+set, and it does not constrain attestation count or duplicate per-child
+references. TD-11 tracks all three measured differences, and the stricter
+publish resolver runs first.
+
+The index and both children are signed recursively. SPDX, CycloneDX, OpenVEX,
+NIST SP 800-190, and STIG ARF attestations are required on each child. The exact
+Python trust contract and SLSA provenance are index-only. A fresh credentialed
+verification completes before aliases. Alias collision checks run before
+evidence, immediately before apply, and after apply, but they cannot make the
+resolve-then-write window atomic against an external package writer; TD-10
+records that residual.
+
+**Status: publisher merged; awaiting first successful publication.** The evidence
 machinery is exercised by the CI-rootfs preflight on every push to `main` and
 manual dispatch, and for Python-tree or shared-gate changes selected on pull
 requests — a tailored RHEL9 STIG profile evaluated fail-closed, rpmdb-derived
 SPDX and CycloneDX SBOMs, dual CVE scanners with OpenVEX default-deny, a rootfs
 secret gate, and a NIST SP 800-190 image-control predicate. The pull-request
 release preflight additionally pushes a candidate tag and unsigned BuildKit
-provenance to its ephemeral loopback registry. No package in the project
-namespace, public or moving alias, production publisher, signature, Cosign or
-GitHub artifact attestation, SLSA or Rekor record, or consumer-resolvable digest
-exists for this image. Publication still requires the full `base-micro`
-evidence-parity set and a separate production path. Consumption instructions
-are deliberately absent until then.
+provenance to its ephemeral loopback registry. A guarded two-phase production
+publisher is merged, but this change adds capability only. No completed
+run, project package, public or moving alias, production signature, Cosign
+attestation, SLSA or Rekor record, or consumer-resolvable digest exists for this
+image at this revision. Publication requires a successful publish run; public
+consumability additionally requires the owner to change GHCR
+visibility and a successful anonymous verification. See
+[`../../docs/how-to/verify-a-published-image.md`](../../docs/how-to/verify-a-published-image.md)
+for the post-publication procedure.
 
 The shipped package set is derived, not hand-picked: the lock refresh harness
 resolves the python3.12 closure against a clone of the pinned parent, records

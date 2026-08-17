@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-06-21
+- Last reviewed: 2026-08-16
 - Scope: repo
 
 ## Context
@@ -48,10 +49,12 @@ contract, but repository verification does not analyze arbitrary Bake
 command-line overrides or discover and count build callers. The registry-capable
 `release` target is exercised on pull requests against a loopback-bound
 ephemeral registry, including unsigned BuildKit provenance and registry-served
-rootfs checks. It creates no external or project publication, and the contract
-contains no production publisher. The non-Python Buildx and BuildKit paths remain
-outside this decision's new pin and are not made reproducible by the Python
-contract.
+rootfs checks. That preflight creates no external or project publication. The
+production workflow now uses the same target through a verifier-locked,
+push-by-digest caller with protected OCI label inputs. This is publication
+capability only; no completed Python publication is claimed at this revision.
+The non-Python Buildx and BuildKit paths remain outside this decision's new pin
+and are not made reproducible by the Python contract.
 
 ## Consequences
 

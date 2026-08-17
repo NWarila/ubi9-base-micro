@@ -14,8 +14,8 @@ satisfy that current release-binary plus exact-tag-identity contract and would
 change the observed identity; this does not rule out a redesigned SHA-based
 generator configuration with a different build and identity contract.
 
-The [publish workflow](../.github/workflows/publish-image.yaml) reduces the
-mutable-tag risk with a separate tag-to-SHA integrity job that asserts
+The [micro publish workflow](../.github/workflows/publish-image.yaml) reduces
+the mutable-tag risk with a separate tag-to-SHA integrity job that asserts
 `refs/tags/v2.1.0` resolves to
 `f7dd8c54c2067bafc12ca7a55595d5ee9b75204a` before publish. Provenance is
 verified only against the exact Fulcio identity
@@ -24,11 +24,21 @@ never a regular expression. The disabled Renovate rule keeps generator tag,
 SHA-guard, and identity updates manual and reviewed, never an automatic
 dependency pull request.
 
-This guard reduces but does not eliminate the mutable-tag window. It runs as a
-separate job before publish; `slsa-provenance` runs after publish and independently
-resolves `@v2.1.0`, so the tag can move between the check and the reusable
-invocation. The exact Fulcio identity proves that the tag reference was used,
-not that the tag still named the audited commit at invocation time.
+For micro, this guard reduces but does not eliminate the mutable-tag window. It
+runs as a separate job before publish; `slsa-provenance` runs after publish and
+independently resolves `@v2.1.0`, so the tag can move between the check and the
+reusable invocation. The exact Fulcio identity proves that the tag reference was
+used, not that the tag still named the audited commit at invocation time.
+
+The Python publisher retains the same pre-execution guard and adds a
+post-execution binding before aliases: after successful Cosign and
+`slsa-verifier` authentication, `tools/assert-python-slsa-certificate.py`
+requires the Fulcio Build Signer Digest extension to equal the pinned generator
+commit. It also binds the source SHA/ref and Python caller workflow through the
+source and build-config extensions. That closes this tag-movement ambiguity for
+the Python publication path at its implemented scope. Its first production
+execution is post-merge and has not yet produced Python evidence; the residual
+in this entry remains the micro publisher's weaker binding.
 
 ## TD-3: Per-architecture FIPS scope
 
@@ -192,7 +202,7 @@ in `tools/assert-vex.py` and the reviewed disclosure in
 CI products, the complete two-package set, the installed version, this debt id,
 and `review-by 2026-10-01`.
 
-The same tool now contains a second, dormant product-eligibility primitive for
+The same tool contains a second product-eligibility path for
 a digest-addressed `ghcr.io/nwarila/ubi9-base-python` platform child. The
 canonical OpenVEX document was reissued as version 2 and names that policy scope
 with the non-image-matchable
@@ -203,27 +213,31 @@ pinned repository, CVE, package/version pair, and expiry), that canonical
 reviewed statement, and supplied index evidence. The tool requires paired
 `--index-reference` and `--index-manifest` inputs, recomputes the digest of the
 exact index bytes, accepts exactly one `linux/amd64` child and one
-`linux/arm64` child with distinct digests plus only the locked BuildKit
-attestation-descriptor shape, requires every descriptor digest in `manifests` to
-be unique across all roles, and binds the gated product digest to the child for
-the architecture reported by both scanners. The duplicate-or-contradictory
-descriptor diagnostic names the first and repeated positions; the
-child/attestation digest-disjointness guard remains separate with its own
-diagnostic. The index digest is never eligible, and a distinct
-attestation-descriptor digest is rejected when submitted as the product. An
-extra or duplicate platform, a nested index, a wrong repository, and an
-architecture swap are also rejected.
+`linux/arm64` child with distinct digests, locks the BuildKit attestation
+platform and annotation maps, requires every descriptor digest in `manifests`
+to be unique across all roles, and binds the gated product digest to the child
+for the architecture reported by both scanners. It does not constrain the
+number of attestation descriptors or their per-child reference cardinality, and
+it does not close the top-level key set of either descriptor kind or the key
+set of a runnable child's `platform` object.
+The duplicate-or-contradictory descriptor diagnostic names the first and
+repeated positions; the child/attestation digest-disjointness guard remains
+separate with its own diagnostic. The index digest is never eligible, and a
+distinct attestation-descriptor digest is rejected when submitted as the
+product. An extra or duplicate runnable platform, a nested index, a wrong
+repository, and an architecture swap are also rejected.
 
-Those checks prove only that a digest is a child of the caller-supplied,
-digest-verified index. The index evidence is a dynamic authorization input and
-is not yet trusted: no production workflow calls this path, and no change here
-establishes that the supplied bytes came from an index actually published,
-signed, attested, or aliased by this repository. Before the primitive can be
-used in production, the publisher must fetch the exact registry-served bytes for
-the index it pushed and bind that same digest to signing, attestation, and alias
-operations. Until that registry-origin dataflow exists and is verifier-locked,
-the published-child path remains dormant and the end-to-end defect remains
-open.
+Those checks prove that a digest is a child of the supplied, digest-verified
+index. The merged production caller supplies the previously missing origin
+binding on each run: it fetches the index bytes once from the registry by the
+push-reported digest, independently corroborates their SHA-256, protects
+cross-job transfers with a checksum manifest, and requires the same digest for
+signing, attestation, VEX, provenance, collision checks, and aliases. The
+published-child path is therefore wired to a production caller rather than
+dormant; its first production execution remains post-merge. This binding is
+only to the index that run pushed and read back. It does not close the
+external-writer alias race described in TD-10 or the VEX-side
+descriptor-policy differences described in TD-11.
 
 On both product paths, valid fix evidence from either scanner refuses the
 disposition. Each raw scanner vulnerability ID, package name, and installed
@@ -234,5 +248,63 @@ The image is not unaffected, and no scanner input or raw finding is suppressed.
 Review this entry by 2026-10-01 and monitor Red Hat for a fixed RHEL 9
 `python3.12` RPM. When Red Hat ships a fixed `python3.12` RPM, the rpm-lock
 refresh absorbs it and the same pull request removes the in-tool allowlist entry
-and flips the OpenVEX statement to `fixed`; that change also removes the dormant
+and flips the OpenVEX statement to `fixed`; that change also removes the
 published-child authorization.
+
+## TD-10: Base-python create-once alias external-writer race
+
+The `base-python-<first-12-lowercase-hex-of-publishing-sha>` commit alias and the
+Python version alias are checked for absence or the candidate index digest as
+soon as that digest is known, before any signing, attestation, SLSA, or Rekor
+work. They are checked again immediately before application and resolved after
+application to require the expected digest. Only the moving `base-python` alias
+may replace an existing digest under repository policy.
+
+GHCR does not expose a conditional manifest write for this operation. An owner,
+PAT, or other workflow with package-write authority can therefore race the final
+resolve-then-apply window. The owner accepts this residual external-writer risk;
+the checks are mandatory collision detection, not an atomic create-once
+guarantee. Closing the window requires package settings or another owner-managed
+serialization mechanism outside repository code.
+
+## TD-11: Published-child VEX descriptor-cardinality asymmetry
+
+The publish-side resolver requires the pinned exporter shape exactly: one
+runnable `linux/amd64` child, one runnable `linux/arm64` child, and one unique
+BuildKit attestation descriptor referring to each child. It rejects a third
+otherwise valid attestation descriptor and a second reference to either child.
+
+`tools/assert-vex.py` deliberately remains unchanged by the publisher work. Its
+published-child index policy accepts three unique, correctly shaped attestation
+descriptors referring to `amd64`, `arm64`, and `amd64`, and likewise accepts two
+unique descriptors referring to the same child. It still excludes every
+attestation descriptor from `eligible_child_digests`, rejects an attestation
+digest used as the product, requires descriptor-digest uniqueness and
+child/attestation disjointness, and verifies the supplied bytes against the
+index digest. An added descriptor therefore cannot become an authorized product
+and cannot appear without moving the index digest bound to the push metadata.
+
+The policies also differ on descriptor top-level closure. The publish-side
+resolver requires runnable descriptors to contain exactly `digest`,
+`mediaType`, `platform`, and `size`, and attestation descriptors to contain
+exactly those four keys plus `annotations`. The VEX-side policy accepts an
+additional `urls`, `data`, or `artifactType` field on either descriptor kind.
+In particular, `urls` can direct a client to an external location for the
+descriptor content, so the publish-side policy rejects all six cases before
+the index can be signed, scanned, attested, or aliased.
+
+They also differ on runnable-platform closure. The publish-side resolver
+requires both runnable and attestation `platform` objects to contain exactly
+`architecture` and `os`. The VEX-side policy applies that exact check only to
+the attestation platform. It accepts a runnable platform carrying `variant`,
+`os.version`, `os.features`, or an invented key. `variant` can alter platform
+matching, so the publish-side resolver rejects these shapes before any child is
+selected for signing, scanning, attestation, or aliasing.
+
+The stronger resolver runs before signing, scanning, attestation, or aliasing,
+so production rejects both cardinality classes, every descriptor
+additional-field case, and every runnable-platform additional-key case despite
+the weaker secondary policy. Tightening `tools/assert-vex.py` to require exact
+descriptor and runnable-platform key sets and one attestation reference per
+child remains separate follow-up work. Until then, future callers must not use
+the VEX-side validator alone as an exact exporter-shape or cardinality oracle.

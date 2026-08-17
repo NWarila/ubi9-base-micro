@@ -113,7 +113,7 @@ BINFMT_DIGEST_SITES = {
     ".github/workflows/build.yaml": 2,
     ".github/workflows/nightly.yaml": 2,
     ".github/workflows/publish-image.yaml": 1,
-    ".github/workflows/publish-python.yaml": 1,
+    ".github/workflows/publish-python.yaml": 3,
     ".github/workflows/python-ci.yaml": 2,
     ".github/workflows/rpm-lock-refresh.yaml": 2,
 }
@@ -125,6 +125,9 @@ PYTHON_BAKE_VARIABLES = {
     "BUILDKIT_IMAGE",
     "REPRO_DEST",
     "RELEASE_REF",
+    "OCI_REVISION",
+    "OCI_SOURCE",
+    "OCI_VERSION",
     "UBI_MINIMAL_IMAGE",
     "BASE_MICRO_IMAGE",
 }
@@ -1253,6 +1256,13 @@ def check_required_files() -> None:
         "tools/fetch-runtime-rpms.sh",
         "tools/fetch-builder-rpms.sh",
         "tools/decide-publish-scope.py",
+        "tools/decide-python-publish-scope.py",
+        "tools/assert-python-alias-policy.py",
+        "tools/assert-python-attestation.py",
+        "tools/assert-python-provenance.py",
+        "tools/assert-python-slsa-certificate.py",
+        "tools/resolve-python-index.py",
+        "tools/python-trust-contract.py",
         "tools/generate-runtime-lock.py",
         "tools/rpmlock.py",
         "tools/verify-fips-provider.py",
@@ -1425,7 +1435,8 @@ def check_community_profile() -> None:
         "GitHub Discussions are not enabled",
         "tools/run-test-gates.sh",
         "docs/reference/verify.md",
-        "planned `base-python`, `base-node`, or `base-java`",
+        "Support for `base-python` before its first successful publication completes",
+        "`base-node` and `base-java` remain planned",
     ]:
         require(marker in support, f"SUPPORT.md missing marker: {marker}")
 
@@ -1483,6 +1494,106 @@ def check_community_profile() -> None:
         require(marker in pr_template, f"pull request template missing marker: {marker}")
 
 
+def python_publication_docs_errors(readme: str, images_readme: str, support: str) -> list[str]:
+    errors: list[str] = []
+    required = {
+        "README.md": (
+            readme,
+            ("Publisher merged; awaiting first successful publication", "must not be treated as publicly consumable"),
+        ),
+        "images/README.md": (
+            images_readme,
+            ("The `base-python` publisher is merged", "it is awaiting its first successful"),
+        ),
+        "SUPPORT.md": (
+            support,
+            (
+                "Support for `base-python` before its first successful publication completes",
+                "`base-node` and `base-java` remain planned",
+            ),
+        ),
+    }
+    for path, (text, markers) in required.items():
+        errors.extend(
+            f"{path} missing Python publication status marker: {marker}" for marker in markers if marker not in text
+        )
+    stale = {
+        "README.md": "Only `ubi9-base-micro` exists in this repository today",
+        "images/README.md": "Planned base-image variants will live here",
+        "SUPPORT.md": "Support for planned `base-python`, `base-node`, or `base-java` images",
+    }
+    for path, marker in stale.items():
+        text = required[path][0]
+        if marker in text:
+            errors.append(f"{path} retains stale Python planned-status marker: {marker}")
+    return errors
+
+
+def check_python_publication_docs_self_test() -> None:
+    baseline = (read("README.md"), read("images/README.md"), read("SUPPORT.md"))
+    require(not python_publication_docs_errors(*baseline), "Python publication docs baseline failed")
+    fixtures = [
+        (
+            "README replacement removed",
+            (
+                baseline[0].replace("Publisher merged; awaiting first successful publication", "Status unavailable", 1),
+                *baseline[1:],
+            ),
+            "README.md missing Python publication status marker: "
+            "Publisher merged; awaiting first successful publication",
+        ),
+        (
+            "images replacement removed",
+            (
+                baseline[0],
+                baseline[1].replace("The `base-python` publisher is merged", "`base-python` exists", 1),
+                baseline[2],
+            ),
+            "images/README.md missing Python publication status marker: The `base-python` publisher is merged",
+        ),
+        (
+            "support replacement removed",
+            (
+                baseline[0],
+                baseline[1],
+                baseline[2].replace(
+                    "Support for `base-python` before its first successful publication completes",
+                    "Support unavailable",
+                    1,
+                ),
+            ),
+            "SUPPORT.md missing Python publication status marker: "
+            "Support for `base-python` before its first successful publication completes",
+        ),
+        (
+            "README stale claim restored",
+            (baseline[0] + "\nOnly `ubi9-base-micro` exists in this repository today\n", *baseline[1:]),
+            "README.md retains stale Python planned-status marker: "
+            "Only `ubi9-base-micro` exists in this repository today",
+        ),
+        (
+            "images stale claim restored",
+            (baseline[0], baseline[1] + "\nPlanned base-image variants will live here\n", baseline[2]),
+            "images/README.md retains stale Python planned-status marker: Planned base-image variants will live here",
+        ),
+        (
+            "support stale claim restored",
+            (
+                baseline[0],
+                baseline[1],
+                baseline[2] + "\nSupport for planned `base-python`, `base-node`, or `base-java` images\n",
+            ),
+            "SUPPORT.md retains stale Python planned-status marker: "
+            "Support for planned `base-python`, `base-node`, or `base-java` images",
+        ),
+    ]
+    for label, documents, expected in fixtures:
+        errors = python_publication_docs_errors(*documents)
+        require(expected in errors, f"Python publication docs mutation unexpectedly passed: {label}")
+        print(f"Python publication docs mutation rejected [{label}] diagnostic={expected}")
+    print(f"Python publication docs mutation probes: {len(fixtures)}/{len(fixtures)} rejected")
+
+
 def python_bake_contract_error(contract: Any) -> str | None:
     if not isinstance(contract, dict):
         return "python Bake contract must be a JSON object"
@@ -1513,6 +1624,9 @@ def python_bake_contract_error(contract: Any) -> str | None:
         return "repro destination variable must have a non-empty default"
     if variables["RELEASE_REF"]["default"] != "RELEASE_REF must be set":
         return "release destination variable must have the invalid sentinel default"
+    for name in ("OCI_REVISION", "OCI_SOURCE", "OCI_VERSION"):
+        if variables[name]["default"] is not None:
+            return f"python Bake variable {name} must be nullable"
     for name in ("UBI_MINIMAL_IMAGE", "BASE_MICRO_IMAGE"):
         if variables[name]["default"] is not None:
             return f"python Bake variable {name} must be nullable"
@@ -1565,13 +1679,19 @@ def python_bake_contract_error(contract: Any) -> str | None:
         return "python Bake ci output policy mismatch: expected type=docker"
 
     release = targets["release"]
-    if set(release) != {"inherits", "tags", "attest", "output"}:
+    if set(release) != {"inherits", "args", "tags", "attest", "output"}:
         return "python Bake release target key set mismatch"
+    if release.get("args") != {
+        "OCI_REVISION": "${OCI_REVISION}",
+        "OCI_SOURCE": "${OCI_SOURCE}",
+        "OCI_VERSION": "${OCI_VERSION}",
+    }:
+        return "python Bake release protected OCI arguments mismatch"
     if release.get("tags") != ["${RELEASE_REF}"]:
         return "python Bake release tags must resolve only from RELEASE_REF"
     if release.get("attest") != ["type=provenance,mode=max", "type=sbom,disabled=true"]:
         return "python Bake release attestation policy mismatch"
-    if release.get("output") != ["type=registry,rewrite-timestamp=true"]:
+    if release.get("output") != ["type=registry,rewrite-timestamp=true,push-by-digest=true,name-canonical=true"]:
         return "python Bake release output policy mismatch"
 
     repro = targets["repro"]
@@ -1613,21 +1733,31 @@ def python_release_bake_errors(contract: Mapping[str, Any]) -> list[str]:
         or not isinstance(variables.get("RELEASE_REF"), dict)
         or variables["RELEASE_REF"].get("default", object()) != "RELEASE_REF must be set"
     )
+    release_input_defaults_invalid = not isinstance(variables, dict) or any(
+        not isinstance(variables.get(name), dict) or variables[name].get("default", object()) is not None
+        for name in ("OCI_REVISION", "OCI_SOURCE", "OCI_VERSION")
+    )
     release = targets.get("release") if isinstance(targets, dict) else None
     release_key_set_invalid = not isinstance(release, dict) or set(release) != {
         "inherits",
+        "args",
         "tags",
         "attest",
         "output",
     }
     release_inheritance_invalid = not isinstance(release, dict) or release.get("inherits") != ["base"]
+    release_args_invalid = not isinstance(release, dict) or release.get("args") != {
+        "OCI_REVISION": "${OCI_REVISION}",
+        "OCI_SOURCE": "${OCI_SOURCE}",
+        "OCI_VERSION": "${OCI_VERSION}",
+    }
     release_tags_invalid = not isinstance(release, dict) or release.get("tags") != ["${RELEASE_REF}"]
     release_attest_invalid = not isinstance(release, dict) or release.get("attest") != [
         "type=provenance,mode=max",
         "type=sbom,disabled=true",
     ]
     release_output_invalid = not isinstance(release, dict) or release.get("output") != [
-        "type=registry,rewrite-timestamp=true"
+        "type=registry,rewrite-timestamp=true,push-by-digest=true,name-canonical=true"
     ]
 
     # CHECK: python-release-bake-variable-set
@@ -1636,10 +1766,14 @@ def python_release_bake_errors(contract: Mapping[str, Any]) -> list[str]:
     reject(target_set_invalid, "python release Bake target set mismatch")
     # CHECK: python-release-bake-ref-default
     reject(release_ref_default_invalid, "python release Bake RELEASE_REF default must be the invalid sentinel")
+    # CHECK: python-release-bake-input-defaults
+    reject(release_input_defaults_invalid, "python release Bake protected OCI input defaults must be null")
     # CHECK: python-release-bake-key-set
-    reject(release_key_set_invalid, "python release Bake target keys must be exactly inherits, tags, attest, output")
+    reject(release_key_set_invalid, "python release Bake target key set mismatch")
     # CHECK: python-release-bake-inheritance
     reject(release_inheritance_invalid, "python release Bake target must inherit only base")
+    # CHECK: python-release-bake-args
+    reject(release_args_invalid, "python release Bake protected OCI arguments mismatch")
     # CHECK: python-release-bake-tags
     reject(release_tags_invalid, "python release Bake tags must be exactly RELEASE_REF")
     # CHECK: python-release-bake-attest
@@ -1692,6 +1826,12 @@ def _python_release_bake_fixtures(contract: Mapping[str, Any]) -> list[tuple[str
         "ghcr.io/example/release:latest",
         "python release Bake RELEASE_REF default must be the invalid sentinel",
     )
+    mutation(
+        "release-input-defaults",
+        ("variable", "OCI_REVISION", "default"),
+        "override",
+        "python release Bake protected OCI input defaults must be null",
+    )
     open_release = copy.deepcopy(contract["target"]["release"])
     open_release.update(
         {
@@ -1705,25 +1845,28 @@ def _python_release_bake_fixtures(contract: Mapping[str, Any]) -> list[tuple[str
         "release-open-key-set",
         ("target", "release"),
         open_release,
-        "python release Bake target keys must be exactly inherits, tags, attest, output",
+        "python release Bake target key set mismatch",
     )
-    for label, key, value in (
-        ("release-cache-to", "cache-to", ["type=registry,ref=example.invalid/cache"]),
-        ("release-build-arg", "args", {"OCI_VERSION": "override"}),
-    ):
+    for label, key, value in (("release-cache-to", "cache-to", ["type=registry,ref=example.invalid/cache"]),):
         changed_release = copy.deepcopy(contract["target"]["release"])
         changed_release[key] = value
         mutation(
             label,
             ("target", "release"),
             changed_release,
-            "python release Bake target keys must be exactly inherits, tags, attest, output",
+            "python release Bake target key set mismatch",
         )
     mutation(
         "release-inheritance",
         ("target", "release", "inherits"),
         ["base", "ci"],
         "python release Bake target must inherit only base",
+    )
+    mutation(
+        "release-args",
+        ("target", "release", "args", "OCI_VERSION"),
+        "dev",
+        "python release Bake protected OCI arguments mismatch",
     )
     mutation(
         "release-tags",
@@ -1775,8 +1918,10 @@ def check_python_release_bake_checker_mutation_self_test() -> None:
         ("python-release-bake-variable-set", "variable_set_invalid", "variable-set"),
         ("python-release-bake-target-set", "target_set_invalid", "target-set"),
         ("python-release-bake-ref-default", "release_ref_default_invalid", "release-ref-default"),
+        ("python-release-bake-input-defaults", "release_input_defaults_invalid", "release-input-defaults"),
         ("python-release-bake-key-set", "release_key_set_invalid", "release-open-key-set"),
         ("python-release-bake-inheritance", "release_inheritance_invalid", "release-inheritance"),
+        ("python-release-bake-args", "release_args_invalid", "release-args"),
         ("python-release-bake-tags", "release_tags_invalid", "release-tags"),
         ("python-release-bake-attest", "release_attest_invalid", "release-attest"),
         ("python-release-bake-output", "release_output_invalid", "release-output"),
@@ -2248,6 +2393,12 @@ def check_python_build_input_contract_self_test() -> None:
         ("variable", "RELEASE_REF", "default"),
         "localhost:5000/example/candidate",
         "release destination variable must have the invalid sentinel default",
+    )
+    reject_bake_path(
+        "a/protected-oci-input-null",
+        ("variable", "OCI_REVISION", "default"),
+        "override",
+        "python Bake variable OCI_REVISION must be nullable",
     )
     reject_bake_path(
         "a/nullable-parent-input",
@@ -2815,7 +2966,7 @@ def check_python_build_input_contract_self_test() -> None:
         harness_reason,
         "assert-reproducible.py: error: unrecognized arguments: --source-date-epoch 1704067201",
     )
-    require(rejected == 67, f"python build input mutation inventory mismatch: expected 67, got {rejected}")
+    require(rejected == 68, f"python build input mutation inventory mismatch: expected 68, got {rejected}")
     print("python build input mutation probes: 7 classes, 67/67 rejected")
 
 
@@ -6624,8 +6775,8 @@ def check_python_ci_preflight() -> None:
 
 
 PUBLISH_PYTHON_WORKFLOW = ".github/workflows/publish-python.yaml"
-PUBLISH_PYTHON_WORKFLOW_SHA256 = "9160a0dc300713a28038c2f209238b92fd5f265a7b7f739a85ee417f23239842"
-PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH = 17850
+PUBLISH_PYTHON_WORKFLOW_SHA256 = "134fd0acad349f40140e2f1c0407ae7892b0e1f31543cf003319777e92b920b4"
+PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH = 84521
 PUBLISH_PYTHON_TRIGGER_BLOCK = "on:\n  pull_request:\n\n"
 PUBLISH_PYTHON_REGISTRY_IMAGE = (
     "docker.io/library/registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e"
@@ -7746,7 +7897,7 @@ def publish_python_surface_lock_errors(workflow_bytes: bytes) -> list[str]:
 
 def _publish_python_surface_mutations(workflow_bytes: bytes) -> tuple[bytes, bytes]:
     marker = b"          set -euo pipefail\n"
-    require(workflow_bytes.count(marker) == 1, "publish Python surface fixture requires one strict-mode marker")
+    require(workflow_bytes.count(marker) >= 1, "publish Python surface fixture requires a strict-mode marker")
     content_offset = workflow_bytes.index(marker) + 10
     substitution = workflow_bytes[:content_offset] + b"S" + workflow_bytes[content_offset + 1 :]
     deletion_offset = content_offset + 2
@@ -7848,6 +7999,640 @@ def check_publish_python_preflight() -> None:
     errors = publish_python_preflight_errors(workflow_bytes.decode())
     errors.extend(publish_python_surface_lock_errors(workflow_bytes))
     require(not errors, "publish Python preflight contract failed: " + "; ".join(errors))
+
+
+PUBLISH_PYTHON_TRIGGER = (
+    "on:\n"
+    "  pull_request:\n"
+    "  push:\n"
+    "    branches: [main]\n"
+    '    tags: ["python/v*"]\n'
+    "  workflow_dispatch:\n"
+    "    inputs:\n"
+    "      digest:\n"
+    "        description: Published base-python index digest\n"
+    "        required: true\n"
+    "        type: string\n"
+    "      publishing_sha:\n"
+    "        description: Publishing commit SHA\n"
+    "        required: true\n"
+    "        type: string\n"
+    "      publishing_ref:\n"
+    "        description: Exact publishing ref\n"
+    "        required: true\n"
+    "        type: string\n\n"
+)
+PUBLISH_PYTHON_JOB_IDS = [
+    "release-preflight",
+    "slsa-generator-tag-integrity",
+    "publish-scope",
+    "publish",
+    "gate-evidence",
+    "sign-attest",
+    "slsa-provenance",
+    "rekor-rollup",
+    "apply-aliases",
+    "anonymous-verification",
+]
+PUBLISH_PYTHON_REPOSITORY_GUARD = "github.repository == 'NWarila/ubi9-base-micro'"
+
+
+def publish_python_authorized(repository: str, event: str, ref: str, scope: str) -> bool:
+    return (
+        repository == "NWarila/ubi9-base-micro"
+        and event == "push"
+        and (ref == "refs/heads/main" or ref.startswith("refs/tags/python/v"))
+        and scope == "true"
+    )
+
+
+def publish_python_workflow_errors(workflow: str) -> list[str]:
+    """Lock the complete two-phase Python publication policy."""
+    errors: list[str] = []
+
+    def reject(condition: object, message: str) -> None:
+        if condition:
+            errors.append(message)
+
+    publish = _workflow_job_block(workflow, "publish")
+    gate_evidence = _workflow_job_block(workflow, "gate-evidence")
+    sign_attest = _workflow_job_block(workflow, "sign-attest")
+    generator = _workflow_job_block(workflow, "slsa-provenance")
+    rekor = _workflow_job_block(workflow, "rekor-rollup")
+    aliases = _workflow_job_block(workflow, "apply-aliases")
+    anonymous = _workflow_job_block(workflow, "anonymous-verification")
+    preflight = _workflow_job_block(workflow, "release-preflight")
+    build_step = _workflow_named_step(publish, "Build and push unaliased candidate")
+    evidence_types = ("spdx", "cyclonedx", "openvex", "nist_800_190", "stig_arf")
+
+    trigger_invalid = _python_ci_trigger_block(workflow) != PUBLISH_PYTHON_TRIGGER
+    job_ids_invalid = _python_ci_job_ids(workflow) != PUBLISH_PYTHON_JOB_IDS
+    concurrency_invalid = (
+        workflow.count(
+            "concurrency:\n  group: publish-python-ghcr-io-nwarila-ubi9-base-python\n  cancel-in-progress: false\n"
+        )
+        != 1
+    )
+    expected_permissions = Counter(
+        [
+            ("workflow", (("contents", "read"),)),
+            ("release-preflight", (("contents", "read"),)),
+            ("slsa-generator-tag-integrity", (("contents", "read"),)),
+            ("publish-scope", (("contents", "read"), ("packages", "read"))),
+            ("publish", (("contents", "read"), ("packages", "write"))),
+            ("gate-evidence", (("contents", "read"), ("packages", "read"))),
+            ("sign-attest", (("contents", "read"), ("id-token", "write"), ("packages", "write"))),
+            (
+                "slsa-provenance",
+                (("actions", "read"), ("contents", "read"), ("id-token", "write"), ("packages", "write")),
+            ),
+            ("rekor-rollup", (("contents", "read"), ("packages", "read"))),
+            ("apply-aliases", (("contents", "read"), ("packages", "write"))),
+            ("anonymous-verification", (("contents", "read"),)),
+        ]
+    )
+    permissions_invalid = Counter(_python_ci_permission_sites(workflow)) != expected_permissions
+    guards_invalid = (
+        workflow.count(PUBLISH_PYTHON_REPOSITORY_GUARD) != 9
+        or any(
+            PUBLISH_PYTHON_REPOSITORY_GUARD not in _workflow_job_block(workflow, job)
+            for job in PUBLISH_PYTHON_JOB_IDS[1:]
+        )
+        or PUBLISH_PYTHON_REPOSITORY_GUARD in preflight
+    )
+    fail_closed_invalid = any(
+        marker in workflow for marker in ("continue-on-error", "|| true", "--exit-code 0", "set +e")
+    )
+    generator_invalid = not (
+        "uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0" in generator
+        and "continue-on-error" not in generator
+        and "      - publish" in generator
+        and "      - sign-attest" in generator
+    )
+    exporter_invalid = not all(
+        marker in build_step
+        for marker in (
+            "RELEASE_REF: ${{ env.IMAGE_REPOSITORY }}",
+            "--metadata-file",
+            "dist/python-publish/image-metadata.json",
+            '"type": "registry"',
+            '"push-by-digest": "true"',
+            '"name-canonical": "true"',
+            '"rewrite-timestamp": "true"',
+        )
+    )
+    release_tokens = _shell_array_tokens(_workflow_run_scalar(build_step).decode(errors="replace"), "release_argv")
+    closed_caller_invalid = release_tokens != (
+        "docker",
+        "buildx",
+        "bake",
+        "--file",
+        "images/python/docker-bake.json",
+        "release",
+        "--progress",
+        "plain",
+        "--metadata-file",
+        "dist/python-publish/image-metadata.json",
+    ) or any(token == "--set" or token.startswith("--set=") for token in release_tokens)
+    oci_binding_invalid = not (
+        all(
+            marker in publish
+            for marker in (
+                "OCI_REVISION: ${{ github.sha }}",
+                "OCI_SOURCE: https://github.com/${{ github.repository }}",
+                "OCI_VERSION=\"$(tr -d '[:space:]' < images/python/VERSION)\"",
+            )
+        )
+        and all(
+            marker in gate_evidence
+            for marker in (
+                "org.opencontainers.image.revision",
+                "org.opencontainers.image.source",
+                "org.opencontainers.image.version",
+                "org.opencontainers.image.created",
+            )
+        )
+    )
+    subject_matrix_invalid = any(
+        not (
+            f"steps.contract.outputs.{predicate}" in sign_attest
+            and sign_attest.count(f"steps.contract.outputs.{predicate}") >= 2
+        )
+        for predicate in evidence_types
+    ) or not (
+        sign_attest.count("for arch in amd64 arm64; do") >= 10
+        and sign_attest.count("steps.contract.outputs.trust_contract") == 3
+        and generator.count("digest: ${{ needs.publish.outputs.digest }}") == 1
+    )
+    signing_invalid = not (
+        'cosign sign --recursive "${IMAGE_REF}"' in sign_attest
+        and 'for digest in "${INDEX_DIGEST}" "${AMD64_DIGEST}" "${ARM64_DIGEST}"; do' in sign_attest
+        and sign_attest.count("--certificate-identity") >= 7
+        and "--certificate-oidc-issuer" in sign_attest
+        and "--certificate-github-workflow-sha" in sign_attest
+        and "--certificate-github-workflow-ref" in sign_attest
+    )
+    trust_invalid = not all(
+        marker in workflow
+        for marker in (
+            "https://nwarila.dev/attestations/python-trust-contract/v1",
+            "git rev-parse HEAD:images/python",
+            "tools/python-trust-contract.py",
+            "--expected-statement",
+            "--validate-statement",
+        )
+    )
+    provenance_invalid = not all(
+        marker in rekor
+        for marker in (
+            "slsa-verifier verify-image",
+            "--source-uri github.com/NWarila/ubi9-base-micro",
+            "--source-branch main",
+            '--source-tag "${GITHUB_REF#refs/tags/}"',
+            "--print-provenance",
+            "tools/assert-python-provenance.py",
+            "--certificate-github-workflow-sha",
+            "--certificate-github-workflow-ref",
+        )
+    )
+    alias_order_invalid = not (
+        "- rekor-rollup" in aliases
+        and aliases.count("crane tag") == 1
+        and workflow.find("  apply-aliases:") > workflow.find("  rekor-rollup:")
+        and "needs.publish.result == 'success' && needs.rekor-rollup.result == 'success'" in aliases
+    )
+    collision_invalid = not (
+        "--phase pre-evidence" in publish
+        and "--phase pre-apply" in aliases
+        and "--phase post-apply" in aliases
+        and 'commit_alias = f"base-python-{sha[:12]}"' in read("tools/assert-python-alias-policy.py")
+        and "version=\"$(tr -d '[:space:]' < images/python/VERSION)\"" in aliases
+    )
+    independent_invalid = not (
+        "Log in to GHCR for independent verification" in rekor
+        and "cosign verify-attestation" in rekor
+        and "slsa-verifier verify-image" in rekor
+        and "docker login" not in anonymous
+        and "podman login" not in anonymous
+        and "cosign verify-attestation" in anonymous
+        and "slsa-verifier verify-image" in anonymous
+        and workflow.find("  rekor-rollup:") < workflow.find("  apply-aliases:")
+    )
+    contract_identity_invalid = not (
+        sign_attest.count('Path("images/python/contracts/image-manifest.json")') >= 1
+        and rekor.count('Path("images/python/contracts/image-manifest.json")') >= 1
+        and anonymous.count("images/python/contracts/image-manifest.json") >= 2
+    )
+    scope_invalid = not (
+        "tools/decide-python-publish-scope.py" in workflow
+        and "--print-base" in workflow
+        and "needs.publish-scope.outputs.publish == 'true'" in publish
+    )
+    gates_invalid = not all(
+        marker in gate_evidence
+        for marker in (
+            "assert-reproducible.py",
+            "assert-parent-subset.py",
+            "run-python-gates.sh",
+            "assert-scanner-db-freshness.py",
+            "assert-scanner-canary.py",
+            "assert-ignore-scope.py",
+            "assert-no-phantom-packages.py",
+            "assert-raw-scanners-no-sqlite.py",
+            "assert-no-rootfs-secrets.py",
+            "generate-nist-800-190-predicate.py",
+            "run-stig-arf.sh",
+        )
+    )
+    index_dataflow_invalid = not (
+        publish.count('crane manifest "${IMAGE_REF}" > dist/python-index/index.json') == 1
+        and workflow.count('crane manifest "${IMAGE_REF}" > dist/python-index/index.json') == 1
+        and "PUSH_DIGEST: ${{ steps.image.outputs.digest }}" in publish
+        and '--fetch-reference "${IMAGE_REF}"' in publish
+        and workflow.count('set(metadata) != {"release"}') == 2
+        and workflow.count('target = metadata["release"]') == 2
+        and workflow.count('digest = target.get("containerimage.digest")') == 2
+        and publish.count("tools/resolve-python-index.py") >= 1
+        and gate_evidence.count("tools/resolve-python-index.py") >= 2
+        and sign_attest.count("tools/resolve-python-index.py") >= 3
+        and rekor.count("tools/resolve-python-index.py") >= 2
+        and aliases.count("tools/resolve-python-index.py") >= 2
+        and workflow.count("--bundle-root dist/python-index") == 4
+        and workflow.count("--bundle-manifest dist/python-index/SHA256SUMS") == 4
+        and workflow.count("--require-file index.json") == 4
+        and '--consumer "sign=${INDEX_DIGEST}"' in sign_attest
+        and '--consumer "attest=${INDEX_DIGEST}"' in sign_attest
+        and '--consumer "vex=${INDEX_DIGEST}"' in gate_evidence
+        and '--consumer "alias=${INDEX_DIGEST}"' in aliases
+        and "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f" in publish
+        and gate_evidence.count("actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131") == 1
+        and sign_attest.count("actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131") == 2
+        and rekor.count("actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131") == 1
+        and aliases.count("actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131") == 1
+    )
+    vex_production_invalid = not all(
+        marker in gate_evidence
+        for marker in (
+            "python3 tools/assert-vex.py",
+            '--product "${image_ref}"',
+            '--trivy-json "${vuln_dir}/base-python.trivy.all.json"',
+            '--grype-json "${vuln_dir}/base-python.grype.all.json"',
+            "--package-floor images/python/rpm-lock/micro-floor.json",
+            "--vex-dir images/python/vex",
+            '--index-reference "${IMAGE_REPOSITORY}@${INDEX_DIGEST}"',
+            "--index-manifest dist/python-index/index.json",
+        )
+    ) or any(marker in workflow for marker in ("bind-python-openvex", "dist/python-publish/evidence/vex"))
+    slsa_execution_invalid = not all(
+        marker in rekor
+        for marker in (
+            "tools/assert-python-slsa-certificate.py",
+            "cosign triangulate --type attestation",
+            'crane blob "${IMAGE_REPOSITORY}@${layer_digest}"',
+            "--attestation-manifest dist/python-independent/attestation-manifest.json",
+            "--verified dist/python-independent/slsa.index.jsonl",
+            '--sha "${GITHUB_SHA}"',
+            '--ref "${GITHUB_REF}"',
+        )
+    ) or not all(
+        oid in read("tools/assert-python-slsa-certificate.py")
+        for oid in (
+            "1.3.6.1.4.1.57264.1.10",
+            "1.3.6.1.4.1.57264.1.13",
+            "1.3.6.1.4.1.57264.1.14",
+            "1.3.6.1.4.1.57264.1.18",
+            "1.3.6.1.4.1.57264.1.19",
+        )
+    )
+    pre_alias_invalid = not all(
+        marker in preflight
+        for marker in (
+            'for alias in base-python "base-python-${short_sha}" "${OCI_VERSION}"; do',
+            'if [[ "${status}" != "404" ]]; then',
+            "pre-alias manifest must be absent",
+        )
+    )
+    tag_isolation_invalid = not (
+        'tags: ["python/v*"]' in workflow
+        and "refs/tags/python/v" in workflow
+        and "refs/tags/v*" not in workflow
+        and "refs/tags/v" not in workflow
+    )
+
+    # CHECK: python-publish-trigger
+    reject(trigger_invalid, "Python publish trigger contract mismatch")
+    # CHECK: python-publish-jobs
+    reject(job_ids_invalid, "Python publish job graph mismatch")
+    # CHECK: python-publish-concurrency
+    reject(concurrency_invalid, "Python publish concurrency contract mismatch")
+    # CHECK: python-publish-permissions
+    reject(permissions_invalid, "Python publish least-privilege inventory mismatch")
+    # CHECK: python-publish-guards
+    reject(guards_invalid, "Python publish base-repository guard mismatch")
+    # CHECK: python-publish-fail-closed
+    reject(fail_closed_invalid, "Python publish repository-authored gate is not fail-closed")
+    # CHECK: python-publish-generator
+    reject(generator_invalid, "Python publish reusable SLSA generator caller mismatch")
+    # CHECK: python-publish-exporter
+    reject(exporter_invalid, "Python publish digest-only exporter contract mismatch")
+    # CHECK: python-publish-closed-caller
+    reject(closed_caller_invalid, "Python publish release caller is not closed")
+    # CHECK: python-publish-oci-binding
+    reject(oci_binding_invalid, "Python publish OCI label binding mismatch")
+    # CHECK: python-publish-subject-matrix
+    reject(subject_matrix_invalid, "Python publish attestation subject matrix mismatch")
+    # CHECK: python-publish-signing
+    reject(signing_invalid, "Python publish recursive signature verification mismatch")
+    # CHECK: python-publish-trust
+    reject(trust_invalid, "Python publish trust-contract binding mismatch")
+    # CHECK: python-publish-provenance
+    reject(provenance_invalid, "Python publish provenance policy mismatch")
+    # CHECK: python-publish-alias-order
+    reject(alias_order_invalid, "Python publish two-phase alias ordering mismatch")
+    # CHECK: python-publish-collisions
+    reject(collision_invalid, "Python publish create-once collision policy mismatch")
+    # CHECK: python-publish-independent
+    reject(independent_invalid, "Python publish independent-verification ordering mismatch")
+    # CHECK: python-publish-contract-identity
+    reject(contract_identity_invalid, "Python publish identity is not contract-derived")
+    # CHECK: python-publish-scope
+    reject(scope_invalid, "Python publish scope policy wiring mismatch")
+    # CHECK: python-publish-gates
+    reject(gates_invalid, "Python publish gate battery mismatch")
+    # CHECK: python-publish-index-dataflow
+    reject(index_dataflow_invalid, "Python publish trusted registry index dataflow mismatch")
+    # CHECK: python-publish-vex-production
+    reject(vex_production_invalid, "Python publish complete VEX production caller mismatch")
+    # CHECK: python-publish-slsa-execution
+    reject(slsa_execution_invalid, "Python publish SLSA execution certificate binding mismatch")
+    # CHECK: python-publish-pre-alias
+    reject(pre_alias_invalid, "Python preflight consumer-alias absence proof mismatch")
+    # CHECK: python-publish-tag-isolation
+    reject(tag_isolation_invalid, "Python and micro release tag namespaces overlap")
+    return errors
+
+
+def _publish_python_workflow_fixtures(workflow: str) -> list[tuple[str, str, str]]:
+    def changed(label: str, old: str, new: str, reason: str, occurrence: int = 1) -> tuple[str, str, str]:
+        return label, _replace_nth(workflow, old, new, occurrence), reason
+
+    return [
+        changed("trigger", 'tags: ["python/v*"]', 'tags: ["v*"]', "Python publish trigger contract mismatch"),
+        changed("jobs", "  anonymous-verification:\n", "  anonymous-check:\n", "Python publish job graph mismatch"),
+        changed(
+            "concurrency",
+            "cancel-in-progress: false",
+            "cancel-in-progress: true",
+            "Python publish concurrency contract mismatch",
+        ),
+        changed(
+            "permissions",
+            "      packages: write\n",
+            "      packages: read\n",
+            "Python publish least-privilege inventory mismatch",
+        ),
+        changed(
+            "guards",
+            PUBLISH_PYTHON_REPOSITORY_GUARD,
+            "github.repository != ''",
+            "Python publish base-repository guard mismatch",
+        ),
+        changed(
+            "fail-closed",
+            "          set -euo pipefail\n",
+            "          set +e\n",
+            "Python publish repository-authored gate is not fail-closed",
+        ),
+        changed(
+            "generator",
+            "generator_container_slsa3.yml@v2.1.0",
+            "generator_container_slsa3.yml@main",
+            "Python publish reusable SLSA generator caller mismatch",
+        ),
+        changed(
+            "exporter",
+            '"push-by-digest": "true"',
+            '"push-by-digest": "false"',
+            "Python publish digest-only exporter contract mismatch",
+            2,
+        ),
+        changed(
+            "closed-caller",
+            "            --metadata-file\n            dist/python-publish/image-metadata.json",
+            "            --set\n            release.tags=example.invalid/candidate:latest",
+            "Python publish release caller is not closed",
+        ),
+        changed(
+            "oci-binding",
+            "org.opencontainers.image.revision",
+            "org.opencontainers.image.ref.name",
+            "Python publish OCI label binding mismatch",
+            1,
+        ),
+        (
+            "subject-matrix",
+            workflow.replace("steps.contract.outputs.cyclonedx", "steps.contract.outputs.missing_predicate"),
+            "Python publish attestation subject matrix mismatch",
+        ),
+        changed(
+            "signing",
+            "cosign sign --recursive",
+            "cosign sign",
+            "Python publish recursive signature verification mismatch",
+        ),
+        changed(
+            "trust",
+            "git rev-parse HEAD:images/python",
+            "git rev-parse HEAD:images",
+            "Python publish trust-contract binding mismatch",
+        ),
+        changed(
+            "provenance",
+            "--source-uri github.com/NWarila/ubi9-base-micro",
+            "--source-uri github.com/example/fork",
+            "Python publish provenance policy mismatch",
+        ),
+        changed(
+            "alias-order",
+            "      - rekor-rollup\n",
+            "      - slsa-provenance\n",
+            "Python publish two-phase alias ordering mismatch",
+        ),
+        changed(
+            "collisions", "--phase pre-apply", "--phase early", "Python publish create-once collision policy mismatch"
+        ),
+        changed(
+            "independent",
+            "Log in to GHCR for independent verification",
+            "Prepare independent verification",
+            "Python publish independent-verification ordering mismatch",
+        ),
+        changed(
+            "contract-identity",
+            'Path("images/python/contracts/image-manifest.json")',
+            'Path("images/python/contracts/other.json")',
+            "Python publish identity is not contract-derived",
+            2,
+        ),
+        (
+            "scope",
+            workflow.replace("tools/decide-python-publish-scope.py", "tools/decide-publish-scope.py"),
+            "Python publish scope policy wiring mismatch",
+        ),
+        changed(
+            "gates",
+            "assert-scanner-canary.py",
+            "assert-scanner-canary-disabled.py",
+            "Python publish gate battery mismatch",
+        ),
+        changed(
+            "index-dataflow",
+            'crane manifest "${IMAGE_REF}" > dist/python-index/index.json',
+            'crane manifest "${IMAGE_REPOSITORY}:candidate" > dist/python-index/index.json',
+            "Python publish trusted registry index dataflow mismatch",
+        ),
+        changed(
+            "metadata-shape",
+            'target = metadata["release"]',
+            "target = metadata",
+            "Python publish trusted registry index dataflow mismatch",
+            2,
+        ),
+        changed(
+            "vex-production",
+            "--vex-dir images/python/vex",
+            "--vex-dir vex",
+            "Python publish complete VEX production caller mismatch",
+        ),
+        (
+            "slsa-execution",
+            workflow.replace(
+                "tools/assert-python-slsa-certificate.py",
+                "tools/assert-python-slsa-certificate-disabled.py",
+            ),
+            "Python publish SLSA execution certificate binding mismatch",
+        ),
+        changed(
+            "pre-alias",
+            "pre-alias manifest must be absent",
+            "pre-alias manifest was queried",
+            "Python preflight consumer-alias absence proof mismatch",
+        ),
+        changed(
+            "tag-isolation", "refs/tags/python/v", "refs/tags/v", "Python and micro release tag namespaces overlap", 1
+        ),
+    ]
+
+
+def check_publish_python_workflow_self_test(only_label: str | None = None) -> None:
+    workflow = read(PUBLISH_PYTHON_WORKFLOW)
+    baseline = publish_python_workflow_errors(workflow)
+    require(not baseline, "publish Python workflow baseline failed: " + "; ".join(baseline))
+    fixtures = _publish_python_workflow_fixtures(workflow)
+    selected = 0
+    for label, mutated, expected in fixtures:
+        if only_label is not None and label != only_label:
+            continue
+        selected += 1
+        parse_error = _python_ci_yaml_parse_error(mutated)
+        require(parse_error is None, f"publish Python workflow mutation is not valid YAML [{label}]: {parse_error}")
+        if expected not in publish_python_workflow_errors(mutated):
+            raise VerifyError(f"publish Python workflow mutation unexpectedly passed: {label}")
+        print(f"publish Python workflow mutation rejected [{label}] parse=ok diagnostic={expected}")
+    if only_label is None:
+        require(selected == len(fixtures), "publish Python workflow fixture inventory mismatch")
+        authorization_cases = [
+            ("fork push:main", "someone/fork", "push", "refs/heads/main", "true", False),
+            ("fork tag push", "someone/fork", "push", "refs/tags/python/v0.1.0", "true", False),
+            ("fork PR", "someone/fork", "pull_request", "refs/pull/1/merge", "true", False),
+            ("base PR", "NWarila/ubi9-base-micro", "pull_request", "refs/pull/1/merge", "true", False),
+            ("base main push", "NWarila/ubi9-base-micro", "push", "refs/heads/main", "true", True),
+            ("base release tag", "NWarila/ubi9-base-micro", "push", "refs/tags/python/v0.1.0", "true", True),
+        ]
+        for label, repository, event, ref, scope, authorized_expected in authorization_cases:
+            require(
+                publish_python_authorized(repository, event, ref, scope) is authorized_expected,
+                f"publish Python authorization fixture failed: {label}",
+            )
+            print(f"publish Python authorization fixture [{label}] authorized={str(authorized_expected).lower()}")
+        require(
+            not "refs/tags/python/v0.1.0".startswith("refs/tags/v")
+            and not "refs/tags/v0.1.0".startswith("refs/tags/python/v"),
+            "Python and micro tag evaluators must be disjoint",
+        )
+        print("publish Python tag-isolation fixtures: python->micro=false micro->python=false")
+        print(f"publish Python workflow mutation probes: {selected}/{len(fixtures)} rejected")
+    else:
+        require(selected == 1, f"unknown publish Python workflow fixture: {only_label}")
+
+
+def check_publish_python_workflow_checker_mutation_self_test() -> None:
+    source = read("tools/verify.py")
+    checker_start = source.index("def publish_python_workflow_errors(")
+    checker_end = source.index("\ndef _publish_python_workflow_fixtures(", checker_start)
+    checker_source = source[checker_start:checker_end]
+    guards = [
+        ("python-publish-trigger", "trigger_invalid", "trigger"),
+        ("python-publish-jobs", "job_ids_invalid", "jobs"),
+        ("python-publish-concurrency", "concurrency_invalid", "concurrency"),
+        ("python-publish-permissions", "permissions_invalid", "permissions"),
+        ("python-publish-guards", "guards_invalid", "guards"),
+        ("python-publish-fail-closed", "fail_closed_invalid", "fail-closed"),
+        ("python-publish-generator", "generator_invalid", "generator"),
+        ("python-publish-exporter", "exporter_invalid", "exporter"),
+        ("python-publish-closed-caller", "closed_caller_invalid", "closed-caller"),
+        ("python-publish-oci-binding", "oci_binding_invalid", "oci-binding"),
+        ("python-publish-subject-matrix", "subject_matrix_invalid", "subject-matrix"),
+        ("python-publish-signing", "signing_invalid", "signing"),
+        ("python-publish-trust", "trust_invalid", "trust"),
+        ("python-publish-provenance", "provenance_invalid", "provenance"),
+        ("python-publish-alias-order", "alias_order_invalid", "alias-order"),
+        ("python-publish-collisions", "collision_invalid", "collisions"),
+        ("python-publish-independent", "independent_invalid", "independent"),
+        ("python-publish-contract-identity", "contract_identity_invalid", "contract-identity"),
+        ("python-publish-scope", "scope_invalid", "scope"),
+        ("python-publish-gates", "gates_invalid", "gates"),
+        ("python-publish-index-dataflow", "index_dataflow_invalid", "index-dataflow"),
+        ("python-publish-vex-production", "vex_production_invalid", "vex-production"),
+        ("python-publish-slsa-execution", "slsa_execution_invalid", "slsa-execution"),
+        ("python-publish-pre-alias", "pre_alias_invalid", "pre-alias"),
+        ("python-publish-tag-isolation", "tag_isolation_invalid", "tag-isolation"),
+    ]
+    markers = re.findall(r"^    # CHECK: (python-publish-[a-z-]+)$", checker_source, re.MULTILINE)
+    require(
+        Counter(markers) == Counter(guard for guard, _, _ in guards) and len(markers) == len(guards),
+        "publish Python workflow checker mutation list must cover every rejection guard exactly once",
+    )
+    for guard, condition, fixture in guards:
+        anchor = f"reject({condition},"
+        require(checker_source.count(anchor) == 1, f"publish Python workflow checker anchor changed: {guard}")
+        mutated_checker = checker_source.replace(anchor, "reject(False,", 1)
+        mutated = source[:checker_start] + mutated_checker + source[checker_end:]
+        ast.parse(mutated, filename="tools/verify.py")
+        result = _run_mutated_python_verifier(mutated, ["--check-publish-python-workflow-fixture", fixture])
+        expected = f"verify failed: publish Python workflow mutation unexpectedly passed: {fixture}"
+        require(
+            result.returncode == 1, f"publish Python workflow checker mutation {guard} returned {result.returncode}"
+        )
+        require(
+            result.stderr.strip() == expected,
+            f"publish Python workflow checker mutation {guard} returned unexpected diagnostic: "
+            f"{result.stderr.strip()!r}",
+        )
+        location = source[: source.index(f"# CHECK: {guard}")].count("\n") + 1
+        print(
+            f"publish Python workflow checker mutation rejected [guard={guard} location=tools/verify.py:{location} "
+            f"fixture={fixture} diagnostic={expected}]"
+        )
+    print(f"publish Python workflow checker mutation probes: {len(guards)}/{len(guards)} rejected")
+
+
+def check_publish_python_workflow() -> None:
+    workflow_bytes = (ROOT / PUBLISH_PYTHON_WORKFLOW).read_bytes()
+    workflow = workflow_bytes.decode()
+    errors = publish_python_workflow_errors(workflow)
+    errors.extend(publish_python_surface_lock_errors(workflow_bytes))
+    require(not errors, "publish Python workflow contract failed: " + "; ".join(errors))
 
 
 def python_evidence_errors(workflow: str, tailoring: str, ledger: str, gitignore: str, codeowners: str) -> list[str]:
@@ -8002,12 +8787,9 @@ def check_python_evidence() -> None:
             "openvex",
             "nist_800_190",
             "stig_arf",
+            "trust_contract",
         },
-        "python contract must map exactly the five attestation predicate types",
-    )
-    require(
-        "publish-python.yaml" not in read(".github/workflows/python-ci.yaml"),
-        "python CI must not reference a publish workflow that does not exist yet",
+        "python contract must map exactly the six attestation predicate types",
     )
     check_python_nist()
     check_python_secret_classifier()
@@ -8326,15 +9108,29 @@ def check_python_contract_schema_self_test() -> None:
     def wrong_type(clone: dict[str, Any]) -> None:
         clone["provenance"]["attestation_predicate_types"]["spdx"] = 17
 
+    def missing_trust_contract(clone: dict[str, Any]) -> None:
+        del clone["provenance"]["attestation_predicate_types"]["trust_contract"]
+
+    def extra_trust_contract_peer(clone: dict[str, Any]) -> None:
+        clone["provenance"]["attestation_predicate_types"]["trust_contract_v2"] = "https://example.invalid/v2"
+
+    def wrong_trust_contract_type(clone: dict[str, Any]) -> None:
+        clone["provenance"]["attestation_predicate_types"]["trust_contract"] = 17
+
     rejected = 0
     for label, apply in [
         ("missing provenance member", drop_member),
         ("nested additional property", add_nested),
         ("wrong identity value", wrong_identity),
         ("wrong predicate type", wrong_type),
+        ("missing trust-contract entry", missing_trust_contract),
+        ("extra trust-contract entry", extra_trust_contract_peer),
+        ("wrongly typed trust-contract entry", wrong_trust_contract_type),
     ]:
-        if validate_against_schema(mutate(apply), schema, schema, "contract"):
+        mutation_errors = validate_against_schema(mutate(apply), schema, schema, "contract")
+        if mutation_errors:
             rejected += 1
+            print(f"python contract schema mutation rejected [{label}] reason={'; '.join(mutation_errors)}")
         else:
             raise VerifyError(f"python contract schema mutation unexpectedly passed: {label}")
 
@@ -8344,9 +9140,10 @@ def check_python_contract_schema_self_test() -> None:
         validate_against_schema(contract, broken, broken, "contract")
     except VerifyError:
         rejected += 1
+        print("python contract schema mutation rejected [broken $ref] reason=schema $ref does not resolve")
     else:
         raise VerifyError("python contract schema mutation unexpectedly passed: broken $ref")
-    print(f"python contract schema mutation probes: {rejected}/5 rejected")
+    print(f"python contract schema mutation probes: {rejected}/8 rejected")
 
 
 PYTHON_NIST_POSTURES = {
@@ -9584,7 +10381,7 @@ def check_python_accept_and_track() -> None:
             "3.12.13-3.el9_8.1",
             "TD-9",
             "review-by 2026-10-01",
-            "tools/verify.py` independently expires a dormant",
+            "tools/verify.py` independently expires the",
         ],
         "docs/TECH-DEBT.md": [
             "## TD-9: Expiring acceptance of CVE-2026-11940 in base-python",
@@ -9817,13 +10614,13 @@ def check_python_accept_and_track() -> None:
     )
     require(
         expiry_fixture == [expected_expiry],
-        f"python accept-and-track dormant-entry expiry fixture failed: {expiry_fixture}",
+        f"python accept-and-track repository-entry expiry fixture failed: {expiry_fixture}",
     )
     print(
         "python accept-and-track locks: canonical VEX, exact one-entry allowlist, "
         f"{len(vex_mutations)} VEX mutations, {len(allowlist_mutations) + 2} allowlist mutations, "
         f"{len(surface_mutations)} published-child surface mutations, "
-        "and date-controlled dormant-entry expiry rejected"
+        "and date-controlled repository-entry expiry rejected"
     )
 
 
@@ -11019,6 +11816,13 @@ def check_nist_800_190_scripts() -> None:
 def check_helper_self_tests() -> None:
     for relative_path in [
         "tools/decide-publish-scope.py",
+        "tools/decide-python-publish-scope.py",
+        "tools/assert-python-alias-policy.py",
+        "tools/assert-python-attestation.py",
+        "tools/assert-python-provenance.py",
+        "tools/assert-python-slsa-certificate.py",
+        "tools/resolve-python-index.py",
+        "tools/python-trust-contract.py",
         "images/python/tools/rpmlock.py",
         "images/python/tools/assert-no-rootfs-secrets.py",
         "images/python/tools/assert-sbom-rpms.py",
@@ -11855,8 +12659,9 @@ def check_docs() -> None:
     )
 
     for marker in [
-        "Only `ubi9-base-micro` exists in",
-        "read as published artifacts from this repo",
+        "`ubi9-base-micro` is the root image",
+        "Publisher merged; awaiting first successful publication",
+        "must not be treated as publicly consumable",
         "`base-python`",
         "`base-node`",
         "`base-java`",
@@ -11878,6 +12683,39 @@ def check_docs() -> None:
         "docs/decision-records/repo/",
     ]:
         require(marker in readme, f"README.md missing G1 marker: {marker}")
+
+    for marker in [
+        "## Base-python published evidence",
+        "ghcr.io/nwarila/ubi9-base-python",
+        "python-trust-contract/v1",
+        ".github/workflows/publish-python.yaml@${PUBLISH_REF}",
+        "--source-tag python/v<version>",
+        "--source-branch main",
+        "--print-provenance",
+        "not atomic",
+        "not publicly consumable",
+    ]:
+        require(marker in verification_contract, f"verification-contract.md missing Python publish marker: {marker}")
+    for marker in [
+        "## Verify base-python",
+        "base-python-<first-12-lowercase-hex-of-publishing-sha>",
+        ".github/workflows/publish-python.yaml@${PUBLISH_REF}",
+        "python-trust-contract/v1",
+        "--certificate-github-workflow-sha",
+        "--certificate-github-workflow-ref",
+        "tools/assert-python-provenance.py",
+        "--source-tag",
+        "--source-branch main",
+    ]:
+        require(marker in verify_howto, f"verify-a-published-image.md missing Python publish marker: {marker}")
+    for marker in [
+        "## TD-10: Base-python create-once alias external-writer race",
+        "not an atomic create-once",
+        "## TD-11: Published-child VEX descriptor-cardinality asymmetry",
+        "`tools/assert-vex.py` deliberately remains unchanged",
+        "cannot become an authorized product",
+    ]:
+        require(marker in tech_debt, f"docs/TECH-DEBT.md missing Python publication debt marker: {marker}")
 
     for marker in [
         f"#{fips_cmvp()}, FIPS 140-3 Level 1 | ACTIVE",
@@ -12539,9 +13377,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"verify failed: {exc}", file=sys.stderr)
             return 1
         return 0
-    if len(arguments) == 2 and arguments[0] == "--check-publish-python-semantic-fixture":
+    if len(arguments) == 2 and arguments[0] == "--check-publish-python-workflow-fixture":
         try:
-            check_publish_python_preflight_semantic_self_test(arguments[1])
+            check_publish_python_workflow_self_test(arguments[1])
         except VerifyError as exc:
             print(f"verify failed: {exc}", file=sys.stderr)
             return 1
@@ -12561,6 +13399,7 @@ def main(argv: list[str] | None = None) -> int:
         check_gitattributes_archive_visibility,
         check_image_contract_files,
         check_community_profile,
+        check_python_publication_docs_self_test,
         check_renovate_config,
         check_python_build_input_contract,
         check_python_build_input_contract_self_test,
@@ -12590,9 +13429,9 @@ def main(argv: list[str] | None = None) -> int:
         check_python_ci_preflight_checker_mutation_self_test,
         check_python_ci_surface_lock_self_test,
         check_python_ci_surface_lock_checker_mutation_self_test,
-        check_publish_python_preflight,
-        check_publish_python_preflight_semantic_self_test,
-        check_publish_python_preflight_checker_mutation_self_test,
+        check_publish_python_workflow,
+        check_publish_python_workflow_self_test,
+        check_publish_python_workflow_checker_mutation_self_test,
         check_publish_python_surface_lock_self_test,
         check_publish_python_surface_lock_checker_mutation_self_test,
         check_python_evidence,

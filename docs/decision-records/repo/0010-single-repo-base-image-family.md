@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-06-21
-- Last reviewed: 2026-08-13
+- Last reviewed: 2026-08-16
 - Scope: repo
 
 ## Context
@@ -31,13 +31,14 @@ exchange digests in-run are not a factory.
 The base-image family lives in this repository. `ubi9-base-micro` remains at
 the repository root; relocating it under a variant-style tree was rejected as
 cosmetic churn against a shipped, digest-locked v1.0.0 image. The built-and-gated,
-unpublished `base-python` variant lives under `images/python/` and has no
-production publisher, signature, or published digest. Its pull-request
+unpublished `base-python` variant lives under `images/python/`. Its pull-request
 preflight writes an unsigned candidate and BuildKit provenance only to a
 loopback-bound ephemeral registry; this is neither an external or project
-publication nor a consumer-resolvable digest. Future variants use
-`images/<variant>/` trees. Each variant needs its own path-scoped publish
-workflow and evidence set before publication.
+publication nor a consumer-resolvable digest. Its production workflow is now
+capable of guarded two-phase GHCR publication from `main` and `python/v*` tags,
+but the workflow's presence is not evidence of a completed publish, signature,
+or published digest. Future variants use `images/<variant>/` trees. Each variant
+needs its own path-scoped publish workflow and evidence set before publication.
 
 The root micro publisher has its own conservative, closed scope decision. On a
 `main` push with an available, non-empty diff against the currently published
@@ -59,9 +60,10 @@ same run.
 
 - Each image keeps a distinct, exact cosign certificate identity (its own
   workflow-file path) and its own provenance subject.
-- The provenance `--source-uri` is shared N:1 across published images until a
-  per-image trust-contract predicate binds digest, package, tree, workflow, and
-  commit; that predicate is required before any variant publishes.
+- The provenance `--source-uri` is shared N:1 across published images. Every
+  variant must therefore attach an index-only, per-image trust-contract
+  predicate binding digest, package, tree, workflow, and commit before applying
+  consumer aliases; the Python publisher implements that requirement.
 - GHCR write authority is shared at the repository boundary and is mitigated
   by scoped per-job workflow permissions.
 - The layout is heterogeneous: the root image lives at the repository root and
@@ -72,8 +74,9 @@ same run.
 - A variant whose compliance tooling diverges structurally (for example a Java
   variant carrying its own validated cryptographic module) splits out with
   history via `git subtree`.
-- Documentation must distinguish built-but-unpublished and planned variants from
-  artifacts this repository actually publishes.
+- Documentation must distinguish publication capability, published-but-private
+  artifacts, publicly consumable artifacts, built-but-unpublished variants, and
+  planned variants.
 
 ## References
 

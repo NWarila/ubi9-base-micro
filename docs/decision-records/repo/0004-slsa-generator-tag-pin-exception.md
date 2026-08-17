@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-06-21
+- Last reviewed: 2026-08-16
 - Scope: repo
 
 ## Context
@@ -15,8 +16,8 @@ exact builder identity used by downstream verification.
 ## Decision
 
 The `slsa-framework/slsa-github-generator` reusable workflow remains referenced
-as `generator_container_slsa3.yml@v2.1.0`. The publish workflow gates that tag by
-asserting `refs/tags/v2.1.0` resolves to
+as `generator_container_slsa3.yml@v2.1.0`. Both publish workflows gate that tag
+before use by asserting `refs/tags/v2.1.0` resolves to
 `f7dd8c54c2067bafc12ca7a55595d5ee9b75204a`, and all verification uses the exact
 tag identity:
 
@@ -24,11 +25,22 @@ tag identity:
 
 Every other `uses:` entry remains SHA-pinned.
 
+The Python publisher also checks the generator after execution and before any
+consumer alias is applied. It authenticates the SLSA envelope, then requires the
+Fulcio Build Signer Digest extension `1.3.6.1.4.1.57264.1.10` to equal the same
+pinned commit. The source digest/ref extensions and the Build Config URI/Digest
+extensions must bind the publishing SHA/ref and
+`.github/workflows/publish-python.yaml`. The micro publisher retains only the
+pre-execution tag check and exact tag-shaped identity; its remaining movement
+window is tracked in TD-1.
+
 ## Consequences
 
 - The generator exception is explicit, narrow, and testable.
 - Verification stays exact-identity rather than regex or wildcard based.
-- A generator tag drift fails before publish work can proceed.
+- A generator tag drift seen by either pre-execution check fails before publish
+  work can proceed; the Python path also fails if the executed signer or caller
+  bindings do not match after provenance is produced.
 - Renovate rules must preserve this exception while SHA-pinning ordinary
   actions.
 
@@ -38,4 +50,6 @@ Every other `uses:` entry remains SHA-pinned.
 - SLSA GitHub generator: <https://github.com/slsa-framework/slsa-github-generator/tree/v2.1.0>
 - Sigstore Cosign verification: <https://docs.sigstore.dev/cosign/verifying/verify/>
 - Repository details: `.github/workflows/publish-image.yaml`,
-  `docs/reference/verify.md`, `.github/renovate.json`
+  `.github/workflows/publish-python.yaml`,
+  `tools/assert-python-slsa-certificate.py`, `docs/reference/verify.md`,
+  `.github/renovate.json`

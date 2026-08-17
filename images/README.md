@@ -1,10 +1,15 @@
 # Image Family Trees
 
-Planned base-image variants will live here, one tree per variant under
-`images/<variant>/`. Each variant must publish through its own path-scoped
-workflow and must carry the full `base-micro` evidence parity set — cosign
-signature, SPDX and CycloneDX SBOMs, OpenVEX, NIST SP 800-190 evidence, a
-tailored STIG ARF, and SLSA provenance — before any digest becomes public.
+Base-image variants live here, one tree per variant under `images/<variant>/`.
+The `base-python` publisher is merged; it is awaiting its first successful
+publication through `.github/workflows/publish-python.yaml`. Its first package
+is private by default and is not publicly consumable until the owner changes
+GHCR visibility and the anonymous verification succeeds. Node and Java variants
+remain planned. Each variant must publish through its own path-scoped workflow
+and carry the full evidence set — Cosign signature, SPDX and CycloneDX SBOMs,
+OpenVEX, NIST SP 800-190 evidence, a tailored STIG ARF, SLSA provenance, and an
+index-only per-image trust contract — before a digest is described as publicly
+consumable.
 
 Changes confined to this tree remain eligible to skip root micro publication.
 The micro publisher now applies a larger conservative closed skip set, so it

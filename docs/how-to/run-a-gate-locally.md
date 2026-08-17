@@ -43,6 +43,25 @@ exhaustive defence against a hostile workflow edit. See
 for the free-form shell limitation and the repository controls that govern that
 threat.
 
+## Base-Python Publication Policies
+
+The repository verifier runs the publication helper self-tests. They can also be
+replayed individually without a registry write:
+
+```sh
+python3 tools/decide-python-publish-scope.py --self-test
+python3 tools/resolve-python-index.py --self-test
+python3 tools/assert-python-alias-policy.py --self-test
+python3 tools/python-trust-contract.py --self-test
+python3 tools/assert-python-attestation.py --self-test
+python3 tools/assert-python-provenance.py --self-test
+python3 tools/assert-python-slsa-certificate.py --self-test
+```
+
+These are policy and mutation tests, not evidence of a production publication.
+The registry-origin readback, signature, attestation, provenance, Rekor, and
+alias gates first execute together on a privileged post-merge publish run.
+
 ## Runtime Hardening
 
 Build and check the local runtime tag:

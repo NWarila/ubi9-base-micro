@@ -1,24 +1,59 @@
-# Purpose: Exercise the Python release exporter against a loopback registry on pull requests.
-# Role: release preflight
+# Purpose: Preflight and two-phase publication for the base-python multi-architecture image.
+# Role: release gate and publisher
 # Micro-container candidate: no - repository workflow control plane.
 
-name: Python release preflight
+name: Publish Python image
 
 on:
   pull_request:
+  push:
+    branches: [main]
+    tags: ["python/v*"]
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: Published base-python index digest
+        required: true
+        type: string
+      publishing_sha:
+        description: Publishing commit SHA
+        required: true
+        type: string
+      publishing_ref:
+        description: Exact publishing ref
+        required: true
+        type: string
 
 permissions:
   contents: read
+
+concurrency:
+  group: publish-python-ghcr-io-nwarila-ubi9-base-python
+  cancel-in-progress: false
+
+env:
+  IMAGE_REPOSITORY: ghcr.io/nwarila/ubi9-base-python
+  SLSA_GENERATOR_TAG: "v2.1.0"
+  SLSA_GENERATOR_TAG_SHA: "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a"
+  SLSA_VERIFIER_VERSION: "v2.6.0"
+  SSG_VERSION: "0.1.81"
+  SSG_TARBALL_SHA512: "11e26cfa96a6f1bd98b3a131837e2f86c9a9851239337d86d624b01627faf10f7a03c395a5839ddab018e0fa47719ade05a9946f90d5ca96b1261776a9164379"
+  STIG_PROFILE: "xccdf_org.nwarila.content_profile_ubi9_base_python_stig"
+  STIG_FAIL_ON: "low"
+  CRANE_VERSION: "v0.21.7"
+  SCANNER_DB_MAX_AGE_DAYS: "7"
+  NIST_800_190_PREDICATE_TYPE: "https://nwarila.dev/attestations/nist-sp-800-190-image/v1"
+  STIG_ARF_PREDICATE_TYPE: "https://nwarila.dev/attestations/stig-arf/v1"
+  TRUST_CONTRACT_PREDICATE_TYPE: "https://nwarila.dev/attestations/python-trust-contract/v1"
 
 jobs:
   release-preflight:
     name: Python release preflight
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    if: ${{ github.event_name == 'pull_request' }}
     permissions:
       contents: read
-    env:
-      CRANE_VERSION: v0.21.7
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
@@ -84,7 +119,9 @@ jobs:
           )
           registry_id="$("${registry_argv[@]}")"
           cleanup() {
-            docker rm --force "${registry_id}" >/dev/null 2>&1 || true
+            if docker inspect "${registry_id}" >/dev/null 2>&1; then
+              docker rm --force "${registry_id}" >/dev/null
+            fi
           }
           trap cleanup EXIT
 
@@ -164,12 +201,22 @@ jobs:
           export PATH="${PWD}/dist/tools:${PATH}"
           mkdir -p dist/release dist/ci
 
-          declare -rx RELEASE_REF="localhost:${host_port}/base-python/release:candidate"
-          if [[ ! "${RELEASE_REF}" =~ ^localhost:[1-9][0-9]{0,4}/base-python/release:candidate$ ]]; then
+          declare -rx RELEASE_REF="localhost:${host_port}/base-python"
+          if [[ ! "${RELEASE_REF}" =~ ^localhost:[1-9][0-9]{0,4}/base-python$ ]]; then
             printf 'RELEASE_REF is not an exact loopback candidate: %s\n' "${RELEASE_REF}" >&2
             exit 1
           fi
           printf 'immutable release destination assertion passed: RELEASE_REF=%s\n' "${RELEASE_REF}"
+
+          declare -rx OCI_REVISION="${GITHUB_SHA}"
+          declare -rx OCI_SOURCE="https://github.com/${GITHUB_REPOSITORY}"
+          OCI_VERSION="$(tr -d '[:space:]' < images/python/VERSION)"
+          readonly OCI_VERSION
+          export OCI_VERSION
+          if [[ -z "${OCI_VERSION}" ]]; then
+            echo "images/python/VERSION is empty after whitespace stripping" >&2
+            exit 1
+          fi
 
           readonly -a release_argv=(
             docker
@@ -180,20 +227,27 @@ jobs:
             release
             --progress
             plain
+            --metadata-file
+            dist/release/image-metadata.json
           )
           release_print="$("${release_argv[@]}" --print)"
           printf '%s\n' "${release_print}" | tee dist/release/bake-print.json
-          python3.12 - "${RELEASE_REF}" <<'PY'
+          python3.12 - "${RELEASE_REF}" "${OCI_REVISION}" "${OCI_SOURCE}" "${OCI_VERSION}" <<'PY'
           import json
           import sys
           from pathlib import Path
 
-          expected_ref = sys.argv[1]
+          expected_ref, revision, source, version = sys.argv[1:]
           resolved = json.loads(Path("dist/release/bake-print.json").read_text(encoding="utf-8"))
           target = resolved.get("target", {}).get("release", {})
 
           output = target.get("output")
-          if output != [{"type": "registry", "rewrite-timestamp": "true"}]:
+          if output != [{
+              "type": "registry",
+              "rewrite-timestamp": "true",
+              "push-by-digest": "true",
+              "name-canonical": "true",
+          }]:
               raise SystemExit(f"resolved release output mismatch: {output!r}")
           if target.get("tags") != [expected_ref]:
               raise SystemExit(f"resolved release tags mismatch: {target.get('tags')!r}")
@@ -209,6 +263,15 @@ jobs:
           ]
           if attest != expected_attest or type(attest[1]["disabled"]) is not bool:
               raise SystemExit(f"resolved release attestations mismatch: {attest!r}")
+          expected_args = {
+              "OCI_REVISION": revision,
+              "OCI_SOURCE": source,
+              "OCI_VERSION": version,
+          }
+          observed_args = target.get("args") or {}
+          for key, value in expected_args.items():
+              if observed_args.get(key) != value:
+                  raise SystemExit(f"resolved release protected argument mismatch: {key}={observed_args.get(key)!r}")
           print(
               "resolved release object assertion passed: "
               + json.dumps(
@@ -218,6 +281,7 @@ jobs:
                       "output": output,
                       "cache-to": cache_to,
                       "attest": attest,
+                      "args": expected_args,
                   },
                   sort_keys=True,
               )
@@ -225,51 +289,46 @@ jobs:
           PY
           "${release_argv[@]}"
 
-          crane manifest "${RELEASE_REF}" > dist/release/index.json
-          python3.12 - <<'PY'
+          RELEASE_DIGEST="$(python3.12 - <<'PY'
           import json
           import re
           from pathlib import Path
 
-          index = json.loads(Path("dist/release/index.json").read_text(encoding="utf-8"))
-          found = {}
-          ignored = []
-          for descriptor in index.get("manifests") or []:
-              platform = descriptor.get("platform") or {}
-              os_name = platform.get("os")
-              architecture = platform.get("architecture")
-              digest = descriptor.get("digest")
-              if os_name == "linux" and architecture in {"amd64", "arm64"}:
-                  if architecture in found:
-                      raise SystemExit(f"duplicate Linux platform descriptor: {architecture}")
-                  if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
-                      raise SystemExit(f"invalid Linux platform digest for {architecture}: {digest!r}")
-                  found[architecture] = digest
-              else:
-                  ignored.append({"os": os_name, "architecture": architecture, "digest": digest})
-          if set(found) != {"amd64", "arm64"}:
-              raise SystemExit(f"registry index Linux platform set mismatch: {sorted(found)}")
-          if not any(item["os"] == "unknown" and item["architecture"] == "unknown" for item in ignored):
-              raise SystemExit("registry index is missing unknown/unknown provenance descriptors")
-          Path("dist/release/platform-digests.json").write_text(
-              json.dumps(found, sort_keys=True) + "\n", encoding="utf-8"
-          )
-          for item in ignored:
-              print(
-                  "ignored non-platform descriptor: "
-                  f"os={item['os']} architecture={item['architecture']} digest={item['digest']}"
-              )
-          for architecture in ("amd64", "arm64"):
-              print(f"registry-served child digest: architecture={architecture} digest={found[architecture]}")
+          metadata = json.loads(Path("dist/release/image-metadata.json").read_text(encoding="utf-8"))
+          if not isinstance(metadata, dict) or set(metadata) != {"release"}:
+              raise SystemExit("release metadata must contain exactly the release target")
+          target = metadata["release"]
+          if not isinstance(target, dict):
+              raise SystemExit("release metadata target must be an object")
+          digest = target.get("containerimage.digest")
+          if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+              raise SystemExit(f"release metadata index digest is invalid: {digest!r}")
+          print(digest)
           PY
+          )"
+          readonly RELEASE_DIGEST
+          crane manifest "${RELEASE_REF}@${RELEASE_DIGEST}" > dist/release/index.json
+          python3.12 tools/resolve-python-index.py \
+            --index-manifest dist/release/index.json \
+            --push-digest "${RELEASE_DIGEST}" \
+            --fetch-reference "${RELEASE_REF}@${RELEASE_DIGEST}" \
+            --repository "${RELEASE_REF}" \
+            --output dist/release/platform-digests.json
 
-          readonly repository_url="https://github.com/${GITHUB_REPOSITORY}"
-          oci_version="$(tr -d '[:space:]' < images/python/VERSION)"
-          readonly oci_version
-          if [[ -z "${oci_version}" ]]; then
-            echo "images/python/VERSION is empty after whitespace stripping" >&2
-            exit 1
-          fi
+          short_sha="${GITHUB_SHA::12}"
+          for alias in base-python "base-python-${short_sha}" "${OCI_VERSION}"; do
+            status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+              --header 'Accept: application/vnd.oci.image.index.v1+json' \
+              "http://localhost:${host_port}/v2/base-python/manifests/${alias}")"
+            if [[ "${status}" != "404" ]]; then
+              printf 'pre-alias manifest must be absent: alias=%s status=%s\n' "${alias}" "${status}" >&2
+              exit 1
+            fi
+            printf 'pre-alias manifest absent: alias=%s status=%s\n' "${alias}" "${status}"
+          done
+
+          readonly repository_url="${OCI_SOURCE}"
+          readonly oci_version="${OCI_VERSION}"
 
           verify_architecture() {
             local -r arch="$1"
@@ -279,7 +338,11 @@ jobs:
           import sys
           from pathlib import Path
 
-          print(json.loads(Path("dist/release/platform-digests.json").read_text(encoding="utf-8"))[sys.argv[1]])
+          print(
+              json.loads(Path("dist/release/platform-digests.json").read_text(encoding="utf-8"))["children"][
+                  sys.argv[1]
+              ]
+          )
           PY
           )"
             local -r release_rootfs="dist/release/${arch}.rootfs.tar"
@@ -409,3 +472,1303 @@ jobs:
 
           verify_architecture amd64
           verify_architecture arm64
+
+  slsa-generator-tag-integrity:
+    name: python slsa generator tag integrity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    if: >-
+      ${{ github.repository == 'NWarila/ubi9-base-micro' &&
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/python/v')) }}
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Verify SLSA generator tag binding
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          actual="$(gh api "repos/slsa-framework/slsa-github-generator/git/ref/tags/${SLSA_GENERATOR_TAG}" --jq '.object.sha')"
+          if [[ "${actual}" != "${SLSA_GENERATOR_TAG_SHA}" ]]; then
+            printf 'SLSA generator tag drift: expected %s, got %s\n' "${SLSA_GENERATOR_TAG_SHA}" "${actual}" >&2
+            exit 1
+          fi
+          printf 'SLSA generator tag binding passed: refs/tags/%s=%s\n' "${SLSA_GENERATOR_TAG}" "${actual}"
+
+  publish-scope:
+    name: publish scope
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    if: >-
+      ${{ github.repository == 'NWarila/ubi9-base-micro' &&
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/python/v')) }}
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      publish: ${{ steps.scope.outputs.publish }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Log in to GHCR for scope lookup
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io --username "${REGISTRY_USER}" --password-stdin
+      - name: Install Crane for scope lookup
+        run: |
+          set -euo pipefail
+          bash tools/install-crane.sh
+          printf '%s\n' "${PWD}/dist/tools" >> "${GITHUB_PATH}"
+      - name: Decide base-python publish scope
+        id: scope
+        env:
+          EVENT_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/python-publish-scope
+          changed_paths="dist/python-publish-scope/changed-paths.zlist"
+          config_path="dist/python-publish-scope/published-config.json"
+          error_path="dist/python-publish-scope/published-config.error"
+          : > "${changed_paths}"
+          : > "${error_path}"
+          diff_status="unavailable"
+          base=""
+          if [[ "${EVENT_REF}" == "refs/heads/main" ]]; then
+            if crane config "${IMAGE_REPOSITORY}:base-python" --platform linux/amd64 > "${config_path}" 2> "${error_path}"; then
+              if base="$(python3 tools/decide-python-publish-scope.py --print-base < "${config_path}")"; then
+                if git cat-file -e "${base}^{commit}" 2>/dev/null; then
+                  git diff --no-renames --name-only -z "${base}" "${GITHUB_SHA}" > "${changed_paths}"
+                  diff_status="available"
+                fi
+              fi
+            fi
+          fi
+          printf 'base-python publish scope: base=%s diff=%s\n' "${base:-none}" "${diff_status}"
+          publish="$(python3 tools/decide-python-publish-scope.py \
+            --ref "${EVENT_REF}" --diff-status "${diff_status}" < "${changed_paths}")"
+          case "${publish}" in
+            true | false) ;;
+            *)
+              printf 'unexpected base-python publish decision: %s\n' "${publish}" >&2
+              exit 1
+              ;;
+          esac
+          printf 'publish=%s\n' "${publish}" >> "${GITHUB_OUTPUT}"
+
+  publish:
+    name: publish candidate by digest
+    needs:
+      - slsa-generator-tag-integrity
+      - publish-scope
+    if: >-
+      ${{ github.repository == 'NWarila/ubi9-base-micro' &&
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/python/v')) &&
+      needs.publish-scope.outputs.publish == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      digest: ${{ steps.image.outputs.digest }}
+      ref: ${{ steps.image.outputs.ref }}
+      amd64_digest: ${{ steps.index.outputs.amd64_digest }}
+      arm64_digest: ${{ steps.index.outputs.arm64_digest }}
+      index_bundle_digest: ${{ steps.bundle.outputs.digest }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          token: ''
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          platforms: amd64,arm64
+          image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          cache-image: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          version: v0.35.0
+          driver: docker-container
+          driver-opts: image=docker.io/moby/buildkit:v0.31.2@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
+          buildkitd-flags: --debug=false
+          cache-binary: false
+      - name: Read publication contract
+        id: contract
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          contract = json.loads(Path("images/python/contracts/image-manifest.json").read_text(encoding="utf-8"))
+          if contract["image"]["name"] != "ubi9-base-python":
+              raise SystemExit("python publication contract image name mismatch")
+          provenance = contract["provenance"]
+          identity = provenance["cosign"]["certificate_identity"].replace("<ref>", os.environ["GITHUB_REF"])
+          expected_identity = (
+              "https://github.com/NWarila/ubi9-base-micro/"
+              f".github/workflows/publish-python.yaml@{os.environ['GITHUB_REF']}"
+          )
+          if identity != expected_identity:
+              raise SystemExit("python publication certificate identity mismatch")
+          values = {
+              "certificate_identity": identity,
+              "certificate_oidc_issuer": provenance["cosign"]["certificate_oidc_issuer"],
+              **provenance["attestation_predicate_types"],
+          }
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              for name, value in values.items():
+                  output.write(f"{name}={value}\n")
+          PY
+      - name: Log in to GHCR for candidate publication
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io --username "${REGISTRY_USER}" --password-stdin
+          printf '%s' "${GHCR_TOKEN}" | sudo podman login ghcr.io --username "${REGISTRY_USER}" --password-stdin
+      - name: Install pinned registry client
+        run: |
+          set -euo pipefail
+          bash tools/install-crane.sh
+          printf '%s\n' "${PWD}/dist/tools" >> "${GITHUB_PATH}"
+      - name: Build and push unaliased candidate
+        id: image
+        env:
+          RELEASE_REF: ${{ env.IMAGE_REPOSITORY }}
+          OCI_REVISION: ${{ github.sha }}
+          OCI_SOURCE: https://github.com/${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          OCI_VERSION="$(tr -d '[:space:]' < images/python/VERSION)"
+          readonly OCI_VERSION
+          export OCI_VERSION
+          if [[ -z "${OCI_VERSION}" ]]; then
+            echo "images/python/VERSION is empty after whitespace stripping" >&2
+            exit 1
+          fi
+          mkdir -p dist/python-publish
+          readonly -a release_argv=(
+            docker
+            buildx
+            bake
+            --file
+            images/python/docker-bake.json
+            release
+            --progress
+            plain
+            --metadata-file
+            dist/python-publish/image-metadata.json
+          )
+          "${release_argv[@]}" --print > dist/python-publish/bake-print.json
+          python3 - "${RELEASE_REF}" "${OCI_REVISION}" "${OCI_SOURCE}" "${OCI_VERSION}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          image, revision, source, version = sys.argv[1:]
+          target = json.loads(Path("dist/python-publish/bake-print.json").read_text(encoding="utf-8"))["target"]["release"]
+          expected_output = [{
+              "type": "registry",
+              "rewrite-timestamp": "true",
+              "push-by-digest": "true",
+              "name-canonical": "true",
+          }]
+          if target.get("tags") != [image]:
+              raise SystemExit(f"production release tags mismatch: {target.get('tags')!r}")
+          if target.get("output") != expected_output:
+              raise SystemExit(f"production release exporter mismatch: {target.get('output')!r}")
+          if target.get("platforms") != ["linux/amd64", "linux/arm64"]:
+              raise SystemExit(f"production release platforms mismatch: {target.get('platforms')!r}")
+          if target.get("cache-to", []) != []:
+              raise SystemExit("production release must not export cache")
+          expected_args = {"OCI_REVISION": revision, "OCI_SOURCE": source, "OCI_VERSION": version}
+          for key, value in expected_args.items():
+              if (target.get("args") or {}).get(key) != value:
+                  raise SystemExit(f"production protected OCI argument mismatch: {key}")
+          expected_attest = [{"mode": "max", "type": "provenance"}, {"disabled": True, "type": "sbom"}]
+          if target.get("attest") != expected_attest:
+              raise SystemExit(f"production release attestations mismatch: {target.get('attest')!r}")
+          print("production Bake object is the locked unaliased push-by-digest export")
+          PY
+          "${release_argv[@]}"
+          digest="$(python3 - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          metadata = json.loads(Path("dist/python-publish/image-metadata.json").read_text(encoding="utf-8"))
+          if not isinstance(metadata, dict) or set(metadata) != {"release"}:
+              raise SystemExit("candidate metadata must contain exactly the release target")
+          target = metadata["release"]
+          if not isinstance(target, dict):
+              raise SystemExit("candidate metadata release target must be an object")
+          digest = target.get("containerimage.digest")
+          if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+              raise SystemExit(f"candidate metadata digest is invalid: {digest!r}")
+          print(digest)
+          PY
+          )"
+          {
+            printf 'image=%s\n' "${RELEASE_REF}"
+            printf 'digest=%s\n' "${digest}"
+            printf 'ref=%s@%s\n' "${RELEASE_REF}" "${digest}"
+          } >> "${GITHUB_OUTPUT}"
+      - name: Read back and close the exact registry index
+        id: index
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+          PUSH_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/python-index
+          crane manifest "${IMAGE_REF}" > dist/python-index/index.json
+          python3 tools/resolve-python-index.py \
+            --index-manifest dist/python-index/index.json \
+            --push-digest "${PUSH_DIGEST}" \
+            --fetch-reference "${IMAGE_REF}" \
+            --output dist/python-index/index-evidence.json \
+            --github-output "${GITHUB_OUTPUT}"
+      - name: Check create-once aliases before evidence
+        env:
+          INDEX_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < images/python/VERSION)"
+          python3 tools/assert-python-alias-policy.py \
+            --phase pre-evidence \
+            --ref "${GITHUB_REF}" \
+            --sha "${GITHUB_SHA}" \
+            --version "${version}" \
+            --digest "${INDEX_DIGEST}" \
+            --image "${IMAGE_REPOSITORY}" \
+            --crane dist/tools/crane
+      - name: Seal registry index artifact
+        id: bundle
+        run: |
+          set -euo pipefail
+          cp dist/python-publish/image-metadata.json dist/python-index/image-metadata.json
+          (
+            cd dist/python-index
+            sha256sum image-metadata.json index-evidence.json index.json > SHA256SUMS
+          )
+          digest="sha256:$(sha256sum dist/python-index/SHA256SUMS | cut -d ' ' -f 1)"
+          printf 'digest=%s\n' "${digest}" >> "${GITHUB_OUTPUT}"
+          printf 'sealed registry index artifact: manifest=%s\n' "${digest}"
+      - name: Upload registry index artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: python-index-${{ github.sha }}
+          path: dist/python-index
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  gate-evidence:
+    name: registry-served gates and evidence
+    needs: publish
+    if: >-
+      ${{ github.repository == 'NWarila/ubi9-base-micro' &&
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/python/v')) &&
+      needs.publish.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      evidence_bundle_digest: ${{ steps.bundle.outputs.digest }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          token: ''
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          platforms: amd64,arm64
+          image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          cache-image: false
+      - name: Download registry index artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: python-index-${{ github.sha }}
+          path: dist/python-index
+      - name: Reverify registry index artifact before use
+        id: index
+        env:
+          INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
+          INDEX_BUNDLE_DIGEST: ${{ needs.publish.outputs.index_bundle_digest }}
+        run: |
+          set -euo pipefail
+          python3 tools/resolve-python-index.py \
+            --bundle-root dist/python-index \
+            --bundle-manifest dist/python-index/SHA256SUMS \
+            --bundle-digest "${INDEX_BUNDLE_DIGEST}" \
+            --require-file image-metadata.json \
+            --require-file index-evidence.json \
+            --require-file index.json
+          python3 tools/resolve-python-index.py \
+            --index-manifest dist/python-index/index.json \
+            --push-digest "${INDEX_DIGEST}" \
+            --fetch-reference "${IMAGE_REPOSITORY}@${INDEX_DIGEST}" \
+            --consumer "vex=${INDEX_DIGEST}" \
+            --github-output "${GITHUB_OUTPUT}"
+      - name: Log in to GHCR for read-only gates
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io --username "${REGISTRY_USER}" --password-stdin
+          printf '%s' "${GHCR_TOKEN}" | sudo podman login ghcr.io --username "${REGISTRY_USER}" --password-stdin
+      - name: Install publication gate tools
+        run: |
+          set -euo pipefail
+          bash tools/install-crane.sh
+          bash tools/install-syft.sh
+          bash tools/install-trivy.sh
+          bash tools/install-grype.sh
+          bash tools/install-openscap.sh
+          printf '%s\n' "${PWD}/dist/tools" >> "${GITHUB_PATH}"
+      - name: Assert registry-served labels and byte contracts
+        env:
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+          expected_version="$(tr -d '[:space:]' < images/python/VERSION)"
+          expected_source="https://github.com/${GITHUB_REPOSITORY}"
+          expected_created="$(python3 -c 'import json; print(json.load(open("images/python/docker-bake.json"))["target"]["base"]["args"]["OCI_CREATED"])')"
+          parent_repository="$(python3 -c 'import json; print(json.load(open("images/python/contracts/image-manifest.json"))["parent"]["repository"])')"
+          mkdir -p dist/python-publish/rootfs dist/python-publish/config
+          for arch in amd64 arm64; do
+            case "${arch}" in
+              amd64) digest="${AMD64_DIGEST}" ;;
+              arm64) digest="${ARM64_DIGEST}" ;;
+              *) echo "unsupported published architecture: ${arch}" >&2; exit 1 ;;
+            esac
+            image_ref="${IMAGE_REPOSITORY}@${digest}"
+            crane config "${image_ref}" > "dist/python-publish/config/${arch}.json"
+            python3 - "${arch}" "${GITHUB_SHA}" "${expected_source}" "${expected_version}" "${expected_created}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          arch, revision, source, version, created = sys.argv[1:]
+          config = json.loads(Path(f"dist/python-publish/config/{arch}.json").read_text(encoding="utf-8"))
+          labels = (config.get("config") or {}).get("Labels") or {}
+          expected = {
+              "org.opencontainers.image.revision": revision,
+              "org.opencontainers.image.source": source,
+              "org.opencontainers.image.version": version,
+              "org.opencontainers.image.created": created,
+          }
+          for key, value in expected.items():
+              if labels.get(key) != value:
+                  raise SystemExit(f"registry child {arch} label mismatch: {key}={labels.get(key)!r}")
+          print(f"registry child {arch} OCI labels match revision/source/version/created")
+          PY
+            rootfs="dist/python-publish/rootfs/base-python.${arch}.tar"
+            crane export "${image_ref}" "${rootfs}"
+            python3 images/python/tools/assert-reproducible.py \
+              --rootfs-tar "${rootfs}" --arch "${arch}" \
+              --expect-from-contract images/python/contracts/image-manifest.json
+            parent_digest="$(python3 -c "import json; print(json.load(open('images/python/contracts/image-manifest.json'))['parent']['children']['${arch}'])")"
+            parent_rootfs="dist/python-publish/rootfs/parent.${arch}.tar"
+            crane export "${parent_repository}@${parent_digest}" "${parent_rootfs}"
+            python3 images/python/tools/assert-parent-subset.py --parent-tar "${parent_rootfs}" --final-tar "${rootfs}"
+          done
+      - name: Run runtime and evidence gates
+        env:
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
+          INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
+          CONTAINER_ENGINE: docker
+        run: |
+          set -euo pipefail
+          mkdir -p dist/python-publish/evidence/vuln
+          dist/tools/trivy image --download-db-only
+          dist/tools/grype db update
+          python3 tools/assert-scanner-db-freshness.py --max-age-days "${SCANNER_DB_MAX_AGE_DAYS}"
+          GRYPE_DB_AUTO_UPDATE=false dist/tools/grype "sbom:tests/fixtures/scanner-canary/log4shell.cdx.json" -o json -q \
+            > dist/python-publish/evidence/vuln/scanner-canary.grype.json
+          dist/tools/trivy sbom tests/fixtures/scanner-canary/log4shell.cdx.json \
+            --format json --output dist/python-publish/evidence/vuln/scanner-canary.trivy.json \
+            --skip-db-update --skip-java-db-update --offline-scan -q
+          python3 tools/assert-scanner-canary.py \
+            --grype-json dist/python-publish/evidence/vuln/scanner-canary.grype.json \
+            --trivy-json dist/python-publish/evidence/vuln/scanner-canary.trivy.json \
+            --expect-cve CVE-2021-44228
+          python3 tools/assert-ignore-scope.py
+          bash tools/build-stig-datastream.sh
+
+          for arch in amd64 arm64; do
+            case "${arch}" in
+              amd64) digest="${AMD64_DIGEST}" ;;
+              arm64) digest="${ARM64_DIGEST}" ;;
+              *) echo "unsupported evidence architecture: ${arch}" >&2; exit 1 ;;
+            esac
+            platform="linux/${arch}"
+            image_ref="${IMAGE_REPOSITORY}@${digest}"
+            docker pull --platform "${platform}" "${image_ref}"
+            bash images/python/tools/run-python-gates.sh \
+              --image "${image_ref}" --targetarch "${arch}" \
+              --contract images/python/contracts/image-manifest.json
+
+            sbom_dir="dist/python-publish/evidence/sbom/${arch}"
+            vuln_dir="dist/python-publish/evidence/vuln/${arch}"
+            rootfs_dir="dist/python-publish/evidence/rootfs/${arch}"
+            mkdir -p "${sbom_dir}" "${vuln_dir}" "${rootfs_dir}"
+            dist/tools/syft scan "${image_ref}" --platform "${platform}" \
+              -o "json=${sbom_dir}/base-python.syft.json" \
+              -o "spdx-json=${sbom_dir}/base-python.spdx.json" \
+              -o "cyclonedx-json=${sbom_dir}/base-python.cdx.json"
+            python3 images/python/tools/assert-sbom-rpms.py \
+              --source "${sbom_dir}/base-python.syft.json" \
+              "${sbom_dir}/base-python.spdx.json" "${sbom_dir}/base-python.cdx.json"
+            python3 tools/assert-no-phantom-packages.py \
+              --image "${image_ref}" --platform "${platform}" \
+              --syft-json "${sbom_dir}/base-python.syft.json" \
+              --output "${sbom_dir}/base-python.phantom-packages.json" \
+              --expect-absent sqlite-libs
+
+            dist/tools/trivy image --platform "${platform}" --vuln-type os,library \
+              --ignore-unfixed --severity MEDIUM,HIGH,CRITICAL \
+              --ignorefile security/cve-ignore.trivyignore.yaml --exit-code 1 "${image_ref}"
+            dist/tools/grype "${image_ref}" --only-fixed --fail-on medium \
+              -c security/cve-ignore.grype.yaml --show-suppressed -o json \
+              --file "${vuln_dir}/base-python.grype.gate.json"
+            python3 tools/assert-ignore-scope.py --grype-report "${vuln_dir}/base-python.grype.gate.json"
+            dist/tools/trivy image --platform "${platform}" --vuln-type os,library \
+              --list-all-pkgs --severity HIGH,CRITICAL --format json \
+              --output "${vuln_dir}/base-python.trivy.all.json" "${image_ref}"
+            dist/tools/grype "${image_ref}" -o json --file "${vuln_dir}/base-python.grype.all.json"
+            python3 images/python/tools/assert-raw-scanners-no-sqlite.py \
+              --trivy-json "${vuln_dir}/base-python.trivy.all.json" \
+              --grype-json "${vuln_dir}/base-python.grype.all.json" \
+              --contract images/python/contracts/image-manifest.json --arch "${arch}"
+            python3 tools/assert-vex.py \
+              --product "${image_ref}" \
+              --trivy-json "${vuln_dir}/base-python.trivy.all.json" \
+              --grype-json "${vuln_dir}/base-python.grype.all.json" \
+              --package-floor images/python/rpm-lock/micro-floor.json \
+              --vex-dir images/python/vex \
+              --index-reference "${IMAGE_REPOSITORY}@${INDEX_DIGEST}" \
+              --index-manifest dist/python-index/index.json
+
+            tar --no-same-owner --no-same-permissions -xf "dist/python-publish/rootfs/base-python.${arch}.tar" -C "${rootfs_dir}"
+            chmod -R u+rwX "${rootfs_dir}"
+            secret_report="dist/python-publish/evidence/base-python.${arch}.secret-scan.json"
+            python3 images/python/tools/assert-no-rootfs-secrets.py --rootfs "${rootfs_dir}" --report "${secret_report}"
+            bash images/python/tools/run-stig-arf.sh "${image_ref}" "${arch}" "${platform}" \
+              "dist/python-publish/evidence/stig/${arch}"
+            base_micro="$(sed -n 's/^ARG BASE_MICRO_IMAGE=\(.*\)$/\1/p' images/python/Dockerfile)"
+            nist="dist/python-publish/evidence/attestations/nist-800-190.base-python.${arch}.json"
+            python3 images/python/tools/generate-nist-800-190-predicate.py \
+              --image-ref "${image_ref}" --platform "${platform}" --arch "${arch}" \
+              --base-image "${base_micro}" --source-uri "github.com/${GITHUB_REPOSITORY}" \
+              --revision "${GITHUB_SHA}" --secret-scan-report "${secret_report}" --output "${nist}"
+            python3 images/python/tools/generate-nist-800-190-predicate.py --validate "${nist}"
+          done
+      - name: Seal generated evidence artifact
+        id: bundle
+        run: |
+          set -euo pipefail
+          evidence_root=dist/python-publish/evidence
+          (
+            cd "${evidence_root}"
+            find attestations sbom stig -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          )
+          digest="sha256:$(sha256sum "${evidence_root}/SHA256SUMS" | cut -d ' ' -f 1)"
+          printf 'digest=%s\n' "${digest}" >> "${GITHUB_OUTPUT}"
+          printf 'sealed evidence artifact: manifest=%s\n' "${digest}"
+      - name: Upload generated evidence artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: python-evidence-${{ github.sha }}
+          path: |
+            dist/python-publish/evidence/attestations
+            dist/python-publish/evidence/sbom
+            dist/python-publish/evidence/stig
+            dist/python-publish/evidence/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  sign-attest:
+    name: sign and attest verified subjects
+    needs:
+      - publish
+      - gate-evidence
+    if: >-
+      ${{ github.repository == 'NWarila/ubi9-base-micro' &&
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/python/v')) &&
+      needs.publish.result == 'success' && needs.gate-evidence.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v2.5.2
+      - name: Download registry index artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: python-index-${{ github.sha }}
+          path: dist/python-index
+      - name: Download generated evidence artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: python-evidence-${{ github.sha }}
+          path: dist/python-publish/evidence
+      - name: Reverify all cross-job artifacts before use
+        id: index
+        env:
+          INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
+          INDEX_BUNDLE_DIGEST: ${{ needs.publish.outputs.index_bundle_digest }}
+          EVIDENCE_BUNDLE_DIGEST: ${{ needs.gate-evidence.outputs.evidence_bundle_digest }}
+        run: |
+          set -euo pipefail
+          python3 tools/resolve-python-index.py \
+            --bundle-root dist/python-index \
+            --bundle-manifest dist/python-index/SHA256SUMS \
+            --bundle-digest "${INDEX_BUNDLE_DIGEST}" \
+            --require-file image-metadata.json \
+            --require-file index-evidence.json \
+            --require-file index.json
+          python3 tools/resolve-python-index.py \
+            --bundle-root dist/python-publish/evidence \
+            --bundle-manifest dist/python-publish/evidence/SHA256SUMS \
+            --bundle-digest "${EVIDENCE_BUNDLE_DIGEST}" \
+            --require-manifest-files
+          python3 tools/resolve-python-index.py \
+            --index-manifest dist/python-index/index.json \
+            --push-digest "${INDEX_DIGEST}" \
+            --fetch-reference "${IMAGE_REPOSITORY}@${INDEX_DIGEST}" \
+            --consumer "sign=${INDEX_DIGEST}" \
+            --consumer "attest=${INDEX_DIGEST}" \
+            --github-output "${GITHUB_OUTPUT}"
+      - name: Read publication contract
+        id: contract
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          contract = json.loads(Path("images/python/contracts/image-manifest.json").read_text(encoding="utf-8"))
+          if contract["image"]["name"] != "ubi9-base-python":
+              raise SystemExit("python publication contract image name mismatch")
+          provenance = contract["provenance"]
+          identity = provenance["cosign"]["certificate_identity"].replace("<ref>", os.environ["GITHUB_REF"])
+          expected_identity = (
+              "https://github.com/NWarila/ubi9-base-micro/"
+              f".github/workflows/publish-python.yaml@{os.environ['GITHUB_REF']}"
+          )
+          if identity != expected_identity:
+              raise SystemExit("python publication certificate identity mismatch")
+          values = {
+              "certificate_identity": identity,
+              "certificate_oidc_issuer": provenance["cosign"]["certificate_oidc_issuer"],
+              **provenance["attestation_predicate_types"],
+          }
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              for name, value in values.items():
+                  output.write(f"{name}={value}\n")
+          PY
+      - name: Log in to GHCR for direct signing and attestation
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io --username "${REGISTRY_USER}" --password-stdin
+      - name: Sign index and children recursively
+        env:
+          COSIGN_YES: "true"
+          IMAGE_REF: ${{ needs.publish.outputs.ref }}
+        run: |
+          set -euo pipefail
+          cosign sign --recursive "${IMAGE_REF}"
+      - name: Verify index and child signatures
+        env:
+          CERTIFICATE_IDENTITY: ${{ steps.contract.outputs.certificate_identity }}
+          CERTIFICATE_OIDC_ISSUER: ${{ steps.contract.outputs.certificate_oidc_issuer }}
+          INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+          for digest in "${INDEX_DIGEST}" "${AMD64_DIGEST}" "${ARM64_DIGEST}"; do
+            cosign verify "${IMAGE_REPOSITORY}@${digest}" \
+              --certificate-identity "${CERTIFICATE_IDENTITY}" \
+              --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
+              --certificate-github-workflow-repository "${GITHUB_REPOSITORY}" \
+              --certificate-github-workflow-sha "${GITHUB_SHA}" \
+              --certificate-github-workflow-ref "${GITHUB_REF}"
+          done
+      - name: Attest SPDX SBOMs on both children
+        env:
+          COSIGN_YES: "true"
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            case "${arch}" in amd64) digest="${AMD64_DIGEST}" ;; arm64) digest="${ARM64_DIGEST}" ;; esac
+            cosign attest --type "${{ steps.contract.outputs.spdx }}" \
+              --predicate "dist/python-publish/evidence/sbom/${arch}/base-python.spdx.json" \
+              "${IMAGE_REPOSITORY}@${digest}"
+          done
+      - name: Verify SPDX SBOM attestations on both children
+        env:
+          CERTIFICATE_IDENTITY: ${{ steps.contract.outputs.certificate_identity }}
+          CERTIFICATE_OIDC_ISSUER: ${{ steps.contract.outputs.certificate_oidc_issuer }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            case "${arch}" in amd64) digest="${AMD64_DIGEST}" ;; arm64) digest="${ARM64_DIGEST}" ;; esac
+            verified="dist/python-publish/evidence/verified/spdx.${arch}.jsonl"
+            predicate="dist/python-publish/evidence/verified/spdx.${arch}.predicate.json"
+            mkdir -p "$(dirname "${verified}")"
+            cosign verify-attestation --type "${{ steps.contract.outputs.spdx }}" "${IMAGE_REPOSITORY}@${digest}" \
+              --certificate-identity "${CERTIFICATE_IDENTITY}" --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
+              > "${verified}"
+            python3 tools/assert-python-attestation.py --verified "${verified}" \
+              --image "${IMAGE_REPOSITORY}" --digest "${digest}" --predicate-type "${{ steps.contract.outputs.spdx }}" \
+              --expected-predicate "dist/python-publish/evidence/sbom/${arch}/base-python.spdx.json" \
+              --write-predicate "${predicate}"
+            python3 images/python/tools/assert-sbom-rpms.py "${predicate}"
+          done
+      - name: Attest CycloneDX SBOMs on both children
+        env:
+          COSIGN_YES: "true"
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            case "${arch}" in amd64) digest="${AMD64_DIGEST}" ;; arm64) digest="${ARM64_DIGEST}" ;; esac
+            cosign attest --type "${{ steps.contract.outputs.cyclonedx }}" \
+              --predicate "dist/python-publish/evidence/sbom/${arch}/base-python.cdx.json" \
+              "${IMAGE_REPOSITORY}@${digest}"
+          done
+      - name: Verify CycloneDX SBOM attestations on both children
+        env:
+          CERTIFICATE_IDENTITY: ${{ steps.contract.outputs.certificate_identity }}
+          CERTIFICATE_OIDC_ISSUER: ${{ steps.contract.outputs.certificate_oidc_issuer }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            case "${arch}" in amd64) digest="${AMD64_DIGEST}" ;; arm64) digest="${ARM64_DIGEST}" ;; esac
+            verified="dist/python-publish/evidence/verified/cyclonedx.${arch}.jsonl"
+            predicate="dist/python-publish/evidence/verified/cyclonedx.${arch}.predicate.json"
+            cosign verify-attestation --type "${{ steps.contract.outputs.cyclonedx }}" "${IMAGE_REPOSITORY}@${digest}" \
+              --certificate-identity "${CERTIFICATE_IDENTITY}" --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
+              > "${verified}"
+            python3 tools/assert-python-attestation.py --verified "${verified}" \
+              --image "${IMAGE_REPOSITORY}" --digest "${digest}" --predicate-type "${{ steps.contract.outputs.cyclonedx }}" \
+              --expected-predicate "dist/python-publish/evidence/sbom/${arch}/base-python.cdx.json" \
+              --write-predicate "${predicate}"
+            python3 images/python/tools/assert-sbom-rpms.py "${predicate}"
+          done
+      - name: Attest OpenVEX predicates on both children
+        env:
+          COSIGN_YES: "true"
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for arch in amd64 arm64; do
+            case "${arch}" in amd64) digest="${AMD64_DIGEST}" ;; arm64) digest="${ARM64_DIGEST}" ;; esac
+            predicates=(images/python/vex/*.json)
+            if (( ${#predicates[@]} == 0 )); then
+              echo "no reviewed OpenVEX predicates were found for ${arch}" >&2
+              exit 1
+            fi
+            for predicate in "${predicates[@]}"; do
+              cosign attest --type "${{ steps.contract.outputs.openvex }}" --predicate "${predicate}" \
+                "${IMAGE_REPOSITORY}@${digest}"
+            done
+          done
+      - name: Verify OpenVEX attestations on both children
+        env:
+          CERTIFICATE_IDENTITY: ${{ steps.contract.outputs.certificate_identity }}
+          CERTIFICATE_OIDC_ISSUER: ${{ steps.contract.outputs.certificate_oidc_issuer }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for arch in amd64 arm64; do
+            case "${arch}" in amd64) digest="${AMD64_DIGEST}" ;; arm64) digest="${ARM64_DIGEST}" ;; esac
+            verified="dist/python-publish/evidence/verified/openvex.${arch}.jsonl"
+            cosign verify-attestation --type "${{ steps.contract.outputs.openvex }}" "${IMAGE_REPOSITORY}@${digest}" \
+              --certificate-identity "${CERTIFICATE_IDENTITY}" --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
+              > "${verified}"
+            expected=()
+            for predicate in images/python/vex/*.json; do
+              expected+=(--expected-predicate "${predicate}")
+            done
+            if (( ${#expected[@]} == 0 )); then
+              echo "no OpenVEX verification expectations were found for ${arch}" >&2
+              exit 1
+            fi
+            python3 tools/assert-python-attestation.py --verified "${verified}" \
+              --image "${IMAGE_REPOSITORY}" --digest "${digest}" --predicate-type "${{ steps.contract.outputs.openvex }}" \
+              "${expected[@]}"
+          done
+      - name: Attest NIST SP 800-190 predicates on both children
+        env:
+          COSIGN_YES: "true"
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            case "${arch}" in amd64) digest="${AMD64_DIGEST}" ;; arm64) digest="${ARM64_DIGEST}" ;; esac
+            cosign attest --type "${{ steps.contract.outputs.nist_800_190 }}" \
+              --predicate "dist/python-publish/evidence/attestations/nist-800-190.base-python.${arch}.json" \
+              "${IMAGE_REPOSITORY}@${digest}"
+          done
+      - name: Verify NIST SP 800-190 attestations on both children
+        env:
+          CERTIFICATE_IDENTITY: ${{ steps.contract.outputs.certificate_identity }}
+          CERTIFICATE_OIDC_ISSUER: ${{ steps.contract.outputs.certificate_oidc_issuer }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            case "${arch}" in amd64) digest="${AMD64_DIGEST}" ;; arm64) digest="${ARM64_DIGEST}" ;; esac
+            verified="dist/python-publish/evidence/verified/nist.${arch}.jsonl"
+            cosign verify-attestation --type "${{ steps.contract.outputs.nist_800_190 }}" "${IMAGE_REPOSITORY}@${digest}" \
+              --certificate-identity "${CERTIFICATE_IDENTITY}" --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
+              > "${verified}"
+            python3 tools/assert-python-attestation.py --verified "${verified}" \
+              --image "${IMAGE_REPOSITORY}" --digest "${digest}" --predicate-type "${{ steps.contract.outputs.nist_800_190 }}" \
+              --expected-predicate "dist/python-publish/evidence/attestations/nist-800-190.base-python.${arch}.json"
+          done
+      - name: Attest STIG ARF predicates on both children
+        env:
+          COSIGN_YES: "true"
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            case "${arch}" in amd64) digest="${AMD64_DIGEST}" ;; arm64) digest="${ARM64_DIGEST}" ;; esac
+            cosign attest --type "${{ steps.contract.outputs.stig_arf }}" \
+              --predicate "dist/python-publish/evidence/stig/${arch}/stig-arf.base-python.${arch}.json" \
+              "${IMAGE_REPOSITORY}@${digest}"
+          done
+      - name: Verify STIG ARF attestations on both children
+        env:
+          CERTIFICATE_IDENTITY: ${{ steps.contract.outputs.certificate_identity }}
+          CERTIFICATE_OIDC_ISSUER: ${{ steps.contract.outputs.certificate_oidc_issuer }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            case "${arch}" in amd64) digest="${AMD64_DIGEST}" ;; arm64) digest="${ARM64_DIGEST}" ;; esac
+            verified="dist/python-publish/evidence/verified/stig.${arch}.jsonl"
+            cosign verify-attestation --type "${{ steps.contract.outputs.stig_arf }}" "${IMAGE_REPOSITORY}@${digest}" \
+              --certificate-identity "${CERTIFICATE_IDENTITY}" --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
+              > "${verified}"
+            python3 tools/assert-python-attestation.py --verified "${verified}" \
+              --image "${IMAGE_REPOSITORY}" --digest "${digest}" --predicate-type "${{ steps.contract.outputs.stig_arf }}" \
+              --expected-predicate "dist/python-publish/evidence/stig/${arch}/stig-arf.base-python.${arch}.json"
+          done
+      - name: Generate trust-contract predicate and statement
+        env:
+          INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          tree="$(git rev-parse HEAD:images/python)"
+          python3 tools/python-trust-contract.py \
+            --contract images/python/contracts/image-manifest.json \
+            --digest "${INDEX_DIGEST#sha256:}" --tree "${tree}" --commit "${GITHUB_SHA}" \
+            --workflow .github/workflows/publish-python.yaml \
+            --predicate-out dist/python-publish/evidence/attestations/trust-contract.predicate.json \
+            --statement-out dist/python-publish/evidence/attestations/trust-contract.statement.json
+          python3 tools/python-trust-contract.py \
+            --contract images/python/contracts/image-manifest.json \
+            --digest "${INDEX_DIGEST#sha256:}" --tree "${tree}" --commit "${GITHUB_SHA}" \
+            --workflow .github/workflows/publish-python.yaml \
+            --validate-statement dist/python-publish/evidence/attestations/trust-contract.statement.json
+      - name: Attest index trust contract
+        env:
+          COSIGN_YES: "true"
+          INDEX_REF: ${{ needs.publish.outputs.ref }}
+        run: |
+          set -euo pipefail
+          cosign attest --type "${{ steps.contract.outputs.trust_contract }}" \
+            --predicate dist/python-publish/evidence/attestations/trust-contract.predicate.json "${INDEX_REF}"
+      - name: Verify index trust-contract attestation
+        env:
+          CERTIFICATE_IDENTITY: ${{ steps.contract.outputs.certificate_identity }}
+          CERTIFICATE_OIDC_ISSUER: ${{ steps.contract.outputs.certificate_oidc_issuer }}
+          INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
+          INDEX_REF: ${{ needs.publish.outputs.ref }}
+        run: |
+          set -euo pipefail
+          verified=dist/python-publish/evidence/verified/trust-contract.index.jsonl
+          cosign verify-attestation --type "${{ steps.contract.outputs.trust_contract }}" "${INDEX_REF}" \
+            --certificate-identity "${CERTIFICATE_IDENTITY}" --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
+            > "${verified}"
+          python3 tools/assert-python-attestation.py --verified "${verified}" \
+            --image "${IMAGE_REPOSITORY}" --digest "${INDEX_DIGEST}" \
+            --predicate-type "${{ steps.contract.outputs.trust_contract }}" \
+            --expected-statement dist/python-publish/evidence/attestations/trust-contract.statement.json
+
+  slsa-provenance:
+    name: slsa l3 provenance
+    needs:
+      - publish
+      - sign-attest
+    if: >-
+      ${{ github.repository == 'NWarila/ubi9-base-micro' &&
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/python/v')) &&
+      needs.publish.result == 'success' && needs.sign-attest.result == 'success' }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
+    with:
+      image: ${{ needs.publish.outputs.image }}
+      digest: ${{ needs.publish.outputs.digest }}
+      registry-username: ${{ github.actor }}
+    secrets:
+      registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+  rekor-rollup:
+    name: rekor roll-up and credentialed independent verification
+    needs:
+      - publish
+      - sign-attest
+      - slsa-provenance
+    if: >-
+      ${{ github.repository == 'NWarila/ubi9-base-micro' &&
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/python/v')) &&
+      needs.publish.result == 'success' && needs.sign-attest.result == 'success' &&
+      needs.slsa-provenance.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Download registry index artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: python-index-${{ github.sha }}
+          path: dist/python-index
+      - name: Reverify registry index artifact before independent use
+        id: index
+        env:
+          INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
+          INDEX_BUNDLE_DIGEST: ${{ needs.publish.outputs.index_bundle_digest }}
+        run: |
+          set -euo pipefail
+          python3 tools/resolve-python-index.py \
+            --bundle-root dist/python-index \
+            --bundle-manifest dist/python-index/SHA256SUMS \
+            --bundle-digest "${INDEX_BUNDLE_DIGEST}" \
+            --require-file image-metadata.json \
+            --require-file index-evidence.json \
+            --require-file index.json
+          python3 tools/resolve-python-index.py \
+            --index-manifest dist/python-index/index.json \
+            --push-digest "${INDEX_DIGEST}" \
+            --fetch-reference "${IMAGE_REPOSITORY}@${INDEX_DIGEST}" \
+            --consumer "sign=${INDEX_DIGEST}" \
+            --consumer "attest=${INDEX_DIGEST}" \
+            --github-output "${GITHUB_OUTPUT}"
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v2.5.2
+      - name: Install pinned SLSA verifier
+        uses: slsa-framework/slsa-verifier/actions/installer@3714a2a4684014deb874a0e737dffa0ee02dd647 # v2.6.0
+        with:
+          github-token: ${{ github.token }}
+      - name: Install Crane
+        run: |
+          set -euo pipefail
+          bash tools/install-crane.sh
+          printf '%s\n' "${PWD}/dist/tools" >> "${GITHUB_PATH}"
+      - name: Log in to GHCR for independent verification
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io --username "${REGISTRY_USER}" --password-stdin
+      - name: Read verification contract
+        id: contract
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          provenance = json.loads(Path("images/python/contracts/image-manifest.json").read_text(encoding="utf-8"))["provenance"]
+          values = {
+              "certificate_identity": provenance["cosign"]["certificate_identity"].replace("<ref>", os.environ["GITHUB_REF"]),
+              "certificate_oidc_issuer": provenance["cosign"]["certificate_oidc_issuer"],
+              "builder_id": provenance["slsa"]["builder_id"],
+              **provenance["attestation_predicate_types"],
+          }
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              for name, value in values.items():
+                  output.write(f"{name}={value}\n")
+          PY
+      - name: Verify complete Rekor roll-up
+        env:
+          CERTIFICATE_IDENTITY: ${{ steps.contract.outputs.certificate_identity }}
+          CERTIFICATE_OIDC_ISSUER: ${{ steps.contract.outputs.certificate_oidc_issuer }}
+          SLSA_BUILDER_ID: ${{ steps.contract.outputs.builder_id }}
+          INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
+          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/python-independent
+          for subject in index amd64 arm64; do
+            case "${subject}" in
+              index) digest="${INDEX_DIGEST}" ;;
+              amd64) digest="${AMD64_DIGEST}" ;;
+              arm64) digest="${ARM64_DIGEST}" ;;
+              *) echo "unsupported Rekor subject: ${subject}" >&2; exit 1 ;;
+            esac
+            output="dist/python-independent/signature.${subject}.json"
+            cosign verify "${IMAGE_REPOSITORY}@${digest}" \
+              --certificate-identity "${CERTIFICATE_IDENTITY}" \
+              --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
+              --certificate-github-workflow-repository "${GITHUB_REPOSITORY}" \
+              --certificate-github-workflow-sha "${GITHUB_SHA}" \
+              --certificate-github-workflow-ref "${GITHUB_REF}" > "${output}"
+            python3 tools/assert-cosign-rekor.py --kind "base-python signature ${subject}" "${output}"
+          done
+
+          for arch in amd64 arm64; do
+            case "${arch}" in amd64) digest="${AMD64_DIGEST}" ;; arm64) digest="${ARM64_DIGEST}" ;; esac
+            for type in \
+              "${{ steps.contract.outputs.spdx }}" \
+              "${{ steps.contract.outputs.cyclonedx }}" \
+              "${{ steps.contract.outputs.openvex }}" \
+              "${{ steps.contract.outputs.nist_800_190 }}" \
+              "${{ steps.contract.outputs.stig_arf }}"; do
+              safe_type="$(printf '%s' "${type}" | tr '/:' '__')"
+              output="dist/python-independent/${safe_type}.${arch}.jsonl"
+              cosign verify-attestation --type "${type}" "${IMAGE_REPOSITORY}@${digest}" \
+                --certificate-identity "${CERTIFICATE_IDENTITY}" \
+                --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" > "${output}"
+              python3 tools/assert-python-attestation.py --verified "${output}" \
+                --image "${IMAGE_REPOSITORY}" --digest "${digest}" --predicate-type "${type}" --envelope-only
+            done
+          done
+
+          trust_output=dist/python-independent/trust-contract.index.jsonl
+          cosign verify-attestation --type "${{ steps.contract.outputs.trust_contract }}" \
+            "${IMAGE_REPOSITORY}@${INDEX_DIGEST}" \
+            --certificate-identity "${CERTIFICATE_IDENTITY}" \
+            --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" > "${trust_output}"
+          python3 tools/assert-python-attestation.py --verified "${trust_output}" \
+            --image "${IMAGE_REPOSITORY}" --digest "${INDEX_DIGEST}" \
+            --predicate-type "${{ steps.contract.outputs.trust_contract }}" --envelope-only
+
+          slsa_output=dist/python-independent/slsa.index.jsonl
+          cosign verify-attestation --type slsaprovenance "${IMAGE_REPOSITORY}@${INDEX_DIGEST}" \
+            --certificate-identity "${SLSA_BUILDER_ID}" \
+            --certificate-oidc-issuer "${CERTIFICATE_OIDC_ISSUER}" \
+            --certificate-github-workflow-repository "${GITHUB_REPOSITORY}" \
+            --certificate-github-workflow-sha "${GITHUB_SHA}" \
+            --certificate-github-workflow-ref "${GITHUB_REF}" > "${slsa_output}"
+          python3 tools/assert-python-attestation.py --verified "${slsa_output}" \
+            --image "${IMAGE_REPOSITORY}" --digest "${INDEX_DIGEST}" \
+            --predicate-type https://slsa.dev/provenance/v0.2 --envelope-only
+      - name: Bind SLSA execution certificate to the pinned generator and caller
+        env:
+          INDEX_REF: ${{ needs.publish.outputs.ref }}
+        run: |
+          set -euo pipefail
+          attestation_ref="$(cosign triangulate --type attestation "${INDEX_REF}")"
+          crane manifest "${attestation_ref}" > dist/python-independent/attestation-manifest.json
+          layer_digest="$(python3 tools/assert-python-slsa-certificate.py \
+            --attestation-manifest dist/python-independent/attestation-manifest.json \
+            --print-layer-digest)"
+          crane blob "${IMAGE_REPOSITORY}@${layer_digest}" > dist/python-independent/slsa-envelope.json
+          python3 tools/assert-python-slsa-certificate.py \
+            --verified dist/python-independent/slsa.index.jsonl \
+            --attestation-manifest dist/python-independent/attestation-manifest.json \
+            --envelope dist/python-independent/slsa-envelope.json \
+            --sha "${GITHUB_SHA}" \
+            --ref "${GITHUB_REF}"
+      - name: Run credentialed independent SLSA policy verification
+        env:
+          SLSA_BUILDER_ID: ${{ steps.contract.outputs.builder_id }}
+          INDEX_REF: ${{ needs.publish.outputs.ref }}
+        run: |
+          set -euo pipefail
+          source_ref_args=()
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            source_ref_args=(--source-branch main)
+          elif [[ "${GITHUB_REF}" == refs/tags/python/v* ]]; then
+            source_ref_args=(--source-tag "${GITHUB_REF#refs/tags/}")
+          else
+            echo "unsupported independent verification ref: ${GITHUB_REF}" >&2
+            exit 1
+          fi
+          slsa-verifier verify-image "${INDEX_REF}" \
+            --source-uri github.com/NWarila/ubi9-base-micro \
+            --builder-id "${SLSA_BUILDER_ID}" \
+            "${source_ref_args[@]}" --print-provenance \
+            > dist/python-independent/verified-provenance.json
+          python3 tools/assert-python-provenance.py \
+            --provenance dist/python-independent/verified-provenance.json \
+            --image "${IMAGE_REPOSITORY}" --digest "${{ needs.publish.outputs.digest }}" \
+            --sha "${GITHUB_SHA}" --ref "${GITHUB_REF}"
+
+  apply-aliases:
+    name: apply consumer aliases
+    needs:
+      - publish
+      - rekor-rollup
+    if: >-
+      ${{ github.repository == 'NWarila/ubi9-base-micro' &&
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/python/v')) &&
+      needs.publish.result == 'success' && needs.rekor-rollup.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Download registry index artifact for aliasing
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: python-index-${{ github.sha }}
+          path: dist/python-index
+      - name: Reverify registry index artifact before aliasing
+        env:
+          INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
+          INDEX_BUNDLE_DIGEST: ${{ needs.publish.outputs.index_bundle_digest }}
+        run: |
+          set -euo pipefail
+          python3 tools/resolve-python-index.py \
+            --bundle-root dist/python-index \
+            --bundle-manifest dist/python-index/SHA256SUMS \
+            --bundle-digest "${INDEX_BUNDLE_DIGEST}" \
+            --require-file image-metadata.json \
+            --require-file index-evidence.json \
+            --require-file index.json
+          python3 tools/resolve-python-index.py \
+            --index-manifest dist/python-index/index.json \
+            --push-digest "${INDEX_DIGEST}" \
+            --fetch-reference "${IMAGE_REPOSITORY}@${INDEX_DIGEST}" \
+            --consumer "alias=${INDEX_DIGEST}"
+      - name: Install Crane
+        run: |
+          set -euo pipefail
+          bash tools/install-crane.sh
+          printf '%s\n' "${PWD}/dist/tools" >> "${GITHUB_PATH}"
+      - name: Log in to GHCR for final alias apply
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io --username "${REGISTRY_USER}" --password-stdin
+      - name: Recheck apply and verify aliases
+        env:
+          INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < images/python/VERSION)"
+          policy=(
+            --ref "${GITHUB_REF}"
+            --sha "${GITHUB_SHA}"
+            --version "${version}"
+            --digest "${INDEX_DIGEST}"
+            --image "${IMAGE_REPOSITORY}"
+            --crane dist/tools/crane
+          )
+          python3 tools/assert-python-alias-policy.py --phase pre-apply "${policy[@]}"
+          alias_output="$(python3 tools/assert-python-alias-policy.py \
+            --ref "${GITHUB_REF}" --sha "${GITHUB_SHA}" --version "${version}" --print-aliases)"
+          mapfile -t aliases <<< "${alias_output}"
+          if (( ${#aliases[@]} != 2 )); then
+            printf 'expected exactly two final aliases, observed %s\n' "${#aliases[@]}" >&2
+            exit 1
+          fi
+          for alias in "${aliases[@]}"; do
+            crane tag "${IMAGE_REPOSITORY}@${INDEX_DIGEST}" "${alias}"
+          done
+          python3 tools/assert-python-alias-policy.py --phase post-apply "${policy[@]}"
+
+  anonymous-verification:
+    name: anonymous post-visibility verification
+    if: >-
+      ${{ github.repository == 'NWarila/ubi9-base-micro' &&
+      github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Check out publishing commit
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.publishing_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v2.5.2
+      - name: Install pinned SLSA verifier
+        uses: slsa-framework/slsa-verifier/actions/installer@3714a2a4684014deb874a0e737dffa0ee02dd647 # v2.6.0
+        with:
+          github-token: ${{ github.token }}
+      - name: Verify anonymously from a cache-cold registry client
+        env:
+          INDEX_DIGEST: ${{ inputs.digest }}
+          PUBLISHING_SHA: ${{ inputs.publishing_sha }}
+          PUBLISHING_REF: ${{ inputs.publishing_ref }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${INDEX_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "anonymous verification digest is invalid" >&2
+            exit 1
+          fi
+          if [[ ! "${PUBLISHING_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "anonymous verification publishing SHA is invalid" >&2
+            exit 1
+          fi
+          if [[ "${PUBLISHING_REF}" != "refs/heads/main" && "${PUBLISHING_REF}" != refs/tags/python/v* ]]; then
+            echo "anonymous verification publishing ref is invalid" >&2
+            exit 1
+          fi
+          mkdir -p dist/python-anonymous
+          index_ref="${IMAGE_REPOSITORY}@${INDEX_DIGEST}"
+          builder_id="$(python3 -c 'import json; print(json.load(open("images/python/contracts/image-manifest.json"))["provenance"]["slsa"]["builder_id"])')"
+          issuer="$(python3 -c \
+            'import json; print(json.load(open("images/python/contracts/image-manifest.json"))["provenance"]["cosign"]["certificate_oidc_issuer"])')"
+          cosign verify-attestation --type slsaprovenance "${index_ref}" \
+            --certificate-identity "${builder_id}" --certificate-oidc-issuer "${issuer}" \
+            --certificate-github-workflow-repository NWarila/ubi9-base-micro \
+            --certificate-github-workflow-sha "${PUBLISHING_SHA}" \
+            --certificate-github-workflow-ref "${PUBLISHING_REF}" \
+            > dist/python-anonymous/slsa.jsonl
+          python3 tools/assert-python-attestation.py \
+            --verified dist/python-anonymous/slsa.jsonl --image "${IMAGE_REPOSITORY}" \
+            --digest "${INDEX_DIGEST}" --predicate-type https://slsa.dev/provenance/v0.2 --envelope-only
+          source_ref_args=()
+          if [[ "${PUBLISHING_REF}" == "refs/heads/main" ]]; then
+            source_ref_args=(--source-branch main)
+          else
+            source_ref_args=(--source-tag "${PUBLISHING_REF#refs/tags/}")
+          fi
+          slsa-verifier verify-image "${index_ref}" \
+            --source-uri github.com/NWarila/ubi9-base-micro --builder-id "${builder_id}" \
+            "${source_ref_args[@]}" --print-provenance > dist/python-anonymous/provenance.json
+          python3 tools/assert-python-provenance.py \
+            --provenance dist/python-anonymous/provenance.json --image "${IMAGE_REPOSITORY}" \
+            --digest "${INDEX_DIGEST}" --sha "${PUBLISHING_SHA}" --ref "${PUBLISHING_REF}"

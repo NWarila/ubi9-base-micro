@@ -2,6 +2,13 @@
 
 The publish workflow publishes `ghcr.io/nwarila/ubi9-base-micro` by digest from `.github/workflows/publish-image.yaml`. It signs the image digest with Cosign keyless from the repository workflow identity, attaches Syft rpmdb-derived SPDX and CycloneDX SBOM attestations to each platform child digest, gates fixable MEDIUM, HIGH, and CRITICAL findings with both Trivy and Grype, applies the OpenVEX default-deny policy to unfixed HIGH and CRITICAL findings, runs the tailored RHEL9 STIG ARF gate, generates and attests the NIST SP 800-190 section 4.1 image predicate and the STIG ARF summary predicate, then passes the index digest to the SLSA container generator reusable workflow. The final push-only roll-up verifies that the full attestation set is Rekor-logged.
 
+This page is the completed-publication contract for `base-micro`. The
+`base-python` publisher is merged but has not completed its first production
+run. After it does, use the Python-specific commands in
+[`../how-to/verify-a-published-image.md`](../how-to/verify-a-published-image.md#verify-base-python)
+and the subject matrix in
+[`verification-contract.md`](verification-contract.md#base-python-published-evidence-contract-not-yet-produced).
+
 ## Prerequisites
 
 - `cosign`
@@ -151,37 +158,46 @@ an in-tool allowlist entry for `local/ubi9-base-python:ci-amd64` and
 `images/python/vex/cve-2026-11940.openvex.json` `affected` statement must match
 every field through `review-by 2026-10-01`.
 
-The gate also contains a dormant path for a digest-addressed
+The gate also contains a production-wired path for a digest-addressed
 `ghcr.io/nwarila/ubi9-base-python` platform child. It requires the conjunction
 of fixed in-tool constraints, version 2 of the canonical reviewed statement, and
 paired `--index-reference` plus `--index-manifest` evidence. The tool recomputes
 the digest of the exact supplied index bytes, enforces exactly one
-`linux/amd64` child and one `linux/arm64` child with distinct digests and only
-the locked BuildKit attestation shape otherwise present, requires every
-descriptor digest to be unique across all roles, and binds the eligible digest
-to the architecture reported by both scanners. The duplicate-or-contradictory
+`linux/amd64` child and one `linux/arm64` child with distinct digests, locks the
+BuildKit attestation platform and annotations, requires every descriptor digest
+to be unique across all roles, and binds the eligible digest to the architecture
+reported by both scanners. The duplicate-or-contradictory
 descriptor diagnostic names the first and repeated positions, while the
 child/attestation digest-disjointness guard remains a separate rejection. The
 canonical document uses a non-image-matchable policy IRI for this scope rather
-than a repository wildcard.
+than a repository wildcard. This VEX-side policy does not constrain attestation
+count or per-child reference cardinality and does not close the top-level key
+set of either descriptor kind; measured `urls`, `data`, and `artifactType`
+additions are accepted on both kinds. It also accepts an invented key on a
+runnable `platform` object. Before this gate runs, the publish-side resolver
+exact-checks the four-key runnable and five-key attestation shapes, requires
+exact `architecture` and `os` platform objects, and requires exactly one
+attestation reference per child.
 
-The supplied index is a dynamic authorization input and is not yet trusted.
-There is no production caller, and these checks neither publish base-python nor
-prove that a supplied index came from a registry publication. Production use
-still requires a verifier-locked dataflow that fetches the exact registry-served
-index bytes for the digest just pushed and binds that digest to the publisher's
-signing, attestation, and alias operations. Until then the path remains a
-self-tested dormant primitive and the end-to-end child binding remains open.
+On each run, the merged production caller fetches the exact index bytes once
+from the registry at the digest reported by its push metadata, corroborates
+their SHA-256, and checksum-protects every cross-job transfer. The same verified
+digest selects the VEX, signing, attestation, provenance, collision-check, and
+alias consumers. This closes the registry-origin dependency for the index that
+run pushed and read back; it does not make final alias application atomic
+against an external writer. The first privileged execution remains post-merge.
+TD-11 records all three VEX-side descriptor-policy asymmetries.
 
 Valid fix evidence from either scanner refuses the disposition. On both paths,
 raw scanner vulnerability IDs, package names, and installed versions must
 already contain no surrounding whitespace; padded identity evidence is
 malformed rather than normalized into authorization. `tools/verify.py`
-independently expires the entry even if the scanner finding becomes dormant.
+independently expires the entry even if the scanner finding is absent.
 It also locks seven published-child constants and nine function ASTs and reports
 rejection of 17 canonical-VEX mutations, 8 allowlist mutations, and 17
-published-child surface mutations. These are verifier self-test counts, not
-evidence of a production invocation. This accept-and-track path does not make the image unaffected
+published-child surface mutations. The production workflow is configured to
+invoke the complete published-child CLI once for each architecture when its
+first privileged run occurs. This accept-and-track path does not make the image unaffected
 and is not a TD-6 fixable-CVE scanner suppression.
 
 ## SBOM Source
@@ -192,4 +208,7 @@ BuildKit SBOM generation is disabled in the publish build with `--sbom=false`. T
 
 ## Anonymous Pull Status
 
-The package is publicly readable. The complete pull and verification chain above works from a clean machine without registry authentication.
+The `ghcr.io/nwarila/ubi9-base-micro` package is publicly readable. The complete
+pull and verification chain above works from a clean machine without registry
+authentication. This statement does not apply to the not-yet-published Python
+package.

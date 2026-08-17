@@ -16,18 +16,25 @@ and this project adheres to
   two-key gate requiring both its closed in-tool authorization and the reviewed
   `affected` OpenVEX statement. The statement is now version 2 and also names a
   non-image-matchable policy scope for potential published platform children.
-  A new dormant path can derive an eligible digest-addressed child under the
+  The production path can derive an eligible digest-addressed child under the
   pinned `ghcr.io/nwarila/ubi9-base-python` repository from exact,
   digest-verified OCI index bytes and bind it to the architecture reported by
-  both scanners. Its closed descriptor policy requires exactly one
-  `linux/amd64` child and one `linux/arm64` child with distinct digests, permits
-  only the locked BuildKit attestation shape otherwise, requires every
-  descriptor digest to be unique across the index, and separately requires
-  child and attestation digests to be disjoint. That path combines fixed in-tool
-  constraints, the canonical statement, and caller-supplied index evidence,
-  which remains a dynamic, untrusted authorization input. No production
-  workflow calls the primitive, base-python remains externally unpublished, and
-  a trusted registry-origin binding is still required before production use.
+  both scanners. The VEX-side policy requires exactly one `linux/amd64` child
+  and one `linux/arm64` child with distinct digests, locks the BuildKit
+  attestation platform and annotations, requires every descriptor digest to be
+  unique across the index, and separately requires child and attestation
+  digests to be disjoint. It does not close either descriptor kind's top-level
+  key set or constrain attestation cardinality: measured `urls`, `data`, and
+  `artifactType` additions on runnable and attestation descriptors are accepted,
+  as are excess or duplicate per-child attestation references. That path
+  combines fixed in-tool constraints, the canonical statement, and registry
+  index evidence. The
+  publisher fetches those bytes once by the push-reported digest, corroborates
+  their SHA-256, protects cross-job transfers, and uses that digest for every
+  consumer. Its stricter publish-side resolver requires exactly the four-key
+  runnable descriptor and five-key attestation descriptor shapes, and exactly
+  one BuildKit attestation reference per child. TD-11 tracks both measured
+  VEX-side gaps.
   Both paths refuse valid fix evidence and byte-noncanonical scanner identities,
   expire after `review-by 2026-10-01`, suppress no raw finding, and do not make
   the image unaffected.
@@ -51,11 +58,12 @@ and this project adheres to
 
 - `images/python/` evidence machinery: a python STIG tailoring and justification
   ledger, forked SBOM, NIST SP 800-190 and rootfs-secret gates, an OpenVEX
-  disclosure, and the image contract's record of the identity a future publish
-  workflow must use. The evidence chain runs in CI on locally built images for
-  both architectures. The image still has no external or project publication,
-  public or moving tag, signature, consumer-resolvable attestation, or
-  transparency-log evidence; those arrive with the production publisher.
+  disclosure, and the image contract's record of the identity the production
+  publish workflow must use. The evidence chain runs in CI on locally built
+  images for both architectures. The image still has no external or project
+  publication, public or moving tag, signature, consumer-resolvable attestation,
+  or transparency-log evidence; those require a completed production publish
+  run.
 - `images/python/`: the base-python image build — a pinned, signature-verified RPM
   transaction applied to a byte-asserted clone of the published `base-micro`
   parent, producing one truthful combined rpmdb; build-support packages are
@@ -65,9 +73,9 @@ and this project adheres to
   entrypoint) and is gated in CI by tool self-tests, a functional stdlib battery
   with a real loopback TLS handshake, parent-subset invariance on the exported
   image, an OCI config contract, dual CVE scanners reading the combined rpmdb,
-  and a both-arch byte-identical double-build. The image is built and gated
-  only: it has no external or project publication, public or moving tag,
-  signature, or consumer-resolvable attestation or digest yet.
+  and a both-arch byte-identical double-build. The image remains unpublished: it
+  has no external or project publication, public or moving tag, signature, or
+  consumer-resolvable attestation or digest yet.
 - Added a registry-capable Python `release` Bake target and a pull-request-only
   preflight that invokes it once for both architectures. The preflight pushes a
   candidate index and unsigned BuildKit provenance to a loopback-bound ephemeral
@@ -75,6 +83,23 @@ and this project adheres to
   with the contract and same-commit `ci` builds. It creates no project package,
   external publication, production signature or attestation, SLSA or Rekor
   record, or consumer-resolvable digest.
+- Added the guarded `base-python` publication workflow for `main` and
+  `python/v*` pushes. It uses an unaliased digest-first candidate, per-child
+  evidence and index-only trust/SLSA evidence, credentialed pre-alias
+  verification, non-atomic collision detection with post-apply readback, and a
+  separate anonymous post-visibility leg. This is publication capability only;
+  the publisher is merged and its first production execution is awaited. No
+  Python package, public artifact, or consumable image is claimed by this
+  change.
+- Added a fail-closed Python publish-scope policy. Python release tags always
+  publish; a `main` push skips only when every changed path is in the closed
+  unrelated allowlist, while Python-tree changes, consumed shared inputs,
+  unknown paths, missing published-revision evidence, and empty deltas publish.
+- Added the index-only Python trust-contract predicate and exact provenance
+  policy. The predicate binds package, `images/python/` tree, workflow, and
+  commit to the candidate index during a successful publish; the SLSA checks
+  additionally bind the verified statement and Fulcio extensions to the exact
+  source SHA/ref, Python caller, and pinned generator commit.
 
 ### Changed
 

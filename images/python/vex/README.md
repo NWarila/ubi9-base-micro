@@ -14,9 +14,9 @@ accept-and-track authorization implemented in `tools/assert-vex.py` and matched
 by `cve-2026-11940.openvex.json`. Every other `affected` statement, and every
 `under_investigation` statement, remains documentary and does not satisfy the
 gate. Files under `vex/` require review through `.github/CODEOWNERS`. The
-pull-request release preflight does not attest OpenVEX; a future production
-publisher will attest each JSON file to the per-architecture image digests with
-`cosign attest --type openvex`.
+pull-request release preflight does not attest OpenVEX. The production publisher
+attests each JSON file, byte-unmodified, to both per-architecture image digests
+with `cosign attest --type openvex` after the same-child gate succeeds.
 
 The image inherits the deliberately held FIPS provider packages from its parent, so the same
 disclosure applies here with a base-python product identity.
@@ -40,14 +40,22 @@ For the two legacy CI products, the gate accepts the finding only when the
 document and the in-tool allowlist match every canonical product, package,
 version, and status, and the action statement contains the exact TD-9 and
 `review-by 2026-10-01` markers. For a digest-addressed child under the pinned
-GHCR repository, the dormant path instead requires the conjunction of fixed
+GHCR repository, the production path instead requires the conjunction of fixed
 in-tool constraints, the same canonical reviewed statement, and paired index
 evidence. `--index-reference` identifies an index digest and
 `--index-manifest` supplies its exact bytes. The tool recomputes the byte digest,
 enforces an OCI index with exactly one `linux/amd64` child and one `linux/arm64`
-child with distinct digests plus only the locked BuildKit attestation shape,
-requires a unique digest for every descriptor in `manifests` across all roles,
-and binds the product to the child matching the scanner-reported architecture.
+child with distinct digests, locks the BuildKit attestation platform and
+annotations, requires a unique digest for every descriptor in `manifests`
+across all roles, and binds the product to the child matching the
+scanner-reported architecture. It does not constrain attestation count or
+per-child reference cardinality, and it accepts measured `urls`, `data`, and
+`artifactType` additions on both descriptor kinds because it does not close
+their top-level key sets. It also accepts an invented member in a runnable
+child's `platform` object. Before any consumer runs, the production publish
+resolver requires exactly the four-key runnable and five-key attestation
+descriptor shapes, exact `architecture` and `os` platform objects, and exactly
+one attestation descriptor referring to each child.
 The duplicate-or-contradictory descriptor diagnostic names the first and
 repeated positions. The index digest is never eligible, and a distinct
 attestation-descriptor digest is rejected when submitted as the product. The
@@ -55,19 +63,23 @@ separate child/attestation digest-disjointness guard makes an alias malformed
 and rejects it before child-product eligibility is decided. Extra or duplicate
 runnable platforms, nested indexes, and architecture swaps are also rejected.
 
-The supplied index remains a dynamic authorization input, not a trusted one.
-There is no production caller and no evidence here that the index was actually
-published. A production publisher must obtain the bytes from the registry for
-the exact index it pushed and bind the same digest to signing, attestation, and
-aliases before this path can be activated. Until that dataflow is implemented
-and verifier-locked, the capability remains a self-tested dormant primitive and
-the child-binding defect is not closed end-to-end.
+The production caller obtains the index bytes from the registry exactly once at
+the digest reported by its push metadata. It requires SHA-256 over those exact
+bytes to equal that independently reported digest, seals the artifact for every
+cross-job handoff, and re-verifies it before use. The same index digest selects
+the publish resolver, both child VEX calls, recursive signing, attestations,
+SLSA provenance, collision checks, and final aliases. This binds the dynamic
+authorization input to the index this run pushed and read back; it does not make
+the later resolve-then-apply alias operation atomic against an external writer.
+All three VEX-side descriptor-policy differences are tracked as TD-11. This caller
+is merged but its privileged job first executes after merge; no completed Python
+production gate or publication is claimed here.
 
 The authorization is refused if either scanner supplies valid fix evidence. The
 raw scanner vulnerability ID, package name, and installed version must also be
 byte-canonical on both paths: surrounding whitespace is malformed evidence and
 is rejected rather than normalized into an exact match. Gate expiry is scoped
-to a present matching candidate; `tools/verify.py` independently expires a dormant
+to a present matching candidate; `tools/verify.py` independently expires the
 repository entry after the review date.
 
 `sqlite-component-not-present.openvex.json` records five distinct

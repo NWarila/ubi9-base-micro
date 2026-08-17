@@ -1,7 +1,11 @@
 # Verify a Published Image
 
-Use this task after a publish run has produced a digest. The full command
-contract lives in [`../reference/verify.md`](../reference/verify.md).
+Use this task after a publish run has produced a digest. The completed
+`base-micro` command contract lives in
+[`../reference/verify.md`](../reference/verify.md). The Python-specific contract
+is summarized in
+[`../reference/verification-contract.md`](../reference/verification-contract.md#base-python-published-evidence-contract-not-yet-produced);
+the Python steps below apply only after its first production publish succeeds.
 
 ## Prerequisites
 
@@ -121,3 +125,171 @@ slsa-verifier verify-image "${INDEX_REF}" \
 
 Do not substitute `gh attestation verify`; this repository's published evidence
 uses Cosign OCI attestations.
+
+## Verify base-python
+
+The presence of the Python publish workflow is capability only; it does not mean
+the image has been published. Use this procedure only after a completed Python
+publish run reports its immutable index digest and publishing SHA/ref.
+
+There are two distinct verification states. During publication, a fresh runner
+logs in to GHCR and performs the cache-cold `cosign verify-attestation` and
+`slsa-verifier` checks against the unaliased digest before the final job applies
+consumer aliases. A newly created GHCR package is private by default, so success
+of that credentialed leg establishes a published artifact but not public
+consumability. After the owner changes package visibility, repeat the checks from
+a fresh client with no registry credentials. Only success of that genuinely
+anonymous leg establishes that the digest is publicly consumable. An anonymous
+pull failure alone does not prove that a private publication exists.
+
+The commands below are the anonymous leg. Start with an empty registry-auth
+directory; do not log in to GHCR in this shell:
+
+```sh
+set -euo pipefail
+VERIFY_AUTH_DIR="$(mktemp -d)"
+trap 'rm -rf -- "${VERIFY_AUTH_DIR}"' EXIT
+export DOCKER_CONFIG="${VERIFY_AUTH_DIR}"
+export REGISTRY_AUTH_FILE="${VERIFY_AUTH_DIR}/containers-auth.json"
+IMAGE="ghcr.io/nwarila/ubi9-base-python"
+TAG="base-python-<first-12-lowercase-hex-of-publishing-sha>"
+PUBLISH_SHA="<40-lowercase-hex-publishing-sha>"
+PUBLISH_REF="refs/heads/main" # or refs/tags/python/v<version>
+INDEX_DIGEST="$(crane digest "${IMAGE}:${TAG}")"
+INDEX_REF="${IMAGE}@${INDEX_DIGEST}"
+AMD64_DIGEST="$(crane digest --platform linux/amd64 "${INDEX_REF}")"
+ARM64_DIGEST="$(crane digest --platform linux/arm64 "${INDEX_REF}")"
+AMD64_REF="${IMAGE}@${AMD64_DIGEST}"
+ARM64_REF="${IMAGE}@${ARM64_DIGEST}"
+PUBLISH_IDENTITY="https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-python.yaml@${PUBLISH_REF}"
+SLSA_IDENTITY="https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0"
+ISSUER="https://token.actions.githubusercontent.com"
+```
+
+Verify the index and both recursively signed children:
+
+```sh
+cosign verify "${INDEX_REF}" \
+  --certificate-identity "${PUBLISH_IDENTITY}" \
+  --certificate-oidc-issuer "${ISSUER}" \
+  --certificate-github-workflow-repository NWarila/ubi9-base-micro \
+  --certificate-github-workflow-sha "${PUBLISH_SHA}" \
+  --certificate-github-workflow-ref "${PUBLISH_REF}"
+cosign verify "${AMD64_REF}" \
+  --certificate-identity "${PUBLISH_IDENTITY}" \
+  --certificate-oidc-issuer "${ISSUER}" \
+  --certificate-github-workflow-repository NWarila/ubi9-base-micro \
+  --certificate-github-workflow-sha "${PUBLISH_SHA}" \
+  --certificate-github-workflow-ref "${PUBLISH_REF}"
+cosign verify "${ARM64_REF}" \
+  --certificate-identity "${PUBLISH_IDENTITY}" \
+  --certificate-oidc-issuer "${ISSUER}" \
+  --certificate-github-workflow-repository NWarila/ubi9-base-micro \
+  --certificate-github-workflow-sha "${PUBLISH_SHA}" \
+  --certificate-github-workflow-ref "${PUBLISH_REF}"
+```
+
+Verify the complete per-child predicate matrix:
+
+- SPDX rpmdb SBOM, CycloneDX rpmdb SBOM, OpenVEX, NIST SP 800-190, and STIG ARF
+  are each required on both the `linux/amd64` and `linux/arm64` child digests.
+- The Python trust contract and SLSA provenance are required on the index only.
+
+```sh
+set -euo pipefail
+verify_python_child() {
+  PYTHON_CHILD_REF="$1"
+  cosign verify-attestation --type spdxjson "${PYTHON_CHILD_REF}" \
+    --certificate-identity "${PUBLISH_IDENTITY}" \
+    --certificate-oidc-issuer "${ISSUER}"
+  cosign verify-attestation --type cyclonedx "${PYTHON_CHILD_REF}" \
+    --certificate-identity "${PUBLISH_IDENTITY}" \
+    --certificate-oidc-issuer "${ISSUER}"
+  cosign verify-attestation --type openvex "${PYTHON_CHILD_REF}" \
+    --certificate-identity "${PUBLISH_IDENTITY}" \
+    --certificate-oidc-issuer "${ISSUER}"
+  cosign verify-attestation --type https://nwarila.dev/attestations/nist-sp-800-190-image/v1 "${PYTHON_CHILD_REF}" \
+    --certificate-identity "${PUBLISH_IDENTITY}" \
+    --certificate-oidc-issuer "${ISSUER}"
+  cosign verify-attestation --type https://nwarila.dev/attestations/stig-arf/v1 "${PYTHON_CHILD_REF}" \
+    --certificate-identity "${PUBLISH_IDENTITY}" \
+    --certificate-oidc-issuer "${ISSUER}"
+}
+verify_python_child "${AMD64_REF}"
+verify_python_child "${ARM64_REF}"
+```
+
+Verify the exact index-only trust contract. The checkout at the publishing
+commit supplies the expected `images/python/` tree identity:
+
+```sh
+PYTHON_TREE="$(git rev-parse "${PUBLISH_SHA}:images/python")"
+python3 tools/python-trust-contract.py \
+  --digest "${INDEX_DIGEST#sha256:}" \
+  --tree "${PYTHON_TREE}" --commit "${PUBLISH_SHA}" \
+  --predicate-out "${VERIFY_AUTH_DIR}/expected-trust-contract.predicate.json" \
+  --statement-out "${VERIFY_AUTH_DIR}/expected-trust-contract.statement.json"
+
+cosign verify-attestation \
+  --type https://nwarila.dev/attestations/python-trust-contract/v1 \
+  "${INDEX_REF}" \
+  --certificate-identity "${PUBLISH_IDENTITY}" \
+  --certificate-oidc-issuer "${ISSUER}" \
+  > "${VERIFY_AUTH_DIR}/verified-trust-contract.jsonl"
+
+python3 tools/assert-python-attestation.py \
+  --verified "${VERIFY_AUTH_DIR}/verified-trust-contract.jsonl" \
+  --image "${IMAGE}" --digest "${INDEX_DIGEST}" \
+  --predicate-type https://nwarila.dev/attestations/python-trust-contract/v1 \
+  --expected-statement "${VERIFY_AUTH_DIR}/expected-trust-contract.statement.json"
+```
+
+Verify provenance at the generator's exact identity, then bind the authenticated
+SLSA layer certificate to the pinned generator commit, publishing SHA/ref, and
+Python caller workflow:
+
+```sh
+cosign verify-attestation --type slsaprovenance "${INDEX_REF}" \
+  --certificate-identity "${SLSA_IDENTITY}" \
+  --certificate-oidc-issuer "${ISSUER}" \
+  --certificate-github-workflow-repository NWarila/ubi9-base-micro \
+  --certificate-github-workflow-sha "${PUBLISH_SHA}" \
+  --certificate-github-workflow-ref "${PUBLISH_REF}" \
+  > "${VERIFY_AUTH_DIR}/verified-slsa.jsonl"
+
+ATTESTATION_REF="$(cosign triangulate --type attestation "${INDEX_REF}")"
+crane manifest "${ATTESTATION_REF}" \
+  > "${VERIFY_AUTH_DIR}/attestation-manifest.json"
+SLSA_LAYER_DIGEST="$(python3 tools/assert-python-slsa-certificate.py \
+  --attestation-manifest "${VERIFY_AUTH_DIR}/attestation-manifest.json" \
+  --print-layer-digest)"
+crane blob "${IMAGE}@${SLSA_LAYER_DIGEST}" \
+  > "${VERIFY_AUTH_DIR}/slsa-envelope.json"
+python3 tools/assert-python-slsa-certificate.py \
+  --verified "${VERIFY_AUTH_DIR}/verified-slsa.jsonl" \
+  --attestation-manifest "${VERIFY_AUTH_DIR}/attestation-manifest.json" \
+  --envelope "${VERIFY_AUTH_DIR}/slsa-envelope.json" \
+  --sha "${PUBLISH_SHA}" --ref "${PUBLISH_REF}"
+```
+
+For a main publish, authenticate the source branch and print the provenance for
+the exact-source policy helper. For a release, replace `--source-branch main`
+with `--source-tag "${PUBLISH_REF#refs/tags/}"`.
+
+```sh
+slsa-verifier verify-image "${INDEX_REF}" \
+  --source-uri github.com/NWarila/ubi9-base-micro \
+  --source-branch main \
+  --builder-id "${SLSA_IDENTITY}" \
+  --print-provenance > "${VERIFY_AUTH_DIR}/verified-provenance.json"
+
+python3 tools/assert-python-provenance.py \
+  --provenance "${VERIFY_AUTH_DIR}/verified-provenance.json" \
+  --image "${IMAGE}" --digest "${INDEX_DIGEST}" \
+  --sha "${PUBLISH_SHA}" --ref "${PUBLISH_REF}"
+```
+
+These commands verify only the digest and publishing identity supplied above.
+They do not claim that any Python image currently exists. For a release, the
+publishing ref must be in the `python/v*` namespace; top-level `v*` tags belong
+to the root-image publisher.
