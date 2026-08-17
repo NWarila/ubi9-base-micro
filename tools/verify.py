@@ -6775,8 +6775,8 @@ def check_python_ci_preflight() -> None:
 
 
 PUBLISH_PYTHON_WORKFLOW = ".github/workflows/publish-python.yaml"
-PUBLISH_PYTHON_WORKFLOW_SHA256 = "134fd0acad349f40140e2f1c0407ae7892b0e1f31543cf003319777e92b920b4"
-PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH = 84521
+PUBLISH_PYTHON_WORKFLOW_SHA256 = "9c27a2f12ea0d9f1ae43a39f24aa39b30c95d97ac88b994e492a56b6678d6b1e"
+PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH = 84687
 PUBLISH_PYTHON_TRIGGER_BLOCK = "on:\n  pull_request:\n\n"
 PUBLISH_PYTHON_REGISTRY_IMAGE = (
     "docker.io/library/registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e"
@@ -8063,6 +8063,8 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
     anonymous = _workflow_job_block(workflow, "anonymous-verification")
     preflight = _workflow_job_block(workflow, "release-preflight")
     build_step = _workflow_named_step(publish, "Build and push unaliased candidate")
+    gate_cosign_step = _workflow_named_step(gate_evidence, "Install Cosign")
+    gate_tools_step = _workflow_named_step(gate_evidence, "Install publication gate tools")
     evidence_types = ("spdx", "cyclonedx", "openvex", "nist_800_190", "stig_arf")
 
     trigger_invalid = _python_ci_trigger_block(workflow) != PUBLISH_PYTHON_TRIGGER
@@ -8102,6 +8104,16 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
     )
     fail_closed_invalid = any(
         marker in workflow for marker in ("continue-on-error", "|| true", "--exit-code 0", "set +e")
+    )
+    gate_cosign_action_invalid = not gate_cosign_step or tuple(
+        re.findall(r"^        uses: ([^\s#]+)", gate_cosign_step, re.MULTILINE)
+    ) != ("sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",)
+    gate_cosign_version_invalid = bool(gate_cosign_step) and (
+        _workflow_action_with_text(gate_cosign_step) != "cosign-release: v2.5.2"
+    )
+    gate_cosign_order_invalid = bool(gate_cosign_step) and (
+        not gate_tools_step
+        or gate_evidence.index(gate_cosign_step) + len(gate_cosign_step) != gate_evidence.index(gate_tools_step)
     )
     generator_invalid = not (
         "uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0" in generator
@@ -8331,6 +8343,12 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
     reject(guards_invalid, "Python publish base-repository guard mismatch")
     # CHECK: python-publish-fail-closed
     reject(fail_closed_invalid, "Python publish repository-authored gate is not fail-closed")
+    # CHECK: python-publish-gate-cosign-action
+    reject(gate_cosign_action_invalid, "Python publish gate-evidence Cosign action mismatch")
+    # CHECK: python-publish-gate-cosign-version
+    reject(gate_cosign_version_invalid, "Python publish gate-evidence Cosign version input mismatch")
+    # CHECK: python-publish-gate-cosign-order
+    reject(gate_cosign_order_invalid, "Python publish gate-evidence Cosign ordering mismatch")
     # CHECK: python-publish-generator
     reject(generator_invalid, "Python publish reusable SLSA generator caller mismatch")
     # CHECK: python-publish-exporter
@@ -8402,6 +8420,36 @@ def _publish_python_workflow_fixtures(workflow: str) -> list[tuple[str, str, str
             "          set -euo pipefail\n",
             "          set +e\n",
             "Python publish repository-authored gate is not fail-closed",
+        ),
+        changed(
+            "gate-cosign-deletion",
+            "      - name: Install Cosign\n"
+            "        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n"
+            "        with:\n"
+            "          cosign-release: v2.5.2\n",
+            "",
+            "Python publish gate-evidence Cosign action mismatch",
+        ),
+        changed(
+            "gate-cosign-action-sha",
+            "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2",
+            "sigstore/cosign-installer@0000000000000000000000000000000000000000 # v4.1.2",
+            "Python publish gate-evidence Cosign action mismatch",
+        ),
+        changed(
+            "gate-cosign-version",
+            "        with:\n          cosign-release: v2.5.2\n      - name: Install publication gate tools",
+            "      - name: Install publication gate tools",
+            "Python publish gate-evidence Cosign version input mismatch",
+        ),
+        changed(
+            "gate-cosign-order",
+            "          cosign-release: v2.5.2\n      - name: Install publication gate tools",
+            "          cosign-release: v2.5.2\n"
+            "      - name: Confirm Cosign version\n"
+            "        run: cosign version\n"
+            "      - name: Install publication gate tools",
+            "Python publish gate-evidence Cosign ordering mismatch",
         ),
         changed(
             "generator",
@@ -8578,6 +8626,9 @@ def check_publish_python_workflow_checker_mutation_self_test() -> None:
         ("python-publish-permissions", "permissions_invalid", "permissions"),
         ("python-publish-guards", "guards_invalid", "guards"),
         ("python-publish-fail-closed", "fail_closed_invalid", "fail-closed"),
+        ("python-publish-gate-cosign-action", "gate_cosign_action_invalid", "gate-cosign-action-sha"),
+        ("python-publish-gate-cosign-version", "gate_cosign_version_invalid", "gate-cosign-version"),
+        ("python-publish-gate-cosign-order", "gate_cosign_order_invalid", "gate-cosign-order"),
         ("python-publish-generator", "generator_invalid", "generator"),
         ("python-publish-exporter", "exporter_invalid", "exporter"),
         ("python-publish-closed-caller", "closed_caller_invalid", "closed-caller"),
