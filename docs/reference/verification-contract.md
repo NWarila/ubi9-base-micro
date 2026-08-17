@@ -13,7 +13,7 @@ runtime package floor, footprint ceiling, Cosign identity, OIDC issuer, SLSA
 builder ID, and repository-generated attestation predicate types. A worked
 consumer check lives in
 [`../../contracts/examples/README.md`](../../contracts/examples/README.md).
-The unpublished `base-python` image has its distinct contract in
+The production-attempted `base-python` image has its distinct contract in
 [`../../images/python/contracts/image-manifest.json`](../../images/python/contracts/image-manifest.json),
 validated by its adjacent schema. That manifest also declares the Python
 workflow identity and its six repository-generated predicate types, including
@@ -23,7 +23,7 @@ attestations already exist.
 | Boundary | Runs on | Proves | Does not prove |
 | --- | --- | --- | --- |
 | Pull request | `pull_request` to `main` | Repository contract, lint, local build, hardening, FIPS artifact checks, SBOM and scanner gates, OpenVEX policy, NIST predicate validation, tailored STIG ARF, byte-for-byte rootfs reproducibility, and the Python release exporter exercised against a loopback-bound ephemeral registry. | Project or external publication, published signatures or attestations, SLSA provenance over a consumer-resolvable digest, Rekor roll-up, or anonymous GHCR pull. |
-| Publish | `push` to `main`, root-image `v*` tags, and Python `python/v*` tags | After a successful image-specific run: multi-arch publish, Cosign keyless signature, Syft rpmdb-derived SPDX and CycloneDX attestations, NIST SP 800-190 and STIG ARF predicates, OpenVEX attestations when needed, SLSA L3 provenance, and Rekor roll-up. Python additionally requires the index-only trust contract. | For a newly created Python package, the one-time public visibility change required before anonymous GHCR verification can pass. The Python production jobs first execute after merge and have not yet produced this evidence. |
+| Publish | `push` to `main`, root-image `v*` tags, and Python `python/v*` tags | After a successful image-specific run: multi-arch publish, Cosign keyless signature, Syft rpmdb-derived SPDX and CycloneDX attestations, NIST SP 800-190 and STIG ARF predicates, OpenVEX attestations when needed, SLSA L3 provenance, and Rekor roll-up. Python additionally requires the index-only trust contract. | A failed Python attempt can leave public, unaliased candidate digests and BuildKit provenance without production gate evidence, signatures, Cosign attestations, SLSA-generator provenance, Rekor records, or aliases; the 2026-08-17 attempt did so. |
 | Post-publish audit | Clean unauthenticated verifier | Anonymous pull by digest and the full image-specific `cosign` plus `slsa-verifier` contract in [`verify.md`](verify.md) or [`../how-to/verify-a-published-image.md`](../how-to/verify-a-published-image.md#verify-base-python). | Future rebuild currency or downstream family-coherence status. |
 
 ## Micro publish scope
@@ -45,12 +45,20 @@ publication; it does not define the Python image's publication scope. A skipped
 run creates no new micro publication and does not remove or re-point any
 already-published digest or revision-bound attestation.
 
-The Python publish boundary above describes repository capability, not a
-completed publication. The publisher is merged and awaits its first successful
-production run. This revision does not claim that
-`ghcr.io/nwarila/ubi9-base-python` has been published, made public, or made
+The Python publish boundary above describes repository capability and the
+requirements for a successful publication. The 2026-08-17 production attempt
+failed in `registry-served gates and evidence` while `Install publication gate
+tools` tried to install Syft without Cosign available. The package nevertheless
+exists publicly and serves unaliased, unsigned candidate digests only. The
+successful, signed image described by this contract is not yet
 consumable. The image is not publicly consumable at this revision. Those claims
 require evidence from the corresponding completed boundary.
+
+The candidate's two BuildKit `mode=max` provenance attestation manifests exist.
+No production gate evidence, Cosign signature or attestation, SLSA-generator
+provenance, Rekor record, or consumer alias exists. The missing Cosign
+prerequisite is now repaired and lock-enforced; production proof remains pending
+the next `main` push.
 
 ## Python publish scope
 
@@ -72,8 +80,8 @@ set: `docs/**`, `.github/ISSUE_TEMPLATE/**`, or exactly `.editorconfig`,
 creates or verifies an image; once a prior publication exists, it avoids
 replacing that Python digest when all changes are classified as unrelated.
 
-The Python CI workflow has an active CI-rootfs preflight for the unpublished
-`base-python` image. Its build and reproducibility matrices run for both
+The Python CI workflow has an active CI-rootfs preflight for the `base-python`
+image. Its build and reproducibility matrices run for both
 architectures on every push to `main` and manual dispatch; pull requests retain
 the Python-tree and shared-gate path selector. Both matrices assert five
 contracted Buildx/BuildKit identities before building. The reproducibility
@@ -122,8 +130,8 @@ https://token.actions.githubusercontent.com
 
 ## Base-python published evidence contract (not yet produced)
 
-When its privileged job runs after merge, the Python publisher pushes an
-unaliased multi-architecture candidate by digest. It fetches the index bytes
+On a production attempt, the Python publisher pushes an unaliased
+multi-architecture candidate by digest. It fetches the index bytes
 from the registry exactly once at the push-reported
 digest, requires SHA-256 over those bytes to corroborate that metadata, and
 checksums the artifact for every cross-job handoff. The same verified index
@@ -162,10 +170,12 @@ explicitly accepted in
 
 The first cache-cold verification leg runs on a fresh runner with GHCR
 credentials against the candidate digest and completes before aliases are
-applied. A successful publish can therefore exist while the new GHCR package is
-still private. That is distinct from public consumability. Only after the owner
-makes the package public and the separate cache-cold verification succeeds with
-no registry credentials may the image be described as publicly consumable.
+applied. A successful credentialed leg establishes the production evidence on
+the candidate but does not by itself establish anonymous access. Public
+consumability requires the separate cache-cold verification to succeed without
+registry credentials. The current package is already public because it
+inherited visibility on its first push; the failed attempt did not reach either
+production verification leg.
 
 From a repository checkout at the publishing commit, set `INDEX_DIGEST`,
 `AMD64_DIGEST`, `ARM64_DIGEST`, the publishing SHA, and its exact ref. Then

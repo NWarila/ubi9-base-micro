@@ -21,7 +21,7 @@ Python `tarfile` archive encoding.
 `canonical_rootfs_digest` is asserted at the scope of each image's reviewed
 Docker Buildx profile. The non-Python workflows pin the setup action SHA but
 still let it select Buildx `latest` and the default moving BuildKit driver image.
-The built-and-gated, unpublished `base-python` path instead pins Buildx by
+The production-attempted `base-python` path instead pins Buildx by
 version, expected commit, and Linux-amd64 asset SHA-256 and pins its BuildKit
 driver with a versioned digest-qualified reference in
 `images/python/docker-bake.json`. Micro's Buildx and BuildKit remain unpinned by
@@ -32,6 +32,14 @@ different `canonical_rootfs_digest`. The builder-portable checks available today
 are the per-file content digests recorded in the contract, specifically
 `rpmdb_sha256` for `/var/lib/rpm/rpmdb.sqlite` and `fips_so_sha256` for
 `/usr/lib64/ossl-modules/fips.so`.
+
+The 2026-08-17 production attempt failed in `registry-served gates and evidence`
+while `Install publication gate tools` tried to install Syft without Cosign
+available. That prerequisite is now repaired and lock-enforced; production proof
+remains pending the next `main` push. The package exists publicly and serves only
+unaliased, unsigned candidate digests. Its two BuildKit `mode=max` provenance
+attestation manifests exist; no production gate evidence, Cosign signature or
+attestation, SLSA-generator provenance, Rekor record, or consumer alias exists.
 
 The Python reproducibility matrix runs the `repro` target twice with no cache
 for each architecture, compares both exported rootfs trees, and asserts the

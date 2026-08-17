@@ -227,8 +227,14 @@ ghcr.io/nwarila/ubi9-base-micro
 ```
 
 The merged Python publisher targets
-`ghcr.io/nwarila/ubi9-base-python`, but its first successful production run is
-still awaited; that target is not yet a published or publicly consumable image.
+`ghcr.io/nwarila/ubi9-base-python`. Its 2026-08-17 production attempt failed in
+`registry-served gates and evidence` while `Install publication gate tools`
+tried to install Syft without Cosign available. The prerequisite is now repaired
+and lock-enforced; production proof remains pending the next `main` push. The
+package exists publicly and serves only unaliased, unsigned candidate digests.
+Its two BuildKit `mode=max` provenance attestation manifests exist; no production
+gate evidence, Cosign signature or attestation, SLSA-generator provenance, Rekor
+record, or consumer alias exists.
 
 ## Security and Compliance Posture
 

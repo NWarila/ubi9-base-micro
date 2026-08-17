@@ -29,7 +29,8 @@ self-satisfied. Required status checks have `strict=false`, so the pull-request
 head need not be current with the base branch.
 
 `base-python` is a separate pre-publication image path and remains externally
-unpublished. It has an active CI-rootfs preflight, a pull-request-only release
+visible as a public package after the failed 2026-08-17 production attempt. It
+has an active CI-rootfs preflight, a pull-request-only release
 preflight, and a guarded production publication workflow. Its build and
 reproducibility matrices run for both architectures on every push to `main` and
 manual dispatch; pull requests keep the existing Python-tree and shared-gate
@@ -72,18 +73,21 @@ complete workflow to an expected SHA-256 and byte length. Those locks do not
 cover pinned external code or every possible caller spelling. Neither preflight
 creates a package in the project namespace, a public or moving alias, a
 signature, a Cosign or GitHub artifact attestation, a SLSA or Rekor record, or a
-consumer-resolvable digest. The production workflow adds capability only at this
-revision: no completed Python publish, public package, or consumable image is
-claimed. The earlier no publisher limitation is superseded by that capability,
+consumer-resolvable digest. The 2026-08-17 production attempt did create the
+public package and unaliased, unsigned candidate digests before it failed in
+`registry-served gates and evidence` while `Install publication gate tools`
+tried to install Syft without Cosign available. The earlier no publisher
+limitation is superseded by the production workflow,
 but the artifact status remains built-and-gated, unpublished. The Python
 contract does not pin the micro build path and does not make the Python reducer a
 claimed merge-blocking context.
 
-Every privileged Python publication job skips on pull requests. Its first
-production execution is therefore post-merge; the policy and structural gates
-described below have run in pre-publication form, but no production push,
-signature, attestation, SLSA statement, Rekor entry, or alias application is
-claimed at this revision.
+Every privileged Python publication job skips on pull requests. The package's
+two BuildKit `mode=max` provenance attestation manifests exist. No production
+gate evidence, Cosign signature or attestation, SLSA-generator provenance,
+Rekor record, or consumer alias exists. The missing Cosign prerequisite is now
+repaired and lock-enforced; production proof remains pending the next `main`
+push.
 
 ## Criteria and gates
 

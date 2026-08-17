@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- Installed the pinned Cosign release before the base-python publication gate
+  tool installers and added semantic locks for the action SHA, version input,
+  and immediate step ordering. This repairs and lock-enforces the gate job's
+  prerequisite; production proof of the full chain remains pending the next
+  `main` push.
+
 ### Security
 
 - Added an exact, expiring accept-and-track disposition for the known-affected
