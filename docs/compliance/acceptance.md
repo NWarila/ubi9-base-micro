@@ -77,8 +77,9 @@ consumer-resolvable digest. The 2026-08-17 production attempt did create the
 public package and unaliased, unsigned candidate digests before it failed in
 `registry-served gates and evidence` while `Install publication gate tools`
 tried to install Syft without Cosign available. The earlier no publisher
-limitation is superseded by the production workflow,
-but the artifact status remains built-and-gated, unpublished. The Python
+limitation is superseded by the production workflow. The artifact is now a
+public package serving unaliased, unsigned candidate digests after the gate job
+failed. The Python
 contract does not pin the micro build path and does not make the Python reducer a
 claimed merge-blocking context.
 

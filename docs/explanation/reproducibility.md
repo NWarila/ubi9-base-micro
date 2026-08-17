@@ -154,8 +154,8 @@ scope.
   uses a local Docker exporter without claiming that policy. The pull-request
   preflight remains confined to its loopback registry. The production workflow
   is capable of exporting an unaliased candidate to GHCR by digest.
-  Base-python has no publish result at this revision; the workflow's presence
-  alone does not establish one.
+  Base-python has a failed publish result at this revision: the workflow exported
+  public, unaliased candidate digests before its registry-served gate job failed.
 - `images/python/docker-bake.json` is the base-python build definition. Its
   shared target owns the graph inputs, while the `ci`, `release`, and `repro`
   targets own distinct exporter, cache, provenance, and SBOM policies.

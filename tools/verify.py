@@ -1499,7 +1499,10 @@ def python_publication_docs_errors(readme: str, images_readme: str, support: str
     required = {
         "README.md": (
             readme,
-            ("Publisher merged; awaiting first successful publication", "must not be treated as publicly consumable"),
+            (
+                "Publisher merged; awaiting first successful publication",
+                "must not be treated as a successfully published consumer image",
+            ),
         ),
         "images/README.md": (
             images_readme,
@@ -5845,13 +5848,29 @@ def _workflow_step_names(job_block: str) -> list[str]:
     return re.findall(r"^      - name: (.+)$", job_block, re.MULTILINE)
 
 
+def _workflow_step_sequence(job_block: str) -> tuple[str | None, ...]:
+    steps_marker = "    steps:\n"
+    if job_block.count(steps_marker) != 1:
+        return ()
+    steps_block = job_block[job_block.index(steps_marker) + len(steps_marker) :]
+    entries = re.findall(r"^      -(?: (.*))?$", steps_block, re.MULTILINE)
+    return tuple(entry.removeprefix("name: ") if entry.startswith("name: ") else None for entry in entries)
+
+
+def _workflow_named_steps_adjacent(job_block: str, first: str, second: str) -> bool:
+    steps = _workflow_step_sequence(job_block)
+    return steps.count(first) == 1 and steps.count(second) == 1 and steps.index(second) == steps.index(first) + 1
+
+
 def _workflow_named_step(job_block: str, name: str) -> str:
     marker = f"      - name: {name}\n"
     if job_block.count(marker) != 1:
         return ""
     start = job_block.index(marker)
-    end = job_block.find("      - name: ", start + len(marker))
-    return job_block[start:] if end < 0 else job_block[start:end]
+    tail_start = start + len(marker)
+    next_step = re.search(r"^      -(?: .*)?$", job_block[tail_start:], re.MULTILINE)
+    end = len(job_block) if next_step is None else tail_start + next_step.start()
+    return job_block[start:end]
 
 
 def _workflow_upload_paths(step_block: str) -> tuple[str, ...]:
@@ -8064,7 +8083,6 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
     preflight = _workflow_job_block(workflow, "release-preflight")
     build_step = _workflow_named_step(publish, "Build and push unaliased candidate")
     gate_cosign_step = _workflow_named_step(gate_evidence, "Install Cosign")
-    gate_tools_step = _workflow_named_step(gate_evidence, "Install publication gate tools")
     evidence_types = ("spdx", "cyclonedx", "openvex", "nist_800_190", "stig_arf")
 
     trigger_invalid = _python_ci_trigger_block(workflow) != PUBLISH_PYTHON_TRIGGER
@@ -8111,9 +8129,10 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
     gate_cosign_version_invalid = bool(gate_cosign_step) and (
         _workflow_action_with_text(gate_cosign_step) != "cosign-release: v2.5.2"
     )
-    gate_cosign_order_invalid = bool(gate_cosign_step) and (
-        not gate_tools_step
-        or gate_evidence.index(gate_cosign_step) + len(gate_cosign_step) != gate_evidence.index(gate_tools_step)
+    gate_cosign_order_invalid = bool(gate_cosign_step) and not _workflow_named_steps_adjacent(
+        gate_evidence,
+        "Install Cosign",
+        "Install publication gate tools",
     )
     generator_invalid = not (
         "uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0" in generator
@@ -8452,6 +8471,23 @@ def _publish_python_workflow_fixtures(workflow: str) -> list[tuple[str, str, str
             "Python publish gate-evidence Cosign ordering mismatch",
         ),
         changed(
+            "gate-cosign-order-unnamed-run",
+            "          cosign-release: v2.5.2\n      - name: Install publication gate tools",
+            "          cosign-release: v2.5.2\n"
+            "      - run: cosign version\n"
+            "      - name: Install publication gate tools",
+            "Python publish gate-evidence Cosign ordering mismatch",
+        ),
+        changed(
+            "gate-cosign-order-unnamed-shell",
+            "          cosign-release: v2.5.2\n      - name: Install publication gate tools",
+            "          cosign-release: v2.5.2\n"
+            "      - shell: bash\n"
+            "        run: cosign version\n"
+            "      - name: Install publication gate tools",
+            "Python publish gate-evidence Cosign ordering mismatch",
+        ),
+        changed(
             "generator",
             "generator_container_slsa3.yml@v2.1.0",
             "generator_container_slsa3.yml@main",
@@ -8628,7 +8664,11 @@ def check_publish_python_workflow_checker_mutation_self_test() -> None:
         ("python-publish-fail-closed", "fail_closed_invalid", "fail-closed"),
         ("python-publish-gate-cosign-action", "gate_cosign_action_invalid", "gate-cosign-action-sha"),
         ("python-publish-gate-cosign-version", "gate_cosign_version_invalid", "gate-cosign-version"),
-        ("python-publish-gate-cosign-order", "gate_cosign_order_invalid", "gate-cosign-order"),
+        (
+            "python-publish-gate-cosign-order",
+            "gate_cosign_order_invalid",
+            ("gate-cosign-order", "gate-cosign-order-unnamed-run", "gate-cosign-order-unnamed-shell"),
+        ),
         ("python-publish-generator", "generator_invalid", "generator"),
         ("python-publish-exporter", "exporter_invalid", "exporter"),
         ("python-publish-closed-caller", "closed_caller_invalid", "closed-caller"),
@@ -8654,28 +8694,32 @@ def check_publish_python_workflow_checker_mutation_self_test() -> None:
         Counter(markers) == Counter(guard for guard, _, _ in guards) and len(markers) == len(guards),
         "publish Python workflow checker mutation list must cover every rejection guard exactly once",
     )
-    for guard, condition, fixture in guards:
+    probe_count = 0
+    for guard, condition, fixture_labels in guards:
         anchor = f"reject({condition},"
         require(checker_source.count(anchor) == 1, f"publish Python workflow checker anchor changed: {guard}")
         mutated_checker = checker_source.replace(anchor, "reject(False,", 1)
         mutated = source[:checker_start] + mutated_checker + source[checker_end:]
         ast.parse(mutated, filename="tools/verify.py")
-        result = _run_mutated_python_verifier(mutated, ["--check-publish-python-workflow-fixture", fixture])
-        expected = f"verify failed: publish Python workflow mutation unexpectedly passed: {fixture}"
-        require(
-            result.returncode == 1, f"publish Python workflow checker mutation {guard} returned {result.returncode}"
-        )
-        require(
-            result.stderr.strip() == expected,
-            f"publish Python workflow checker mutation {guard} returned unexpected diagnostic: "
-            f"{result.stderr.strip()!r}",
-        )
-        location = source[: source.index(f"# CHECK: {guard}")].count("\n") + 1
-        print(
-            f"publish Python workflow checker mutation rejected [guard={guard} location=tools/verify.py:{location} "
-            f"fixture={fixture} diagnostic={expected}]"
-        )
-    print(f"publish Python workflow checker mutation probes: {len(guards)}/{len(guards)} rejected")
+        fixtures = (fixture_labels,) if isinstance(fixture_labels, str) else fixture_labels
+        for fixture in fixtures:
+            probe_count += 1
+            result = _run_mutated_python_verifier(mutated, ["--check-publish-python-workflow-fixture", fixture])
+            expected = f"verify failed: publish Python workflow mutation unexpectedly passed: {fixture}"
+            require(
+                result.returncode == 1, f"publish Python workflow checker mutation {guard} returned {result.returncode}"
+            )
+            require(
+                result.stderr.strip() == expected,
+                f"publish Python workflow checker mutation {guard} returned unexpected diagnostic: "
+                f"{result.stderr.strip()!r}",
+            )
+            location = source[: source.index(f"# CHECK: {guard}")].count("\n") + 1
+            print(
+                f"publish Python workflow checker mutation rejected [guard={guard} "
+                f"location=tools/verify.py:{location} fixture={fixture} diagnostic={expected}]"
+            )
+    print(f"publish Python workflow checker mutation probes: {probe_count}/{probe_count} rejected")
 
 
 def check_publish_python_workflow() -> None:
@@ -12474,13 +12518,13 @@ def check_docs() -> None:
         "no publisher",
         "does not pin the micro build path",
         "Pre-publication base-python build identity",
-        "built-and-gated, unpublished",
+        "public package serving unaliased, unsigned candidate digests",
     ]:
         require(marker in acceptance, f"acceptance.md missing pre-publication Python marker: {marker}")
     for marker in [
         "Micro's Buildx and BuildKit remain unpinned",
         "Base-python's `repro` target",
-        "Base-python has no publish",
+        "Base-python has a failed publish result at this revision",
         "shared target owns the graph inputs",
     ]:
         require(marker in reproducibility_doc, f"reproducibility.md missing profile-specific marker: {marker}")
@@ -12712,7 +12756,7 @@ def check_docs() -> None:
     for marker in [
         "`ubi9-base-micro` is the root image",
         "Publisher merged; awaiting first successful publication",
-        "must not be treated as publicly consumable",
+        "must not be treated as a successfully published consumer image",
         "`base-python`",
         "`base-node`",
         "`base-java`",
@@ -12744,7 +12788,7 @@ def check_docs() -> None:
         "--source-branch main",
         "--print-provenance",
         "not atomic",
-        "not publicly consumable",
+        "Only the existing candidate digests are publicly consumable by digest",
     ]:
         require(marker in verification_contract, f"verification-contract.md missing Python publish marker: {marker}")
     for marker in [

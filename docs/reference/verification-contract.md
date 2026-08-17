@@ -50,9 +50,11 @@ requirements for a successful publication. The 2026-08-17 production attempt
 failed in `registry-served gates and evidence` while `Install publication gate
 tools` tried to install Syft without Cosign available. The package nevertheless
 exists publicly and serves unaliased, unsigned candidate digests only. The
-successful, signed image described by this contract is not yet
-consumable. The image is not publicly consumable at this revision. Those claims
-require evidence from the corresponding completed boundary.
+successful, signed image described by this contract is not yet consumable under
+a consumer alias.
+Only the existing candidate digests are publicly consumable by digest at this
+revision; they remain unaliased and unsigned. The successful-image claims require
+evidence from the corresponding completed boundary.
 
 The candidate's two BuildKit `mode=max` provenance attestation manifests exist.
 No production gate evidence, Cosign signature or attestation, SLSA-generator

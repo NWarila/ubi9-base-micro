@@ -171,9 +171,10 @@ RHEL9 STIG ARF attestation, and a fail-closed byte-for-byte digest gate.
 ## Image Family
 
 `ubi9-base-micro` is the root image. `base-python` has its own two-phase
-publication workflow; a completed publish creates the GHCR package privately by
-default, so it must not be treated as publicly consumable until the owner changes
-package visibility and the anonymous verification succeeds. The remaining
+publication workflow; its first production attempt created a public GHCR package
+that currently serves unaliased, unsigned candidate digests. Those candidates
+must not be treated as a successfully published consumer image until the gates,
+signatures, consumer alias, and anonymous verification succeed. The remaining
 language variants are planned as `images/<variant>/` trees.
 
 | Image | Status | Base relationship | Runtime scope |
