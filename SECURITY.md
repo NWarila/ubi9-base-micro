@@ -61,10 +61,17 @@ At a high level, verification requires:
   the verification contract.
 
 The merged `base-python` publisher also requires its index-only trust-contract
-predicate. Its first successful publication is still awaited, so this is a
-verification requirement for a future produced digest, not evidence that a
-Python package or public image already exists. Use the image-specific commands
-in [`docs/how-to/verify-a-published-image.md`](docs/how-to/verify-a-published-image.md).
+predicate. Its first successful publication is still awaited. The 2026-08-17
+production attempt failed in `registry-served gates and evidence` while
+`Install publication gate tools` tried to install Syft without Cosign available;
+that prerequisite is now repaired and lock-enforced, with production proof
+pending the next `main` push. The package exists publicly and serves only
+unaliased, unsigned candidate digests. Its two BuildKit `mode=max` provenance
+attestation manifests exist; no production gate evidence, Cosign signature or
+attestation, SLSA-generator provenance, Rekor record, or consumer alias exists.
+Use the image-specific commands in
+[`docs/how-to/verify-a-published-image.md`](docs/how-to/verify-a-published-image.md)
+only for a digest from a successful production publication.
 
 Do not substitute `gh attestation verify` for this repository's release
 contract; the repository uses cosign OCI attestations for the published image

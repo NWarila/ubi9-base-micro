@@ -3,8 +3,12 @@
 The publish workflow publishes `ghcr.io/nwarila/ubi9-base-micro` by digest from `.github/workflows/publish-image.yaml`. It signs the image digest with Cosign keyless from the repository workflow identity, attaches Syft rpmdb-derived SPDX and CycloneDX SBOM attestations to each platform child digest, gates fixable MEDIUM, HIGH, and CRITICAL findings with both Trivy and Grype, applies the OpenVEX default-deny policy to unfixed HIGH and CRITICAL findings, runs the tailored RHEL9 STIG ARF gate, generates and attests the NIST SP 800-190 section 4.1 image predicate and the STIG ARF summary predicate, then passes the index digest to the SLSA container generator reusable workflow. The final push-only roll-up verifies that the full attestation set is Rekor-logged.
 
 This page is the completed-publication contract for `base-micro`. The
-`base-python` publisher is merged but has not completed its first production
-run. After it does, use the Python-specific commands in
+`base-python` publisher's 2026-08-17 production attempt failed in
+`registry-served gates and evidence` while `Install publication gate tools`
+tried to install Syft without Cosign available. That prerequisite is now
+repaired and lock-enforced; production proof remains pending the next `main`
+push. After a successful production publication, use the Python-specific
+commands in
 [`../how-to/verify-a-published-image.md`](../how-to/verify-a-published-image.md#verify-base-python)
 and the subject matrix in
 [`verification-contract.md`](verification-contract.md#base-python-published-evidence-contract-not-yet-produced).
@@ -185,8 +189,9 @@ their SHA-256, and checksum-protects every cross-job transfer. The same verified
 digest selects the VEX, signing, attestation, provenance, collision-check, and
 alias consumers. This closes the registry-origin dependency for the index that
 run pushed and read back; it does not make final alias application atomic
-against an external writer. The first privileged execution remains post-merge.
-TD-11 records all three VEX-side descriptor-policy asymmetries.
+against an external writer. The first privileged execution failed at the gate
+job's tool installation as described above. TD-11 records all three VEX-side
+descriptor-policy asymmetries.
 
 Valid fix evidence from either scanner refuses the disposition. On both paths,
 raw scanner vulnerability IDs, package names, and installed versions must
@@ -197,7 +202,7 @@ It also locks seven published-child constants and nine function ASTs and reports
 rejection of 17 canonical-VEX mutations, 8 allowlist mutations, and 17
 published-child surface mutations. The production workflow is configured to
 invoke the complete published-child CLI once for each architecture when its
-first privileged run occurs. This accept-and-track path does not make the image unaffected
+gate job reaches that step. This accept-and-track path does not make the image unaffected
 and is not a TD-6 fixable-CVE scanner suppression.
 
 ## SBOM Source
@@ -210,5 +215,10 @@ BuildKit SBOM generation is disabled in the publish build with `--sbom=false`. T
 
 The `ghcr.io/nwarila/ubi9-base-micro` package is publicly readable. The complete
 pull and verification chain above works from a clean machine without registry
-authentication. This statement does not apply to the not-yet-published Python
-package.
+authentication. The `ghcr.io/nwarila/ubi9-base-python` package also exists
+publicly, but serves only unaliased, unsigned candidate digests from the failed
+production attempt. Its two BuildKit `mode=max` provenance attestation manifests
+exist; no production gate evidence, Cosign signature or attestation,
+SLSA-generator provenance, Rekor record, or consumer alias exists. This page's
+Python verification procedure therefore remains contingent on a successful
+production publication.

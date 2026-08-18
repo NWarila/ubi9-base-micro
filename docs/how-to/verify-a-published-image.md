@@ -5,7 +5,8 @@ Use this task after a publish run has produced a digest. The completed
 [`../reference/verify.md`](../reference/verify.md). The Python-specific contract
 is summarized in
 [`../reference/verification-contract.md`](../reference/verification-contract.md#base-python-published-evidence-contract-not-yet-produced);
-the Python steps below apply only after its first production publish succeeds.
+the Python steps below apply only to a digest reported by a successful
+production publish, not to the current failed-attempt candidates.
 
 ## Prerequisites
 
@@ -128,19 +129,25 @@ uses Cosign OCI attestations.
 
 ## Verify base-python
 
-The presence of the Python publish workflow is capability only; it does not mean
-the image has been published. Use this procedure only after a completed Python
+The 2026-08-17 Python production attempt failed in `registry-served gates and
+evidence` while `Install publication gate tools` tried to install Syft without
+Cosign available. The prerequisite is now repaired and lock-enforced;
+production proof remains pending the next `main` push. The package exists
+publicly and serves only unaliased, unsigned candidate digests. Its two BuildKit
+`mode=max` provenance attestation manifests exist; no production gate evidence,
+Cosign signature or attestation, SLSA-generator provenance, Rekor record, or
+consumer alias exists. Use this procedure only after a successful Python
 publish run reports its immutable index digest and publishing SHA/ref.
 
 There are two distinct verification states. During publication, a fresh runner
 logs in to GHCR and performs the cache-cold `cosign verify-attestation` and
 `slsa-verifier` checks against the unaliased digest before the final job applies
-consumer aliases. A newly created GHCR package is private by default, so success
-of that credentialed leg establishes a published artifact but not public
-consumability. After the owner changes package visibility, repeat the checks from
-a fresh client with no registry credentials. Only success of that genuinely
-anonymous leg establishes that the digest is publicly consumable. An anonymous
-pull failure alone does not prove that a private publication exists.
+consumer aliases. Success of that credentialed leg establishes the production
+evidence but not anonymous access. Repeat the checks from a fresh client with no
+registry credentials; only success of that genuinely anonymous leg establishes
+that the evidenced digest is publicly consumable. The current package inherited
+public visibility on its first push, but the failed attempt did not reach the
+credentialed evidence verification or anonymous verification jobs.
 
 The commands below are the anonymous leg. Start with an empty registry-auth
 directory; do not log in to GHCR in this shell:

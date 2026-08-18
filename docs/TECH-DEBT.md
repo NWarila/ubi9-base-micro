@@ -234,10 +234,16 @@ push-reported digest, independently corroborates their SHA-256, protects
 cross-job transfers with a checksum manifest, and requires the same digest for
 signing, attestation, VEX, provenance, collision checks, and aliases. The
 published-child path is therefore wired to a production caller rather than
-dormant; its first production execution remains post-merge. This binding is
-only to the index that run pushed and read back. It does not close the
-external-writer alias race described in TD-10 or the VEX-side
-descriptor-policy differences described in TD-11.
+dormant. The 2026-08-17 production attempt failed in `registry-served gates and
+evidence` while `Install publication gate tools` tried to install Syft without
+Cosign available. That prerequisite is now repaired and lock-enforced;
+production proof remains pending the next `main` push. The package exists
+publicly and serves only unaliased, unsigned candidate digests. Its two BuildKit
+`mode=max` provenance attestation manifests exist; no production gate evidence,
+Cosign signature or attestation, SLSA-generator provenance, Rekor record, or
+consumer alias exists. The binding is only to the index that a run pushed and
+read back. It does not close the external-writer alias race described in TD-10
+or the VEX-side descriptor-policy differences described in TD-11.
 
 On both product paths, valid fix evidence from either scanner refuses the
 disposition. Each raw scanner vulnerability ID, package name, and installed

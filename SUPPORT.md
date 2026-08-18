@@ -26,8 +26,13 @@ support unless the question is security-sensitive.
 
 - Vulnerability reports filed publicly.
 - Support for `base-python` before its first successful publication completes with its required
-  evidence, or before GHCR visibility and anonymous verification make it
-  publicly consumable; `base-node` and `base-java` remain planned.
+  evidence. The current public package serves only unaliased, unsigned candidate
+  digests from the failed 2026-08-17 production attempt. Its two BuildKit
+  `mode=max` provenance attestation manifests exist, but no production gate
+  evidence, Cosign signature or attestation, SLSA-generator provenance, Rekor
+  record, or consumer alias exists. The missing Cosign prerequisite is repaired
+  and lock-enforced; production proof remains pending the next `main` push.
+  `base-node` and `base-java` remain planned.
 - Third-party dependency vulnerabilities that need to be reported upstream.
 - Private consulting or production operations outside this repository.
 

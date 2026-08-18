@@ -2,10 +2,16 @@
 
 Base-image variants live here, one tree per variant under `images/<variant>/`.
 The `base-python` publisher is merged; it is awaiting its first successful
-publication through `.github/workflows/publish-python.yaml`. Its first package
-is private by default and is not publicly consumable until the owner changes
-GHCR visibility and the anonymous verification succeeds. Node and Java variants
-remain planned. Each variant must publish through its own path-scoped workflow
+publication through `.github/workflows/publish-python.yaml`. Its 2026-08-17
+production attempt failed in `registry-served gates and evidence` while
+`Install publication gate tools` tried to install Syft without Cosign available.
+The prerequisite is now repaired and lock-enforced; production proof remains
+pending the next `main` push. The package exists publicly and serves only
+unaliased, unsigned candidate digests. Its two BuildKit `mode=max` provenance
+attestation manifests exist; no production gate evidence, Cosign signature or
+attestation, SLSA-generator provenance, Rekor record, or consumer alias exists.
+Node and Java variants remain planned. Each variant must publish through its own
+path-scoped workflow
 and carry the full evidence set — Cosign signature, SPDX and CycloneDX SBOMs,
 OpenVEX, NIST SP 800-190 evidence, a tailored STIG ARF, SLSA provenance, and an
 index-only per-image trust contract — before a digest is described as publicly
