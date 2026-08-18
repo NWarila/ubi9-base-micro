@@ -10399,6 +10399,223 @@ EXPECTED_ACCEPT_AND_TRACK_MODEL = (
     },
 )
 
+ACCEPT_AND_TRACK_DOCUMENTATION_MARKERS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    (
+        "images/python/vex/README.md",
+        "TD-9",
+        (
+            "`cve-2026-11940.openvex.json` version 2 discloses that both base-python CI\n"
+            "products ship the affected `python3.12` and `python3.12-libs` packages at\n"
+            "`3.12.13-3.el9_8.1`.",
+            "`https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-python/published-platform-children`.",
+            "tracks acceptance as TD-9 through `review-by 2026-10-01`; it does not claim\n"
+            "that the package or image is unaffected.",
+        ),
+    ),
+    (
+        "images/python/vex/README.md",
+        "TD-12",
+        (
+            "`cve-2026-14456.openvex.json` records that both base-python CI products ship\n"
+            "`openssl-libs` at exactly `1:3.5.5-5.el9_8`.",
+            "RHEL 9 `openssl` as Affected with no fixed RPM as of 2026-08-18; RHEL 9.8 and\n"
+            "later ship the affected OpenSSL 3.5.x QUIC server, and exploitation requires an\n"
+            "application to explicitly enable a QUIC server listener.",
+            "tracks acceptance as TD-12 through `review-by 2026-10-01`; it does not claim\n"
+            "that the package or image is unaffected.",
+        ),
+    ),
+    (
+        "images/python/vex/README.md",
+        "TD-9/TD-12 model",
+        (
+            "authorizations implemented in `tools/assert-vex.py`: CVE-2026-11940 matched by\n"
+            "`cve-2026-11940.openvex.json`, and CVE-2026-14456 matched by\n"
+            "`cve-2026-14456.openvex.json`.",
+            "For either accepted finding on the two local CI products, the gate requires two\n"
+            "keys: the exact in-tool disposition entry and the matching byte-canonical\n"
+            "reviewed statement.",
+            "requires three keys: the same disposition entry, the surface's canonical\n"
+            "statement, and paired index evidence.",
+        ),
+    ),
+    (
+        "docs/TECH-DEBT.md",
+        "TD-9",
+        (
+            "## TD-9: Expiring acceptance of CVE-2026-11940 in base-python",
+            "`local/ubi9-base-python:ci-arm64` are known affected by `CVE-2026-11940` in\n"
+            "`python3.12` and `python3.12-libs` at exactly `3.12.13-3.el9_8.1`.",
+            "The legacy local-product path is a two-key authorization: the closed allowlist\n"
+            "in `tools/assert-vex.py` and the reviewed disclosure in\n"
+            "`images/python/vex/cve-2026-11940.openvex.json`.",
+            "CI products, the complete two-package set, the installed version, this debt id,\n"
+            "and `review-by 2026-10-01`.",
+            "refresh absorbs it and the same pull request removes the in-tool allowlist entry\n"
+            "and flips the OpenVEX statement to `fixed`; that change also removes the\n"
+            "published-child authorization.",
+        ),
+    ),
+    (
+        "docs/TECH-DEBT.md",
+        "TD-12",
+        (
+            "## TD-12: Expiring acceptance of CVE-2026-14456 in both images",
+            "`ghcr.io/nwarila/ubi9-base-micro:base-micro`, are known affected by\n"
+            "`CVE-2026-14456` in `openssl-libs` at exactly `1:3.5.5-5.el9_8`.",
+            "Each local product uses the two-key authorization: its exact disposition entry\n"
+            "and its product-specific canonical statement. The Python statement is\n"
+            "`images/python/vex/cve-2026-14456.openvex.json`; the micro statement is\n"
+            "`vex/cve-2026-14456.openvex.json`.",
+            "Digest-addressed published children use a separate three-key authorization:\n"
+            "the exact disposition entry, the canonical statement for that image, and\n"
+            "caller-supplied bytes for a digest-verified OCI index from that surface's pinned\n"
+            "repository.",
+            "Both entries and all surfaces expire\n"
+            "after review-by 2026-10-01, including when a finding is temporarily dormant.",
+            "absorb the fixed RPM, remove the CVE-2026-14456 allowlist entry, flip both\n"
+            "canonical statements to `fixed`, and remove the micro gate's\n"
+            "`--index-reference` and `--index-manifest` plumbing plus every disposition\n"
+            "authority surface no longer consumed by a live disposition.",
+            "consumes it; orphaned authority inputs are forbidden.",
+        ),
+    ),
+    (
+        "docs/TECH-DEBT.md",
+        "TD-9/TD-12 model",
+        ("A repository, index, statement, product, or\npolicy IRI from one surface cannot authorize the other.",),
+    ),
+    (
+        "docs/reference/gates.md",
+        "TD-9",
+        (
+            "TD-9 accepts\nand tracks known-affected `CVE-2026-11940` with the complete `python3.12` and\n"
+            "`python3.12-libs` set at `3.12.13-3.el9_8.1`.",
+            "exact, expiring TD-9 disposition for CVE-2026-11940 on `python3.12` and `python3.12-libs` at "
+            "`3.12.13-3.el9_8.1`",
+        ),
+    ),
+    (
+        "docs/reference/gates.md",
+        "TD-12",
+        (
+            "TD-12 accepts and tracks\nknown-affected `CVE-2026-14456` on `openssl-libs` at\n"
+            "`1:3.5.5-5.el9_8` in both images.",
+            "TD-12 for CVE-2026-14456 on `openssl-libs` at `1:3.5.5-5.el9_8` in Python and micro, "
+            "both through `review-by 2026-10-01`",
+        ),
+    ),
+    (
+        "docs/reference/gates.md",
+        "TD-9/TD-12 model",
+        (
+            "The model contains two entries and three exact surfaces: TD-9 Python, TD-12\nPython, and TD-12 micro.",
+            "tag require the two-key conjunction of their exact entry and surface statement.\n"
+            "A published child additionally requires repository-correct, digest-verified OCI\n"
+            "index evidence, making that path three-key.",
+            "authority from one CVE, statement, product, repository, or policy IRI cannot\nsatisfy another.",
+            "Repository verification reports 3 canonical byte documents, the exact\n"
+            "2-entry/3-surface model, 18 document mutations, 50 disposition documentation\n"
+            "prose mutations across 6 files, and 2/2 dormant expiries locked.",
+        ),
+    ),
+    (
+        "docs/reference/verify.md",
+        "TD-9",
+        (
+            "TD-9 covers the\nknown-affected unfixed HIGH `CVE-2026-11940` on exactly `python3.12` and\n"
+            "`python3.12-libs` at `3.12.13-3.el9_8.1` in base-python.",
+            "These paths do not make either image unaffected and\nare not TD-6 fixable-CVE scanner suppressions.",
+        ),
+    ),
+    (
+        "docs/reference/verify.md",
+        "TD-12",
+        (
+            "TD-12 covers the\nknown-affected unfixed HIGH `CVE-2026-14456` on exactly `openssl-libs` at\n"
+            "`1:3.5.5-5.el9_8` in base-python and base-micro.",
+            "Both expire after\n`review-by 2026-10-01`.",
+        ),
+    ),
+    (
+        "docs/reference/verify.md",
+        "TD-9/TD-12 model",
+        (
+            "The closed model has three statement surfaces: TD-9 Python, TD-12 Python, and\nTD-12 micro.",
+            "Local products use a two-key authorization. The exact disposition\n"
+            "surface and its byte-canonical reviewed `affected` statement must match",
+            "A digest-addressed published child uses a three-key authorization: the exact\n"
+            "surface, its canonical statement, and paired `--index-reference` plus\n"
+            "`--index-manifest` evidence under that surface's pinned Python or micro\n"
+            "repository.",
+            "Its current summary locks 3\n"
+            "canonical byte documents, the exact 2-entry/3-surface model, 18 document\n"
+            "mutations, 50 disposition documentation prose mutations across 6 files, and 2/2\n"
+            "dormant expiries",
+        ),
+    ),
+    (
+        "docs/compliance/vex.md",
+        "TD-9",
+        (
+            "- TD-9 covers known-affected unfixed HIGH `CVE-2026-11940` on exactly\n"
+            "  `python3.12` and `python3.12-libs` at `3.12.13-3.el9_8.1` in base-python.",
+            "`ghcr.io/nwarila/ubi9-base-micro:base-micro`. TD-9 uses\n`images/python/vex/cve-2026-11940.openvex.json`",
+        ),
+    ),
+    (
+        "docs/compliance/vex.md",
+        "TD-12",
+        (
+            "- TD-12 covers known-affected unfixed HIGH `CVE-2026-14456` on exactly\n"
+            "  `openssl-libs` at `1:3.5.5-5.el9_8` in both base-python and base-micro.",
+            "TD-12 uses\n`images/python/vex/cve-2026-14456.openvex.json` for Python and\n"
+            "`vex/cve-2026-14456.openvex.json` for micro.",
+        ),
+    ),
+    (
+        "docs/compliance/vex.md",
+        "TD-9/TD-12 model",
+        (
+            "Both entries have `review-by 2026-10-01`. The in-tool model is a closed set of\n"
+            "dispositions, each with one or more exact statement surfaces.",
+            "Local products use a two-key authorization: the exact disposition surface and\n"
+            "its canonical reviewed `affected` statement must both match.",
+            "Digest-addressed published children use a three-key authorization: the exact\n"
+            "disposition surface, its canonical statement, and paired `--index-reference`\n"
+            "plus `--index-manifest` evidence must all match.",
+        ),
+    ),
+    (
+        "docs/compliance/acceptance.md",
+        "TD-9",
+        (
+            "TD-9 for known-affected `CVE-2026-11940` on exactly `python3.12` and `python3.12-libs` "
+            "at `3.12.13-3.el9_8.1`",
+        ),
+    ),
+    (
+        "docs/compliance/acceptance.md",
+        "TD-12",
+        (
+            "TD-12 for known-affected `CVE-2026-14456` on exactly `openssl-libs` at "
+            "`1:3.5.5-5.el9_8` in base-python and base-micro",
+        ),
+    ),
+    (
+        "docs/compliance/acceptance.md",
+        "TD-9/TD-12 model",
+        (
+            "Both expire after `review-by 2026-10-01`. The closed model has three statement surfaces and requires "
+            "exactly one to match the complete CVE, package/version set, product, repository, and statement path.",
+            "use two keys: the exact in-tool disposition surface and its canonical reviewed statement. A "
+            "digest-addressed published child uses three: those two keys plus repository-correct, digest-verified "
+            "OCI index evidence under the surface's pinned Python or micro repository.",
+            "These dispositions suppress no raw finding and do not make either image unaffected.",
+        ),
+    ),
+)
+
 
 def _runtime_accept_and_track_model() -> tuple[dict[str, Any], ...]:
     namespace = runpy.run_path(str(ROOT / "tools/assert-vex.py"))
@@ -10459,11 +10676,23 @@ def accept_and_track_repository_expiry_errors(
     return errors
 
 
+def accept_and_track_documentation_errors(documents: Mapping[str, str]) -> list[str]:
+    errors: list[str] = []
+    for path, disposition, markers in ACCEPT_AND_TRACK_DOCUMENTATION_MARKERS:
+        documentation = documents.get(path, "")
+        errors.extend(
+            f"{path} must contain exactly one {disposition} disposition documentation marker: {marker!r}"
+            for marker in markers
+            if documentation.count(marker) != 1
+        )
+    return errors
+
+
 def accept_and_track_lock_errors(
     canonical_error: str | None,
     model_invalid: bool,
     expiry_errors: list[str],
-    td12_error: str | None,
+    documentation_errors: list[str],
 ) -> list[str]:
     errors: list[str] = []
 
@@ -10480,19 +10709,23 @@ def accept_and_track_lock_errors(
     )
     # CHECK: accept-track-dormant-expiry
     reject(bool(expiry_errors), "; ".join(expiry_errors))
-    # CHECK: accept-track-td12-heading
-    reject(td12_error is not None, td12_error or "docs/TECH-DEBT.md missing TD-12 policy marker")
+    # CHECK: accept-track-documentation-prose
+    reject(bool(documentation_errors), "; ".join(documentation_errors))
     return errors
 
 
-def _accept_and_track_lock_fixtures() -> tuple[tuple[str, str | None, bool, list[str], str | None, str], ...]:
+def _accept_and_track_lock_fixtures() -> tuple[tuple[str, str | None, bool, list[str], list[str], str], ...]:
+    documentation_error = (
+        "docs/TECH-DEBT.md must contain exactly one TD-9 disposition documentation marker: "
+        "'## TD-9: Expiring acceptance of CVE-2026-11940 in base-python'"
+    )
     return (
         (
             "canonical-bytes",
             "accept-and-track canonical bytes drifted: fixture",
             False,
             [],
-            None,
+            [],
             "accept-and-track canonical bytes drifted: fixture",
         ),
         (
@@ -10500,7 +10733,7 @@ def _accept_and_track_lock_fixtures() -> tuple[tuple[str, str | None, bool, list
             None,
             True,
             [],
-            None,
+            [],
             "assert-vex accept-and-track entries and closed surfaces must equal the exact two-entry model",
         ),
         (
@@ -10508,16 +10741,16 @@ def _accept_and_track_lock_fixtures() -> tuple[tuple[str, str | None, bool, list
             None,
             False,
             ["expired repository accept-and-track entry: fixture"],
-            None,
+            [],
             "expired repository accept-and-track entry: fixture",
         ),
         (
-            "td12-heading",
+            "documentation-prose",
             None,
             False,
             [],
-            "docs/TECH-DEBT.md missing TD-12 policy marker: fixture",
-            "docs/TECH-DEBT.md missing TD-12 policy marker: fixture",
+            [documentation_error],
+            documentation_error,
         ),
     )
 
@@ -10525,11 +10758,16 @@ def _accept_and_track_lock_fixtures() -> tuple[tuple[str, str | None, bool, list
 def check_accept_and_track_lock_self_test(only_label: str | None = None) -> None:
     selected = 0
     fixtures = _accept_and_track_lock_fixtures()
-    for label, canonical_error, model_invalid, expiry_errors, td12_error, expected in fixtures:
+    for label, canonical_error, model_invalid, expiry_errors, documentation_errors, expected in fixtures:
         if only_label is not None and label != only_label:
             continue
         selected += 1
-        errors = accept_and_track_lock_errors(canonical_error, model_invalid, expiry_errors, td12_error)
+        errors = accept_and_track_lock_errors(
+            canonical_error,
+            model_invalid,
+            expiry_errors,
+            documentation_errors,
+        )
         if expected not in errors:
             raise VerifyError(f"accept-and-track verifier mutation unexpectedly passed: {label}")
         print(f"accept-and-track verifier mutation rejected [{label}] diagnostic={expected}")
@@ -10549,7 +10787,11 @@ def check_accept_and_track_checker_mutation_self_test() -> None:
         ("accept-track-canonical-bytes", "reject(canonical_error is not None,", "canonical-bytes"),
         ("accept-track-exact-model", "reject(\n        model_invalid,", "exact-model"),
         ("accept-track-dormant-expiry", "reject(bool(expiry_errors),", "dormant-expiry"),
-        ("accept-track-td12-heading", "reject(td12_error is not None,", "td12-heading"),
+        (
+            "accept-track-documentation-prose",
+            "reject(bool(documentation_errors),",
+            "documentation-prose",
+        ),
     )
     markers = re.findall(r"^    # CHECK: (accept-track-[a-z0-9-]+)$", checker_source, re.MULTILINE)
     require(
@@ -10609,26 +10851,37 @@ def check_accept_and_track_dispositions() -> None:
     require(len(expired) == 2, f"dormant accept-and-track expiry must reject both entries: {expired}")
     require("CVE-2026-11940" in expired[0] and "CVE-2026-14456" in expired[1], "expiry identities drifted")
 
-    debt = read("docs/TECH-DEBT.md")
-    td12_error: str | None = None
-    for marker in (
-        "## TD-12: Expiring acceptance of CVE-2026-14456 in both images",
-        "`openssl-libs` at exactly `1:3.5.5-5.el9_8`",
-        "review-by 2026-10-01",
-        "remove the CVE-2026-14456 allowlist entry",
-        "canonical statements to `fixed`",
-        "remove the micro gate's",
-        "orphaned authority inputs are forbidden",
-    ):
-        if marker not in debt:
-            td12_error = f"docs/TECH-DEBT.md missing TD-12 policy marker: {marker}"
-            break
+    documentation_paths = tuple(dict.fromkeys(path for path, _, _ in ACCEPT_AND_TRACK_DOCUMENTATION_MARKERS))
+    require(
+        documentation_paths
+        == (
+            "images/python/vex/README.md",
+            "docs/TECH-DEBT.md",
+            "docs/reference/gates.md",
+            "docs/reference/verify.md",
+            "docs/compliance/vex.md",
+            "docs/compliance/acceptance.md",
+        ),
+        "accept-and-track documentation prose lock must cover the exact six-file surface",
+    )
+    required_documentation_groups = {
+        (path, disposition) for path in documentation_paths for disposition in ("TD-9", "TD-12", "TD-9/TD-12 model")
+    }
+    actual_documentation_groups = {
+        (path, disposition) for path, disposition, _ in ACCEPT_AND_TRACK_DOCUMENTATION_MARKERS
+    }
+    require(
+        actual_documentation_groups == required_documentation_groups,
+        "accept-and-track documentation prose lock must bind TD-9, TD-12, and their model in every file",
+    )
+    documentation = {path: read(path) for path in documentation_paths}
+    documentation_errors = accept_and_track_documentation_errors(documentation)
 
     errors = accept_and_track_lock_errors(
         canonical_error,
         runtime_model != EXPECTED_ACCEPT_AND_TRACK_MODEL,
         expiry_errors,
-        td12_error,
+        documentation_errors,
     )
     require(not errors, "; ".join(errors))
     check_accept_and_track_lock_self_test()
@@ -10651,9 +10904,30 @@ def check_accept_and_track_dispositions() -> None:
             mutate(mutant)
             require(mutant != expected, f"canonical VEX mutation was a no-op: {path} {label}")
             document_mutations += 1
+
+    documentation_mutations = 0
+    for path, disposition, markers in ACCEPT_AND_TRACK_DOCUMENTATION_MARKERS:
+        for marker in markers:
+            require(
+                documentation[path].count(marker) == 1,
+                f"{path} {disposition} disposition documentation marker must occur exactly once: {marker!r}",
+            )
+            mutant = dict(documentation)
+            mutant[path] = mutant[path].replace(marker, "", 1)
+            expected_error = (
+                f"{path} must contain exactly one {disposition} disposition documentation marker: {marker!r}"
+            )
+            mutation_errors = accept_and_track_documentation_errors(mutant)
+            if expected_error not in mutation_errors:
+                raise VerifyError(
+                    f"accept-and-track documentation prose mutation unexpectedly passed: "
+                    f"{path} {disposition} {marker!r}"
+                )
+            documentation_mutations += 1
     print(
         "accept-and-track locks: 3 canonical byte documents, exact 2-entry/3-surface model, "
-        f"{document_mutations} document mutations, TD-12 remediation, and 2/2 dormant expiries locked"
+        f"{document_mutations} document mutations, {documentation_mutations} documentation prose mutations "
+        "across 6 files, and 2/2 dormant expiries locked"
     )
 
 

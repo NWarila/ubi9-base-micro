@@ -35,7 +35,9 @@ products ship the affected `python3.12` and `python3.12-libs` packages at
 non-image-matchable policy IRI
 `https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-python/published-platform-children`.
 The IRI documents policy scope without becoming a bare repository wildcard and
-does not assert that any such image or index has been published.
+does not assert that any such image or index has been published. The statement
+tracks acceptance as TD-9 through `review-by 2026-10-01`; it does not claim
+that the package or image is unaffected.
 
 `cve-2026-14456.openvex.json` records that both base-python CI products ship
 `openssl-libs` at exactly `1:3.5.5-5.el9_8`. It names the same pinned published

@@ -200,10 +200,10 @@ Valid fix evidence from either scanner and byte-noncanonical raw scanner
 identities refuse authorization. `tools/verify.py` independently expires both
 entries even if their scanner findings are absent. Its current summary locks 3
 canonical byte documents, the exact 2-entry/3-surface model, 18 document
-mutations, TD-12 remediation markers, and 2/2 dormant expiries; four verifier
-mutations and four corresponding checker mutations must also fail. These paths
-do not make either image unaffected and are not TD-6 fixable-CVE scanner
-suppressions.
+mutations, 50 disposition documentation prose mutations across 6 files, and 2/2
+dormant expiries; four verifier mutations and four corresponding checker
+mutations must also fail. These paths do not make either image unaffected and
+are not TD-6 fixable-CVE scanner suppressions.
 
 ## SBOM Source
 
