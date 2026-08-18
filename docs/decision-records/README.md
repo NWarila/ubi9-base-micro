@@ -16,7 +16,7 @@ canonical source.
 | [ADR-0004](repo/0004-slsa-generator-tag-pin-exception.md) | Accepted | Keep the SLSA generator tag-pinned with an integrity guard and exact identity. |
 | [ADR-0005](repo/0005-strip-runtime-with-phantom-package-guard.md) | Accepted | Strip runtime payload only behind rpmdb and ownership guards. |
 | [ADR-0006](repo/0006-rpm-lock-cve-absorption-loop.md) | Accepted | Absorb patched RPMs through a gated lockfile refresh loop. |
-| [ADR-0007](repo/0007-dual-scanner-openvex-default-deny.md) | Accepted | Use dual scanners and default-deny OpenVEX for unfixed HIGH and CRITICAL findings, with one exact expiring accept-and-track disposition and separately scoped legacy and registry-origin-bound child-eligibility paths. |
+| [ADR-0007](repo/0007-dual-scanner-openvex-default-deny.md) | Accepted | Use dual scanners and default-deny OpenVEX for unfixed HIGH and CRITICAL findings, with exact expiring accept-and-track dispositions and separate two-key local and three-key registry-origin-bound paths. |
 | [ADR-0008](repo/0008-tailored-stig-arf-gate.md) | Accepted | Gate the image with a tailored RHEL 9 STIG ARF and reviewed omissions. |
 | [ADR-0009](repo/0009-nist-800-190-image-evidence.md) | Accepted | Emit NIST SP 800-190 section 4.1 image-control evidence. |
 | [ADR-0010](repo/0010-single-repo-base-image-family.md) | Accepted | Keep the base-image family in one repository with per-image publish workflows. |

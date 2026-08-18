@@ -154,56 +154,56 @@ The push-only `rekor-rollup` job verifies that the full attestation set is Rekor
 
 OpenSCAP builds ComplianceAsCode/content `0.1.81` from SHA512-pinned source, runs `stig/rhel9-base-micro-tailoring.xml`, and attests the `https://nwarila.dev/attestations/stig-arf/v1` predicate per platform digest. The STIG summary embedded in that predicate includes every per-rule `idref` result and the deterministic rootfs identity assertion report when OpenSCAP reports a selected must-verify identity or ownership rule as `notapplicable`. Trivy and Grype are installed as checksum-verified pinned binaries (`TRIVY_VERSION` and `GRYPE_VERSION`), not as scanner actions. Before scan results are accepted, `tools/assert-scanner-db-freshness.py` fails closed unless Trivy metadata and Grype DB status are fresh, parseable, and within the configured schema and age bounds. Both scanners fail the workflow on fixable MEDIUM, HIGH, and CRITICAL findings, subject only to the version-pinned TD-6 exception for `CVE-2026-31790` covering `openssl-fips-provider` and `openssl-fips-provider-so` at `3.0.7-8.el9`, expiring on `2026-10-10`: Trivy uses `--severity MEDIUM,HIGH,CRITICAL --ignore-unfixed --exit-code 1` with `security/cve-ignore.trivyignore.yaml`, and Grype uses `--only-fixed --fail-on medium` with `security/cve-ignore.grype.yaml`. A separate scanner pass without those fixable-only filters feeds `tools/assert-vex.py`, which fails closed unless every unfixed HIGH or CRITICAL finding has a matching reviewed OpenVEX statement under the CODEOWNERS-gated `vex/` path. If no unfixed HIGH or CRITICAL findings exist and no VEX JSON exists, there is no OpenVEX attestation to verify.
 
-The base-python gate has one additional, separate TD-9 authorization for the
-known-affected unfixed HIGH `CVE-2026-11940`, with exactly `python3.12` and
-`python3.12-libs` at `3.12.13-3.el9_8.1`. For the legacy local-product path,
-an in-tool allowlist entry for `local/ubi9-base-python:ci-amd64` and
-`local/ubi9-base-python:ci-arm64` and the reviewed
-`images/python/vex/cve-2026-11940.openvex.json` `affected` statement must match
-every field through `review-by 2026-10-01`.
+The gate has two separate exact accept-and-track entries. TD-9 covers the
+known-affected unfixed HIGH `CVE-2026-11940` on exactly `python3.12` and
+`python3.12-libs` at `3.12.13-3.el9_8.1` in base-python. TD-12 covers the
+known-affected unfixed HIGH `CVE-2026-14456` on exactly `openssl-libs` at
+`1:3.5.5-5.el9_8` in base-python and base-micro. Both expire after
+`review-by 2026-10-01`.
 
-The gate also contains a production-wired path for a digest-addressed
-`ghcr.io/nwarila/ubi9-base-python` platform child. It requires the conjunction
-of fixed in-tool constraints, version 2 of the canonical reviewed statement, and
-paired `--index-reference` plus `--index-manifest` evidence. The tool recomputes
-the digest of the exact supplied index bytes, enforces exactly one
-`linux/amd64` child and one `linux/arm64` child with distinct digests, locks the
-BuildKit attestation platform and annotations, requires every descriptor digest
-to be unique across all roles, and binds the eligible digest to the architecture
-reported by both scanners. The duplicate-or-contradictory
-descriptor diagnostic names the first and repeated positions, while the
-child/attestation digest-disjointness guard remains a separate rejection. The
-canonical document uses a non-image-matchable policy IRI for this scope rather
-than a repository wildcard. This VEX-side policy does not constrain attestation
-count or per-child reference cardinality and does not close the top-level key
-set of either descriptor kind; measured `urls`, `data`, and `artifactType`
-additions are accepted on both kinds. It also accepts an invented key on a
-runnable `platform` object. Before this gate runs, the publish-side resolver
-exact-checks the four-key runnable and five-key attestation shapes, requires
-exact `architecture` and `os` platform objects, and requires exactly one
-attestation reference per child.
+The closed model has three statement surfaces: TD-9 Python, TD-12 Python, and
+TD-12 micro. Local products use a two-key authorization. The exact disposition
+surface and its byte-canonical reviewed `affected` statement must match for one
+of the two base-python CI products or the locally loaded
+`ghcr.io/nwarila/ubi9-base-micro:base-micro` product. Candidate selection must
+resolve to exactly one surface; a CVE, statement, product, repository, or policy
+IRI from one surface cannot authorize another.
 
-On each run, the merged production caller fetches the exact index bytes once
-from the registry at the digest reported by its push metadata, corroborates
-their SHA-256, and checksum-protects every cross-job transfer. The same verified
-digest selects the VEX, signing, attestation, provenance, collision-check, and
-alias consumers. This closes the registry-origin dependency for the index that
-run pushed and read back; it does not make final alias application atomic
-against an external writer. The first privileged execution failed at the gate
-job's tool installation as described above. TD-11 records all three VEX-side
-descriptor-policy asymmetries.
+A digest-addressed published child uses a three-key authorization: the exact
+surface, its canonical statement, and paired `--index-reference` plus
+`--index-manifest` evidence under that surface's pinned Python or micro
+repository. The tool recomputes the digest of the exact supplied index bytes,
+enforces exactly one `linux/amd64` child and one `linux/arm64` child with
+distinct digests, locks the BuildKit attestation platform and annotations,
+requires descriptor-digest uniqueness across all roles, and binds the eligible
+digest to the architecture reported by both scanners. The index digest and
+attestation digests are never eligible, and child/attestation digest aliasing is
+rejected.
 
-Valid fix evidence from either scanner refuses the disposition. On both paths,
-raw scanner vulnerability IDs, package names, and installed versions must
-already contain no surrounding whitespace; padded identity evidence is
-malformed rather than normalized into authorization. `tools/verify.py`
-independently expires the entry even if the scanner finding is absent.
-It also locks seven published-child constants and nine function ASTs and reports
-rejection of 17 canonical-VEX mutations, 8 allowlist mutations, and 17
-published-child surface mutations. The production workflow is configured to
-invoke the complete published-child CLI once for each architecture when its
-gate job reaches that step. This accept-and-track path does not make the image unaffected
-and is not a TD-6 fixable-CVE scanner suppression.
+The VEX-side index policy does not constrain attestation count or per-child
+reference cardinality and does not close either descriptor kind's top-level key
+set or the runnable `platform` key set. The Python publisher's stricter resolver
+rejects those measured shapes before its VEX gate. The micro publisher uses the
+common VEX-side policy directly; TD-11 tracks that boundary.
+
+Each merged caller supplies index evidence from the index that run pushed. The
+Python publisher fetches the bytes once by the push-reported digest,
+corroborates their SHA-256, checksum-protects cross-job transfers, and gives the
+same digest to every consumer. The micro publisher supplies the pushed digest
+and exact `dist/image-index.json` bytes it already read from the registry to
+both child calls in the same job. Both workflows are configured, but production
+proof of the new TD-12 published-child paths remains pending the merge-triggered
+runs. The Python publication chain also remains unproven for the earlier reason
+described above.
+
+Valid fix evidence from either scanner and byte-noncanonical raw scanner
+identities refuse authorization. `tools/verify.py` independently expires both
+entries even if their scanner findings are absent. Its current summary locks 3
+canonical byte documents, the exact 2-entry/3-surface model, 18 document
+mutations, TD-12 remediation markers, and 2/2 dormant expiries; four verifier
+mutations and four corresponding checker mutations must also fail. These paths
+do not make either image unaffected and are not TD-6 fixable-CVE scanner
+suppressions.
 
 ## SBOM Source
 

@@ -316,42 +316,46 @@ serialization mechanism outside repository code.
 
 ## TD-11: Published-child VEX descriptor-cardinality asymmetry
 
-The publish-side resolver requires the pinned exporter shape exactly: one
-runnable `linux/amd64` child, one runnable `linux/arm64` child, and one unique
-BuildKit attestation descriptor referring to each child. It rejects a third
-otherwise valid attestation descriptor and a second reference to either child.
+The Python publish-side resolver requires the pinned exporter shape exactly:
+one runnable `linux/amd64` child, one runnable `linux/arm64` child, and one
+unique BuildKit attestation descriptor referring to each child. It rejects a
+third otherwise valid attestation descriptor and a second reference to either
+child.
 
-`tools/assert-vex.py` deliberately remains unchanged by the publisher work. Its
-published-child index policy accepts three unique, correctly shaped attestation
-descriptors referring to `amd64`, `arm64`, and `amd64`, and likewise accepts two
-unique descriptors referring to the same child. It still excludes every
-attestation descriptor from `eligible_child_digests`, rejects an attestation
-digest used as the product, requires descriptor-digest uniqueness and
-child/attestation disjointness, and verifies the supplied bytes against the
-index digest. An added descriptor therefore cannot become an authorized product
-and cannot appear without moving the index digest bound to the push metadata.
+`tools/assert-vex.py` deliberately remains unchanged by the earlier Python
+publisher work. The later disposition generalization added the micro
+published-child caller without tightening this index policy. The shared policy
+accepts three unique, correctly shaped attestation descriptors referring
+to `amd64`, `arm64`, and `amd64`, and likewise accepts two unique descriptors
+referring to the same child. It still excludes every attestation descriptor from
+child eligibility, rejects an attestation digest used as the product, requires
+descriptor-digest uniqueness and child/attestation disjointness, and verifies
+the supplied bytes against the index digest. An added descriptor therefore
+cannot become an authorized product and cannot appear without moving the index
+digest bound to the push metadata.
 
-The policies also differ on descriptor top-level closure. The publish-side
-resolver requires runnable descriptors to contain exactly `digest`,
+The policies also differ on descriptor top-level closure. The Python
+publish-side resolver requires runnable descriptors to contain exactly `digest`,
 `mediaType`, `platform`, and `size`, and attestation descriptors to contain
 exactly those four keys plus `annotations`. The VEX-side policy accepts an
 additional `urls`, `data`, or `artifactType` field on either descriptor kind.
 In particular, `urls` can direct a client to an external location for the
-descriptor content, so the publish-side policy rejects all six cases before
-the index can be signed, scanned, attested, or aliased.
+descriptor content, so the Python publish-side policy rejects all six cases
+before the index can be signed, scanned, attested, or aliased.
 
-They also differ on runnable-platform closure. The publish-side resolver
+They also differ on runnable-platform closure. The Python publish-side resolver
 requires both runnable and attestation `platform` objects to contain exactly
 `architecture` and `os`. The VEX-side policy applies that exact check only to
 the attestation platform. It accepts a runnable platform carrying `variant`,
 `os.version`, `os.features`, or an invented key. `variant` can alter platform
-matching, so the publish-side resolver rejects these shapes before any child is
-selected for signing, scanning, attestation, or aliasing.
+matching, so the Python publish-side resolver rejects these shapes before any
+child is selected for signing, scanning, attestation, or aliasing.
 
-The stronger resolver runs before signing, scanning, attestation, or aliasing,
-so production rejects both cardinality classes, every descriptor
-additional-field case, and every runnable-platform additional-key case despite
-the weaker secondary policy. Tightening `tools/assert-vex.py` to require exact
-descriptor and runnable-platform key sets and one attestation reference per
-child remains separate follow-up work. Until then, future callers must not use
-the VEX-side validator alone as an exact exporter-shape or cardinality oracle.
+The stronger resolver runs before the Python VEX gate, so that publisher rejects
+both cardinality classes, every descriptor additional-field case, and every
+runnable-platform additional-key case. The micro publisher now supplies its
+registry-read index directly to `tools/assert-vex.py`; for micro, the shared
+VEX-side policy is the production boundary for these shapes. Tightening
+`tools/assert-vex.py`, or adding an equivalent strict resolver before the micro
+gate, remains separate follow-up work. Production behavior for the new micro
+authorization remains unproved until the merge-triggered run.
