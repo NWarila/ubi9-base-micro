@@ -55,8 +55,12 @@ TRIVY_FIX_STATUSES = {
 }
 GRYPE_FIX_STATES = {"fixed", "not-fixed", "unknown", "wont-fix"}
 PUBLISHED_PYTHON_REPOSITORY = "ghcr.io/nwarila/ubi9-base-python"
-PUBLISHED_CHILD_POLICY_PRODUCT = (
+PUBLISHED_MICRO_REPOSITORY = "ghcr.io/nwarila/ubi9-base-micro"
+PUBLISHED_PYTHON_CHILD_POLICY_PRODUCT = (
     "https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-python/published-platform-children"
+)
+PUBLISHED_MICRO_CHILD_POLICY_PRODUCT = (
+    "https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-micro/published-platform-children"
 )
 OCI_IMAGE_INDEX_MEDIA_TYPE = "application/vnd.oci.image.index.v1+json"
 OCI_IMAGE_MANIFEST_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json"
@@ -65,7 +69,7 @@ BUILDKIT_ATTESTATION_TYPE = "attestation-manifest"
 BUILDKIT_ATTESTATION_DIGEST_ANNOTATION = "vnd.docker.reference.digest"
 Mutation = Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], Any]
 
-ACCEPT_AND_TRACK_ACTION_STATEMENT = (
+TD9_ACTION_STATEMENT = (
     "This image ships the vulnerable CPython standard-library tarfile module in python3.12-libs "
     "3.12.13-3.el9_8.1. As of 2026-08-13 Red Hat lists RHEL 9 python3.12 as Affected with no fixed RPM "
     "(RHEL 9 python3.9 is fixed via RHSA-2026:54268; the upstream CPython 3.12 branch is fixed). "
@@ -73,6 +77,28 @@ ACCEPT_AND_TRACK_ACTION_STATEMENT = (
     "until a fixed RPM is absorbed; risk is realized only by a consumer that extracts attacker-supplied "
     "archives relying on those filters. Accepted and tracked as TD-9 in docs/TECH-DEBT.md; review-by "
     "2026-10-01."
+)
+
+CVE_2026_14456_PYTHON_ACTION_STATEMENT = (
+    "This image ships openssl-libs 1:3.5.5-5.el9_8 (OpenSSL 3.5.x), whose QUIC server implementation "
+    "allows denial of service via unbounded memory growth. As of 2026-08-18 Red Hat lists RHEL 9 openssl "
+    "as Affected with no fixed RPM; Red Hat Enterprise Linux 9.8 and later ship OpenSSL 3.5.x, and "
+    "earlier RHEL versions do not include the QUIC server feature. Risk is realized only by an application "
+    "that explicitly enables an OpenSSL QUIC server listener; this image runs no server process by default "
+    "and its entrypoint is the Python interpreter. Consumers that enable an OpenSSL QUIC server listener "
+    "must mitigate at the application boundary until a fixed RPM is absorbed. Accepted and tracked as "
+    "TD-12 in docs/TECH-DEBT.md; review-by 2026-10-01."
+)
+
+CVE_2026_14456_MICRO_ACTION_STATEMENT = (
+    "This image ships openssl-libs 1:3.5.5-5.el9_8 (OpenSSL 3.5.x), whose QUIC server implementation "
+    "allows denial of service via unbounded memory growth. As of 2026-08-18 Red Hat lists RHEL 9 openssl "
+    "as Affected with no fixed RPM; Red Hat Enterprise Linux 9.8 and later ship OpenSSL 3.5.x, and "
+    "earlier RHEL versions do not include the QUIC server feature. Risk is realized only by an application "
+    "that explicitly enables an OpenSSL QUIC server listener; this image ships no default command and "
+    "removes runtime executables. Consumers that enable an OpenSSL QUIC server listener must mitigate at "
+    "the application boundary until a fixed RPM is absorbed. Accepted and tracked as TD-12 in "
+    "docs/TECH-DEBT.md; review-by 2026-10-01."
 )
 
 
@@ -127,29 +153,98 @@ class Statement:
 
 
 @dataclass(frozen=True)
+class AcceptAndTrackSurface:
+    statement_path: str
+    document_id: str
+    document_timestamp: str
+    document_version: int
+    local_products: tuple[str, ...]
+    published_repository: str
+    policy_product: str
+    subcomponents: tuple[str, ...]
+    action_statement: str
+    action_statement_timestamp: str
+
+
+@dataclass(frozen=True)
 class AcceptAndTrackDisposition:
     vulnerability: str
-    products: tuple[str, ...]
     packages: tuple[tuple[str, str], ...]
     debt_id: str
     review_by: str
-    statement_path: str
+    surfaces: tuple[AcceptAndTrackSurface, ...]
 
 
 ACCEPT_AND_TRACK_DISPOSITIONS = (
     AcceptAndTrackDisposition(
         vulnerability="CVE-2026-11940",
-        products=(
-            "local/ubi9-base-python:ci-amd64",
-            "local/ubi9-base-python:ci-arm64",
-        ),
         packages=(
             ("python3.12", "3.12.13-3.el9_8.1"),
             ("python3.12-libs", "3.12.13-3.el9_8.1"),
         ),
         debt_id="TD-9",
         review_by="2026-10-01",
-        statement_path="images/python/vex/cve-2026-11940.openvex.json",
+        surfaces=(
+            AcceptAndTrackSurface(
+                statement_path="images/python/vex/cve-2026-11940.openvex.json",
+                document_id=("https://github.com/NWarila/ubi9-base-micro/images/python/vex/cve-2026-11940"),
+                document_timestamp="2026-08-14T00:00:00Z",
+                document_version=2,
+                local_products=(
+                    "local/ubi9-base-python:ci-amd64",
+                    "local/ubi9-base-python:ci-arm64",
+                ),
+                published_repository="ghcr.io/nwarila/ubi9-base-python",
+                policy_product=(
+                    "https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-python/published-platform-children"
+                ),
+                subcomponents=(
+                    "pkg:rpm/redhat/python3.12@3.12.13-3.el9_8.1",
+                    "pkg:rpm/redhat/python3.12-libs@3.12.13-3.el9_8.1",
+                ),
+                action_statement=TD9_ACTION_STATEMENT,
+                action_statement_timestamp="2026-08-13T00:00:00Z",
+            ),
+        ),
+    ),
+    AcceptAndTrackDisposition(
+        vulnerability="CVE-2026-14456",
+        packages=(("openssl-libs", "1:3.5.5-5.el9_8"),),
+        debt_id="TD-12",
+        review_by="2026-10-01",
+        surfaces=(
+            AcceptAndTrackSurface(
+                statement_path="images/python/vex/cve-2026-14456.openvex.json",
+                document_id=("https://github.com/NWarila/ubi9-base-micro/images/python/vex/cve-2026-14456"),
+                document_timestamp="2026-08-18T00:00:00Z",
+                document_version=1,
+                local_products=(
+                    "local/ubi9-base-python:ci-amd64",
+                    "local/ubi9-base-python:ci-arm64",
+                ),
+                published_repository="ghcr.io/nwarila/ubi9-base-python",
+                policy_product=(
+                    "https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-python/published-platform-children"
+                ),
+                subcomponents=("pkg:rpm/redhat/openssl-libs@3.5.5-5.el9_8?epoch=1",),
+                action_statement=CVE_2026_14456_PYTHON_ACTION_STATEMENT,
+                action_statement_timestamp="2026-08-18T00:00:00Z",
+            ),
+            AcceptAndTrackSurface(
+                statement_path="vex/cve-2026-14456.openvex.json",
+                document_id="https://github.com/NWarila/ubi9-base-micro/vex/cve-2026-14456",
+                document_timestamp="2026-08-18T00:00:00Z",
+                document_version=1,
+                local_products=("ghcr.io/nwarila/ubi9-base-micro:base-micro",),
+                published_repository="ghcr.io/nwarila/ubi9-base-micro",
+                policy_product=(
+                    "https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-micro/published-platform-children"
+                ),
+                subcomponents=("pkg:rpm/redhat/openssl-libs@3.5.5-5.el9_8?epoch=1",),
+                action_statement=CVE_2026_14456_MICRO_ACTION_STATEMENT,
+                action_statement_timestamp="2026-08-18T00:00:00Z",
+            ),
+        ),
     ),
 )
 
@@ -186,14 +281,15 @@ def validate_index_child_evidence(
     architecture: str,
     index_reference: str,
     index_manifest: Path,
+    pinned_repository: str,
 ) -> None:
     product_repository, product_digest = digest_reference_parts(product, "published-child --product")
-    if product_repository != PUBLISHED_PYTHON_REPOSITORY:
-        raise VexError(f"published-child --product repository must be {PUBLISHED_PYTHON_REPOSITORY}")
+    if product_repository != pinned_repository:
+        raise VexError(f"published-child --product repository must be {pinned_repository}")
 
     index_repository, index_digest = digest_reference_parts(index_reference, "--index-reference")
-    if index_repository != PUBLISHED_PYTHON_REPOSITORY:
-        raise VexError(f"--index-reference repository must be {PUBLISHED_PYTHON_REPOSITORY}")
+    if index_repository != pinned_repository:
+        raise VexError(f"--index-reference repository must be {pinned_repository}")
 
     try:
         index_bytes = index_manifest.read_bytes()
@@ -344,21 +440,98 @@ def validate_index_child_evidence(
     raise VexError("published-child product digest is absent from the verified index")
 
 
+def accept_and_track_surface_candidates(
+    finding: Finding,
+    product: str,
+    architecture: str,
+    index_reference: str | None,
+    index_manifest: Path | None,
+    dispositions: tuple[AcceptAndTrackDisposition, ...],
+) -> list[tuple[AcceptAndTrackDisposition, AcceptAndTrackSurface]]:
+    if (index_reference is None) != (index_manifest is None):
+        raise VexError("--index-reference and --index-manifest must be supplied together")
+
+    identity_candidates = [
+        disposition
+        for disposition in dispositions
+        if disposition.vulnerability == finding.vulnerability
+        and finding_package_versions(finding) == frozenset(disposition.packages)
+    ]
+    local_candidates = [
+        (disposition, surface)
+        for disposition in identity_candidates
+        for surface in disposition.surfaces
+        if product in surface.local_products
+    ]
+    if local_candidates:
+        if index_reference is not None:
+            raise VexError("index evidence must not be supplied for a local accept-and-track product")
+        return local_candidates
+    if not identity_candidates:
+        return []
+    if index_reference is None or index_manifest is None:
+        return []
+
+    product_repository, _product_digest = digest_reference_parts(product, "published-child --product")
+    index_repository, _index_digest = digest_reference_parts(index_reference, "--index-reference")
+    repositories = sorted(
+        {surface.published_repository for disposition in identity_candidates for surface in disposition.surfaces}
+    )
+    if product_repository not in repositories:
+        if len(repositories) == 1:
+            raise VexError(f"published-child --product repository must be {repositories[0]}")
+        expected = ",".join(repositories) if repositories else "none"
+        raise VexError(
+            "published-child repository does not match a pinned accept-and-track surface: "
+            f"observed={product_repository} expected={expected}"
+        )
+    if index_repository != product_repository:
+        raise VexError(f"--index-reference repository must be {product_repository}")
+    published_candidates = [
+        (disposition, surface)
+        for disposition in identity_candidates
+        for surface in disposition.surfaces
+        if surface.published_repository == product_repository
+    ]
+    if not published_candidates:
+        expected = ",".join(repositories) if repositories else "none"
+        raise VexError(
+            "published-child repository does not match a pinned accept-and-track surface: "
+            f"observed={product_repository} expected={expected}"
+        )
+    validate_index_child_evidence(
+        product,
+        architecture,
+        index_reference,
+        index_manifest,
+        product_repository,
+    )
+    return published_candidates
+
+
 def accept_and_track_product_eligible(
     product: str,
     architecture: str,
     index_reference: str | None,
     index_manifest: Path | None,
+    surface: AcceptAndTrackSurface,
 ) -> bool:
+    """Exercise one explicit surface in the standalone OCI-index self-test matrix."""
     if (index_reference is None) != (index_manifest is None):
         raise VexError("--index-reference and --index-manifest must be supplied together")
-    if product in ACCEPT_AND_TRACK_DISPOSITIONS[0].products:
+    if product in surface.local_products:
         if index_reference is not None:
             raise VexError("index evidence must not be supplied for a local accept-and-track product")
         return True
     if index_reference is None or index_manifest is None:
         return False
-    validate_index_child_evidence(product, architecture, index_reference, index_manifest)
+    validate_index_child_evidence(
+        product,
+        architecture,
+        index_reference,
+        index_manifest,
+        surface.published_repository,
+    )
     return True
 
 
@@ -892,42 +1065,30 @@ def accepted_statement(finding: Finding, product: str, statements: list[Statemen
     return None
 
 
-def expected_accept_and_track_document() -> dict[str, Any]:
+def expected_accept_and_track_document(
+    disposition: AcceptAndTrackDisposition,
+    surface: AcceptAndTrackSurface,
+) -> dict[str, Any]:
+    products = [
+        {
+            "@id": product,
+            "subcomponents": [{"@id": subcomponent} for subcomponent in surface.subcomponents],
+        }
+        for product in (*surface.local_products, surface.policy_product)
+    ]
     return {
         "@context": "https://openvex.dev/ns/v0.2.0",
-        "@id": "https://github.com/NWarila/ubi9-base-micro/images/python/vex/cve-2026-11940",
+        "@id": surface.document_id,
         "author": "NWarila",
-        "timestamp": "2026-08-14T00:00:00Z",
-        "version": 2,
+        "timestamp": surface.document_timestamp,
+        "version": surface.document_version,
         "statements": [
             {
-                "vulnerability": {"name": "CVE-2026-11940"},
-                "products": [
-                    {
-                        "@id": "local/ubi9-base-python:ci-amd64",
-                        "subcomponents": [
-                            {"@id": "pkg:rpm/redhat/python3.12@3.12.13-3.el9_8.1"},
-                            {"@id": "pkg:rpm/redhat/python3.12-libs@3.12.13-3.el9_8.1"},
-                        ],
-                    },
-                    {
-                        "@id": "local/ubi9-base-python:ci-arm64",
-                        "subcomponents": [
-                            {"@id": "pkg:rpm/redhat/python3.12@3.12.13-3.el9_8.1"},
-                            {"@id": "pkg:rpm/redhat/python3.12-libs@3.12.13-3.el9_8.1"},
-                        ],
-                    },
-                    {
-                        "@id": PUBLISHED_CHILD_POLICY_PRODUCT,
-                        "subcomponents": [
-                            {"@id": "pkg:rpm/redhat/python3.12@3.12.13-3.el9_8.1"},
-                            {"@id": "pkg:rpm/redhat/python3.12-libs@3.12.13-3.el9_8.1"},
-                        ],
-                    },
-                ],
+                "vulnerability": {"name": disposition.vulnerability},
+                "products": products,
                 "status": "affected",
-                "action_statement": ACCEPT_AND_TRACK_ACTION_STATEMENT,
-                "action_statement_timestamp": "2026-08-13T00:00:00Z",
+                "action_statement": surface.action_statement,
+                "action_statement_timestamp": surface.action_statement_timestamp,
             }
         ],
     }
@@ -937,33 +1098,32 @@ def finding_package_versions(finding: Finding) -> frozenset[tuple[str, str]]:
     return frozenset((record.package, record.version) for record in finding.records if not record.has_fix)
 
 
-def disposition_identity_matches(
-    disposition: AcceptAndTrackDisposition,
-    finding: Finding,
-    product: str,
-    published_child_eligible: bool,
-) -> bool:
-    return (
-        disposition.vulnerability == finding.vulnerability
-        and (product in disposition.products or published_child_eligible)
-        and finding_package_versions(finding) == frozenset(disposition.packages)
-    )
-
-
 def statement_path_matches(path: Path, expected: str) -> bool:
-    expected_parts = Path(expected).parts
-    return len(path.parts) >= len(expected_parts) and path.parts[-len(expected_parts) :] == expected_parts
+    canonical_paths = {
+        surface.statement_path for disposition in ACCEPT_AND_TRACK_DISPOSITIONS for surface in disposition.surfaces
+    }
+    matching_paths = [
+        candidate
+        for candidate in canonical_paths
+        if len(path.parts) >= len(Path(candidate).parts)
+        and path.parts[-len(Path(candidate).parts) :] == Path(candidate).parts
+    ]
+    if not matching_paths:
+        return False
+    longest_match = max(matching_paths, key=lambda candidate: len(Path(candidate).parts))
+    return expected == longest_match
 
 
 def accept_and_track_statement_rejection(
     statement: Statement,
     disposition: AcceptAndTrackDisposition,
+    surface: AcceptAndTrackSurface,
 ) -> str | None:
-    if not statement_path_matches(statement.path, disposition.statement_path):
-        return f"statement source must be {disposition.statement_path}"
+    if not statement_path_matches(statement.path, surface.statement_path):
+        return f"statement source must be {surface.statement_path}"
 
     document = statement.document
-    expected = expected_accept_and_track_document()
+    expected = expected_accept_and_track_document(disposition, surface)
     top_keys = {"@context", "@id", "author", "timestamp", "version", "statements"}
     if set(document) != top_keys:
         return "statement document has unexpected or missing top-level fields"
@@ -1007,7 +1167,7 @@ def accept_and_track_statement_rejection(
         return f"accept-and-track action_statement must contain {expected_review_marker}"
     if disposition.debt_id not in action_statement:
         return f"accept-and-track action_statement must name {disposition.debt_id}"
-    if action_statement != ACCEPT_AND_TRACK_ACTION_STATEMENT:
+    if action_statement != surface.action_statement:
         return "accept-and-track action_statement does not match the canonical text"
     if raw.get("action_statement_timestamp") != expected_statement["action_statement_timestamp"]:
         return "accept-and-track action_statement_timestamp does not match the canonical value"
@@ -1022,25 +1182,43 @@ def accepted_accept_and_track_statement(
     statements: list[Statement],
     dispositions: tuple[AcceptAndTrackDisposition, ...],
     today: date,
-    published_child_eligible: bool,
-) -> tuple[Statement | None, AcceptAndTrackDisposition | None, str | None]:
+    architecture: str,
+    index_reference: str | None,
+    index_manifest: Path | None,
+) -> tuple[Statement | None, AcceptAndTrackDisposition | None, AcceptAndTrackSurface | None, str | None]:
     identity_rejections = sorted({rejection for record in finding.records for rejection in record.identity_rejections})
     if identity_rejections:
         return (
             None,
             None,
+            None,
             "malformed accept-and-track scanner identity evidence: " + "; ".join(identity_rejections),
         )
-    candidates = [
-        disposition
-        for disposition in dispositions
-        if disposition_identity_matches(disposition, finding, product, published_child_eligible)
+    candidates = accept_and_track_surface_candidates(
+        finding,
+        product,
+        architecture,
+        index_reference,
+        index_manifest,
+        dispositions,
+    )
+    if not candidates:
+        return None, None, None, "no exact in-tool accept-and-track allowlist entry"
+    if len(candidates) > 1:
+        return (
+            None,
+            None,
+            None,
+            f"multiple exact in-tool accept-and-track authorization matches: {len(candidates)}",
+        )
+    disposition, surface = candidates[0]
+    canonical_pairs = [
+        (canonical_disposition, canonical_surface)
+        for canonical_disposition in ACCEPT_AND_TRACK_DISPOSITIONS
+        for canonical_surface in canonical_disposition.surfaces
     ]
-    if len(candidates) != 1:
-        return None, None, "no exact in-tool accept-and-track allowlist entry"
-    disposition = candidates[0]
-    if disposition != ACCEPT_AND_TRACK_DISPOSITIONS[0]:
-        return None, None, "in-tool accept-and-track allowlist entry does not match the canonical authorization"
+    if (disposition, surface) not in canonical_pairs:
+        return None, None, None, "in-tool accept-and-track allowlist entry does not match the canonical authorization"
 
     review_by = date.fromisoformat(disposition.review_by)
     if today > review_by:
@@ -1060,7 +1238,7 @@ def accepted_accept_and_track_statement(
     )
     if fixed_records:
         evidence = ",".join(f"{scanner}:{package}@{version}" for scanner, package, version in fixed_records)
-        return None, None, f"valid fix evidence refuses accept-and-track disposition: {evidence}"
+        return None, None, None, f"valid fix evidence refuses accept-and-track disposition: {evidence}"
 
     target_statements = [
         statement for statement in statements if disposition.vulnerability in statement.vulnerabilities
@@ -1069,12 +1247,12 @@ def accepted_accept_and_track_statement(
         locations = ",".join(f"{statement.path}#{statement.index}" for statement in target_statements)
         raise VexError(f"duplicate accept-and-track statements for {disposition.vulnerability}: {locations}")
     if not target_statements:
-        return None, None, f"no reviewed OpenVEX statement for {disposition.vulnerability}"
+        return None, None, None, f"no reviewed OpenVEX statement for {disposition.vulnerability}"
     statement = target_statements[0]
-    rejection = accept_and_track_statement_rejection(statement, disposition)
+    rejection = accept_and_track_statement_rejection(statement, disposition, surface)
     if rejection is not None:
-        return None, None, rejection
-    return statement, disposition, None
+        return None, None, None, rejection
+    return statement, disposition, surface, None
 
 
 def assert_vex(
@@ -1096,15 +1274,8 @@ def assert_vex(
     grype_evidence = validate_grype_report(grype_document)
     validate_report_binding(product, trivy_evidence, grype_evidence)
     validate_contract_floor(package_floor, trivy_evidence.architecture, trivy_evidence.package_names)
-    accept_and_track_product_matches = accept_and_track_product_eligible(
-        product,
-        trivy_evidence.architecture,
-        index_reference,
-        index_manifest,
-    )
-    published_child_eligible = (
-        accept_and_track_product_matches and product not in ACCEPT_AND_TRACK_DISPOSITIONS[0].products
-    )
+    if (index_reference is None) != (index_manifest is None):
+        raise VexError("--index-reference and --index-manifest must be supplied together")
 
     findings = union_findings(parse_trivy(trivy_document) + parse_grype(grype_document))
     statements = load_vex_statements(vex_dir)
@@ -1116,19 +1287,22 @@ def assert_vex(
     missing: list[Finding] = []
     rejection_reasons: list[tuple[Finding, str]] = []
     matched: list[tuple[Finding, Statement]] = []
-    tracked: list[tuple[Finding, Statement, AcceptAndTrackDisposition]] = []
+    tracked: list[tuple[Finding, Statement, AcceptAndTrackDisposition, AcceptAndTrackSurface]] = []
+    accept_and_track_vulnerabilities = {disposition.vulnerability for disposition in ACCEPT_AND_TRACK_DISPOSITIONS}
     for finding in findings:
-        if finding.vulnerability == ACCEPT_AND_TRACK_DISPOSITIONS[0].vulnerability and accept_and_track_product_matches:
-            statement, disposition, rejection = accepted_accept_and_track_statement(
+        if finding.vulnerability in accept_and_track_vulnerabilities:
+            statement, disposition, surface, rejection = accepted_accept_and_track_statement(
                 finding,
                 product,
                 statements,
                 accept_and_track,
                 evaluation_date,
-                published_child_eligible,
+                trivy_evidence.architecture,
+                index_reference,
+                index_manifest,
             )
-            if statement is not None and disposition is not None:
-                tracked.append((finding, statement, disposition))
+            if statement is not None and disposition is not None and surface is not None:
+                tracked.append((finding, statement, disposition, surface))
             else:
                 missing.append(finding)
                 if rejection is not None:
@@ -1148,7 +1322,7 @@ def assert_vex(
                 f"product={product} source={statement.path}"
             )
 
-    for _finding, statement, disposition in tracked:
+    for _finding, statement, disposition, _surface in tracked:
         if emit:
             packages = ",".join(f"{name}@{version}" for name, version in disposition.packages)
             print(
@@ -2303,7 +2477,17 @@ def self_test() -> int:
         accept_vex_dir = tmp / "images" / "python" / "vex"
         accept_vex_dir.mkdir(parents=True)
         canonical_vex_name = "cve-2026-11940.openvex.json"
-        canonical_vex = expected_accept_and_track_document()
+        td9_disposition = next(
+            disposition
+            for disposition in ACCEPT_AND_TRACK_DISPOSITIONS
+            if disposition.vulnerability == "CVE-2026-11940"
+        )
+        td9_surface = next(
+            surface
+            for surface in td9_disposition.surfaces
+            if surface.statement_path == "images/python/vex/cve-2026-11940.openvex.json"
+        )
+        canonical_vex = expected_accept_and_track_document(td9_disposition, td9_surface)
 
         accept_trivy = copy.deepcopy(clean_trivy)
         accept_trivy["ArtifactName"] = accept_product
@@ -2544,6 +2728,7 @@ def self_test() -> int:
                     architecture,
                     supplied_reference,
                     supplied_manifest,
+                    td9_surface,
                 )
             except VexError as exc:
                 if str(exc) != expected_reason:
@@ -3294,7 +3479,7 @@ def self_test() -> int:
                 "accept-and-track statement zero review markers",
                 mutate_vex(
                     lambda value: value["statements"][0].update(
-                        action_statement=ACCEPT_AND_TRACK_ACTION_STATEMENT.replace("review-by", "review by")
+                        action_statement=TD9_ACTION_STATEMENT.replace("review-by", "review by")
                     )
                 ),
                 "accept-and-track action_statement must contain exactly one review-by marker",
@@ -3303,7 +3488,7 @@ def self_test() -> int:
                 "accept-and-track statement two review markers",
                 mutate_vex(
                     lambda value: value["statements"][0].update(
-                        action_statement=ACCEPT_AND_TRACK_ACTION_STATEMENT + " review-by 2026-10-01"
+                        action_statement=TD9_ACTION_STATEMENT + " review-by 2026-10-01"
                     )
                 ),
                 "accept-and-track action_statement must contain exactly one review-by marker",
@@ -3312,7 +3497,7 @@ def self_test() -> int:
                 "accept-and-track statement wrong review date",
                 mutate_vex(
                     lambda value: value["statements"][0].update(
-                        action_statement=ACCEPT_AND_TRACK_ACTION_STATEMENT.replace("2026-10-01", "2026-10-02")
+                        action_statement=TD9_ACTION_STATEMENT.replace("2026-10-01", "2026-10-02")
                     )
                 ),
                 "accept-and-track action_statement must contain review-by 2026-10-01",
@@ -3321,7 +3506,7 @@ def self_test() -> int:
                 "accept-and-track statement wrong debt id",
                 mutate_vex(
                     lambda value: value["statements"][0].update(
-                        action_statement=ACCEPT_AND_TRACK_ACTION_STATEMENT.replace("TD-9", "TD-10")
+                        action_statement=TD9_ACTION_STATEMENT.replace("TD-9", "TD-10")
                     )
                 ),
                 "accept-and-track action_statement must name TD-9",
@@ -3360,7 +3545,7 @@ def self_test() -> int:
             filename="wrong.openvex.json",
         )
 
-        canonical_disposition = ACCEPT_AND_TRACK_DISPOSITIONS[0]
+        canonical_disposition = td9_disposition
         allowlist_mutations: list[tuple[str, AcceptAndTrackDisposition, str]] = [
             (
                 "accept-and-track allowlist wrong CVE",
@@ -3369,7 +3554,15 @@ def self_test() -> int:
             ),
             (
                 "accept-and-track allowlist wrong product",
-                replace(canonical_disposition, products=("local/ubi9-base-python:ci-other",)),
+                replace(
+                    canonical_disposition,
+                    surfaces=(
+                        replace(
+                            canonical_disposition.surfaces[0],
+                            local_products=("local/ubi9-base-python:ci-other",),
+                        ),
+                    ),
+                ),
                 "no exact in-tool accept-and-track allowlist entry",
             ),
             (
@@ -3415,7 +3608,15 @@ def self_test() -> int:
             ),
             (
                 "accept-and-track allowlist wrong statement path",
-                replace(canonical_disposition, statement_path="images/python/vex/other.openvex.json"),
+                replace(
+                    canonical_disposition,
+                    surfaces=(
+                        replace(
+                            canonical_disposition.surfaces[0],
+                            statement_path="images/python/vex/other.openvex.json",
+                        ),
+                    ),
+                ),
                 "in-tool accept-and-track allowlist entry does not match the canonical authorization",
             ),
         ]
@@ -3586,6 +3787,1112 @@ def self_test() -> int:
             )
             return 1
         print("assert-vex self-test: all-fixed target pair passed without an accept-and-track disposition")
+
+        surface_pairs = tuple(
+            (disposition, surface) for disposition in ACCEPT_AND_TRACK_DISPOSITIONS for surface in disposition.surfaces
+        )
+
+        def surface_reports(
+            disposition: AcceptAndTrackDisposition,
+            fixture_product: str,
+            *,
+            architecture: str = "amd64",
+            trivy_fixed_state: bool = False,
+            grype_fixed_state: bool = False,
+            trivy_finding: bool = True,
+        ) -> tuple[dict[str, Any], dict[str, Any]]:
+            trivy = copy.deepcopy(clean_trivy)
+            grype = copy.deepcopy(clean_grype)
+            bind_accept_reports(trivy, grype, fixture_product, architecture)
+            trivy["Results"][0]["Packages"] = [
+                {"Name": "glibc", "Version": "2.34"},
+                *[{"Name": package, "Version": version} for package, version in disposition.packages],
+            ]
+            trivy["Results"][0]["Vulnerabilities"] = []
+            if trivy_finding:
+                for package, version in disposition.packages:
+                    trivy_record: dict[str, Any] = {
+                        "VulnerabilityID": disposition.vulnerability,
+                        "PkgName": package,
+                        "InstalledVersion": version,
+                        "Severity": "HIGH",
+                    }
+                    if trivy_fixed_state:
+                        trivy_record.update({"FixedVersion": version + ".fixed", "Status": "fixed"})
+                    trivy["Results"][0]["Vulnerabilities"].append(trivy_record)
+            grype["matches"] = []
+            for package, version in disposition.packages:
+                vulnerability: dict[str, Any] = {
+                    "id": disposition.vulnerability,
+                    "severity": "High",
+                }
+                if grype_fixed_state:
+                    vulnerability["fix"] = {"versions": [version + ".fixed"], "state": "fixed"}
+                grype["matches"].append(
+                    {
+                        "vulnerability": vulnerability,
+                        "artifact": {"name": package, "version": version},
+                    }
+                )
+            return trivy, grype
+
+        def run_surface_fixture(
+            disposition: AcceptAndTrackDisposition,
+            surface: AcceptAndTrackSurface,
+            fixture_product: str,
+            *,
+            trivy: dict[str, Any] | None = None,
+            grype: dict[str, Any] | None = None,
+            document: dict[str, Any] | None = None,
+            omit_statement: bool = False,
+            statement_surface: AcceptAndTrackSurface | None = None,
+            filename: str | None = None,
+            dispositions: tuple[AcceptAndTrackDisposition, ...] = ACCEPT_AND_TRACK_DISPOSITIONS,
+            evaluation_date: date = date(2026, 8, 18),
+            fixture_index_reference: str | None = None,
+            fixture_index_manifest: Path | None = None,
+            duplicate_document: bool = False,
+        ) -> tuple[int | None, str, VexError | None]:
+            fixture_trivy, fixture_grype = surface_reports(disposition, fixture_product)
+            if trivy is not None:
+                fixture_trivy = copy.deepcopy(trivy)
+            if grype is not None:
+                fixture_grype = copy.deepcopy(grype)
+            selected_statement_surface = surface if statement_surface is None else statement_surface
+            fixture_vex_dir = tmp / Path(selected_statement_surface.statement_path).parent
+            fixture_vex_dir.mkdir(parents=True, exist_ok=True)
+            for old_document in fixture_vex_dir.glob("*.json"):
+                old_document.unlink()
+            selected_document = (
+                expected_accept_and_track_document(disposition, surface)
+                if document is None
+                else copy.deepcopy(document)
+            )
+            if not omit_statement:
+                fixture_name = filename or Path(selected_statement_surface.statement_path).name
+                write_json(fixture_vex_dir / fixture_name, selected_document)
+                if duplicate_document:
+                    write_json(fixture_vex_dir / "duplicate.openvex.json", selected_document)
+            write_json(trivy_json, fixture_trivy)
+            write_json(grype_json, fixture_grype)
+            write_json(package_floor, clean_floor)
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            try:
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    result = assert_vex(
+                        fixture_product,
+                        trivy_json,
+                        grype_json,
+                        package_floor,
+                        fixture_vex_dir,
+                        emit=True,
+                        accept_and_track=dispositions,
+                        today=evaluation_date,
+                        index_reference=fixture_index_reference,
+                        index_manifest=fixture_index_manifest,
+                    )
+            except VexError as exc:
+                return None, stdout.getvalue() + stderr.getvalue(), exc
+            return result, stdout.getvalue() + stderr.getvalue(), None
+
+        def require_surface_result(
+            label: str,
+            result: tuple[int | None, str, VexError | None],
+            *,
+            accepted: bool,
+            reason: str = "",
+        ) -> None:
+            status, output, error = result
+            if accepted:
+                if error is not None or status != 0 or "accept-and-track disposition:" not in output:
+                    print(
+                        f"self-test failed: {label} did not accept: status={status} error={error} output={output}",
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(1)
+                print(f"assert-vex self-test: {label} accepted")
+                return
+            combined = output + (str(error) if error is not None else "")
+            if (error is None and status != 1) or reason not in combined:
+                print(
+                    f"self-test failed: {label} rejected for wrong reason: "
+                    f"status={status} error={error} output={output}",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if any(line.startswith("accept-and-track disposition:") for line in output.splitlines()):
+                print(f"self-test failed: {label} emitted a disposition: {output}", file=sys.stderr)
+                raise SystemExit(1)
+            print(f"assert-vex self-test: {label} rejected: {reason}")
+
+        def action_statement_mutation(replacement: str) -> Callable[[dict[str, Any]], None]:
+            def mutate(document: dict[str, Any]) -> None:
+                document["statements"][0].update(action_statement=replacement)
+
+            return mutate
+
+        for disposition, surface in surface_pairs:
+            surface_label = f"{disposition.vulnerability} {surface.statement_path}"
+            canonical_document = expected_accept_and_track_document(disposition, surface)
+            for local_product in surface.local_products:
+                local_label = f"{surface_label} local {local_product}"
+                require_surface_result(
+                    local_label + " two-key path",
+                    run_surface_fixture(disposition, surface, local_product),
+                    accepted=True,
+                )
+                require_surface_result(
+                    local_label + " missing entry",
+                    run_surface_fixture(disposition, surface, local_product, dispositions=()),
+                    accepted=False,
+                    reason="no exact in-tool accept-and-track allowlist entry",
+                )
+                require_surface_result(
+                    local_label + " missing statement",
+                    run_surface_fixture(disposition, surface, local_product, omit_statement=True),
+                    accepted=False,
+                    reason=f"no reviewed OpenVEX statement for {disposition.vulnerability}",
+                )
+                require_surface_result(
+                    local_label + " index authority forbidden",
+                    run_surface_fixture(
+                        disposition,
+                        surface,
+                        local_product,
+                        fixture_index_reference=f"{surface.published_repository}@sha256:{'0' * 64}",
+                        fixture_index_manifest=index_manifest_path,
+                    ),
+                    accepted=False,
+                    reason="index evidence must not be supplied for a local accept-and-track product",
+                )
+
+            surface_statement_mutations: tuple[tuple[str, Callable[[dict[str, Any]], Any], str], ...] = (
+                ("top-level field", lambda value: value.update(extra=True), "unexpected or missing top-level"),
+                ("context", lambda value: value.update({"@context": "https://example.invalid"}), "field @context"),
+                ("document id", lambda value: value.update({"@id": "https://example.invalid/wrong"}), "field @id"),
+                ("author", lambda value: value.update(author="Other"), "field author"),
+                ("timestamp", lambda value: value.update(timestamp="2026-08-19T00:00:00Z"), "field timestamp"),
+                ("version", lambda value: value.update(version=99), "field version"),
+                (
+                    "statement field",
+                    lambda value: value["statements"][0].update(extra=True),
+                    "unexpected or missing fields",
+                ),
+                (
+                    "CVE",
+                    lambda value: value["statements"][0]["vulnerability"].update(name="CVE-2099-0000"),
+                    "no reviewed OpenVEX statement",
+                ),
+                (
+                    "CVE alias",
+                    lambda value: value["statements"][0]["vulnerability"].update(aliases=[]),
+                    "vulnerability must contain only its name",
+                ),
+                (
+                    "product",
+                    lambda value: value["statements"][0]["products"][0].update({"@id": "wrong"}),
+                    "products and subcomponents",
+                ),
+                (
+                    "missing product",
+                    lambda value: value["statements"][0]["products"].pop(),
+                    "products and subcomponents",
+                ),
+                (
+                    "extra product",
+                    lambda value: value["statements"][0]["products"].append({"@id": "wrong", "subcomponents": []}),
+                    "products and subcomponents",
+                ),
+                (
+                    "product key",
+                    lambda value: value["statements"][0]["products"][0].update(identifiers={}),
+                    "products and subcomponents",
+                ),
+                (
+                    "policy IRI",
+                    lambda value: value["statements"][0]["products"][-1].update(
+                        {"@id": "https://example.invalid/policy"}
+                    ),
+                    "products and subcomponents",
+                ),
+                (
+                    "subcomponent",
+                    lambda value: value["statements"][0]["products"][0]["subcomponents"][0].update({"@id": "wrong"}),
+                    "products and subcomponents",
+                ),
+                (
+                    "missing subcomponent",
+                    lambda value: value["statements"][0]["products"][0]["subcomponents"].pop(),
+                    "products and subcomponents",
+                ),
+                (
+                    "extra subcomponent",
+                    lambda value: value["statements"][0]["products"][0]["subcomponents"].append(
+                        {"@id": "pkg:rpm/redhat/extra@1"}
+                    ),
+                    "products and subcomponents",
+                ),
+                ("status", lambda value: value["statements"][0].update(status="fixed"), "status must be affected"),
+                ("action", lambda value: value["statements"][0].update(action_statement="wrong"), "review-by marker"),
+                (
+                    "zero review markers",
+                    action_statement_mutation(surface.action_statement.replace("review-by", "review by")),
+                    "exactly one review-by marker",
+                ),
+                (
+                    "two review markers",
+                    action_statement_mutation(surface.action_statement + " review-by 2026-10-01"),
+                    "exactly one review-by marker",
+                ),
+                (
+                    "wrong review date",
+                    action_statement_mutation(surface.action_statement.replace("2026-10-01", "2026-10-02")),
+                    "must contain review-by 2026-10-01",
+                ),
+                (
+                    "wrong debt id",
+                    action_statement_mutation(surface.action_statement.replace(disposition.debt_id, "TD-wrong")),
+                    f"must name {disposition.debt_id}",
+                ),
+                (
+                    "action timestamp",
+                    lambda value: value["statements"][0].update(action_statement_timestamp="wrong"),
+                    "action_statement_timestamp",
+                ),
+            )
+            local_product = surface.local_products[0]
+            for mutation_label, mutate, reason in surface_statement_mutations:
+                mutant = copy.deepcopy(canonical_document)
+                mutate(mutant)
+                require_surface_result(
+                    f"{surface_label} canonical-document mutation {mutation_label}",
+                    run_surface_fixture(disposition, surface, local_product, document=mutant),
+                    accepted=False,
+                    reason=reason,
+                )
+            require_surface_result(
+                f"{surface_label} duplicate statement files",
+                run_surface_fixture(disposition, surface, local_product, duplicate_document=True),
+                accepted=False,
+                reason=f"duplicate accept-and-track statements for {disposition.vulnerability}",
+            )
+            require_surface_result(
+                f"{surface_label} wrong statement path",
+                run_surface_fixture(disposition, surface, local_product, filename="wrong.openvex.json"),
+                accepted=False,
+                reason=f"statement source must be {surface.statement_path}",
+            )
+
+            base_trivy, base_grype = surface_reports(disposition, local_product)
+            for field_label, field_name in (
+                ("vulnerability", "id"),
+                ("package", "name"),
+                ("version", "version"),
+            ):
+                padded_grype = copy.deepcopy(base_grype)
+                target = padded_grype["matches"][0]["vulnerability" if field_name == "id" else "artifact"]
+                target[field_name] = f" {target[field_name]} "
+                require_surface_result(
+                    f"{surface_label} scanner identity {field_label}",
+                    run_surface_fixture(disposition, surface, local_product, trivy=base_trivy, grype=padded_grype),
+                    accepted=False,
+                    reason="malformed accept-and-track scanner identity evidence",
+                )
+
+            for scanner_name, trivy_fixed_state, grype_fixed_state in (
+                ("Trivy", True, False),
+                ("Grype", False, True),
+            ):
+                fixed_trivy, fixed_grype = surface_reports(
+                    disposition,
+                    local_product,
+                    trivy_fixed_state=trivy_fixed_state,
+                    grype_fixed_state=grype_fixed_state,
+                )
+                require_surface_result(
+                    f"{surface_label} valid {scanner_name} fix evidence",
+                    run_surface_fixture(disposition, surface, local_product, trivy=fixed_trivy, grype=fixed_grype),
+                    accepted=False,
+                    reason="valid fix evidence refuses accept-and-track disposition",
+                )
+
+            wrong_package_trivy, wrong_package_grype = surface_reports(disposition, local_product)
+            wrong_package_grype["matches"][0]["artifact"]["name"] += "-wrong"
+            require_surface_result(
+                f"{surface_label} wrong package",
+                run_surface_fixture(
+                    disposition,
+                    surface,
+                    local_product,
+                    trivy=wrong_package_trivy,
+                    grype=wrong_package_grype,
+                ),
+                accepted=False,
+                reason="no exact in-tool accept-and-track allowlist entry",
+            )
+            wrong_version_trivy, wrong_version_grype = surface_reports(disposition, local_product)
+            wrong_version_grype["matches"][0]["artifact"]["version"] += ".wrong"
+            require_surface_result(
+                f"{surface_label} wrong version",
+                run_surface_fixture(
+                    disposition,
+                    surface,
+                    local_product,
+                    trivy=wrong_version_trivy,
+                    grype=wrong_version_grype,
+                ),
+                accepted=False,
+                reason="no exact in-tool accept-and-track allowlist entry",
+            )
+            require_surface_result(
+                f"{surface_label} active expiry",
+                run_surface_fixture(
+                    disposition,
+                    surface,
+                    local_product,
+                    evaluation_date=date(2026, 10, 2),
+                ),
+                accepted=False,
+                reason=f"expired accept-and-track entry: {disposition.vulnerability}",
+            )
+
+            overlapping = (disposition, disposition)
+            require_surface_result(
+                f"{surface_label} overlapping authorization candidates",
+                run_surface_fixture(disposition, surface, local_product, dispositions=overlapping),
+                accepted=False,
+                reason="multiple exact in-tool accept-and-track authorization matches: 2",
+            )
+
+            surface_allowlist_mutations: tuple[tuple[str, AcceptAndTrackDisposition, str], ...] = (
+                (
+                    "CVE",
+                    replace(disposition, vulnerability="CVE-2099-0000"),
+                    "no exact in-tool accept-and-track allowlist entry",
+                ),
+                (
+                    "packages",
+                    replace(disposition, packages=((disposition.packages[0][0], "wrong"),)),
+                    "no exact in-tool accept-and-track allowlist entry",
+                ),
+                (
+                    "missing package",
+                    replace(disposition, packages=disposition.packages[1:]),
+                    "no exact in-tool accept-and-track allowlist entry",
+                ),
+                (
+                    "extra package",
+                    replace(disposition, packages=(*disposition.packages, ("extra", "1"))),
+                    "no exact in-tool accept-and-track allowlist entry",
+                ),
+                (
+                    "package name",
+                    replace(
+                        disposition,
+                        packages=(("wrong", disposition.packages[0][1]), *disposition.packages[1:]),
+                    ),
+                    "no exact in-tool accept-and-track allowlist entry",
+                ),
+                (
+                    "debt id",
+                    replace(disposition, debt_id="TD-wrong"),
+                    "does not match the canonical authorization",
+                ),
+                (
+                    "review date",
+                    replace(disposition, review_by="2026-10-02"),
+                    "does not match the canonical authorization",
+                ),
+                (
+                    "statement path",
+                    replace(
+                        disposition,
+                        surfaces=(replace(surface, statement_path="vex/wrong.openvex.json"),),
+                    ),
+                    "does not match the canonical authorization",
+                ),
+                (
+                    "local products",
+                    replace(
+                        disposition,
+                        surfaces=(replace(surface, local_products=("local/wrong:tag",)),),
+                    ),
+                    "no exact in-tool accept-and-track allowlist entry",
+                ),
+                (
+                    "published repository",
+                    replace(
+                        disposition,
+                        surfaces=(replace(surface, published_repository="ghcr.io/example/wrong"),),
+                    ),
+                    "does not match the canonical authorization",
+                ),
+                (
+                    "policy IRI",
+                    replace(
+                        disposition,
+                        surfaces=(replace(surface, policy_product="https://example.invalid/wrong"),),
+                    ),
+                    "does not match the canonical authorization",
+                ),
+                (
+                    "action text",
+                    replace(
+                        disposition,
+                        surfaces=(replace(surface, action_statement="wrong"),),
+                    ),
+                    "does not match the canonical authorization",
+                ),
+            )
+            for mutation_label, mutated_disposition, reason in surface_allowlist_mutations:
+                require_surface_result(
+                    f"{surface_label} allowlist mutation {mutation_label}",
+                    run_surface_fixture(
+                        disposition,
+                        surface,
+                        local_product,
+                        dispositions=(mutated_disposition,),
+                    ),
+                    accepted=False,
+                    reason=reason,
+                )
+
+            wrong_tag = local_product + "-look-alike"
+            wrong_tag_trivy, wrong_tag_grype = surface_reports(disposition, wrong_tag)
+            require_surface_result(
+                f"{surface_label} wrong-tag local product",
+                run_surface_fixture(
+                    disposition,
+                    surface,
+                    wrong_tag,
+                    trivy=wrong_tag_trivy,
+                    grype=wrong_tag_grype,
+                ),
+                accepted=False,
+                reason="no exact in-tool accept-and-track allowlist entry",
+            )
+
+        print(
+            "assert-vex self-test: parameterized local/canonical/allowlist/scanner/fix/duplicate/expiry "
+            f"matrices covered {len(surface_pairs)} disposition surfaces"
+        )
+
+        for disposition, surface in surface_pairs:
+            surface_label = f"{disposition.vulnerability} {surface.statement_path}"
+            published_product = f"{surface.published_repository}@{amd64_child_digest}"
+            index_manifest_path.write_bytes(valid_index_bytes)
+            published_reference = reference_for_index(valid_index_bytes, surface.published_repository)
+            published_trivy, published_grype = surface_reports(disposition, published_product)
+
+            def published_fixture(
+                fixture_disposition: AcceptAndTrackDisposition = disposition,
+                fixture_surface: AcceptAndTrackSurface = surface,
+                fixture_product: str = published_product,
+                fixture_trivy: dict[str, Any] = published_trivy,
+                fixture_grype: dict[str, Any] = published_grype,
+                fixture_reference: str = published_reference,
+                **kwargs: Any,
+            ) -> tuple[int | None, str, VexError | None]:
+                return run_surface_fixture(
+                    fixture_disposition,
+                    fixture_surface,
+                    fixture_product,
+                    trivy=fixture_trivy,
+                    grype=fixture_grype,
+                    fixture_index_reference=fixture_reference,
+                    fixture_index_manifest=index_manifest_path,
+                    **kwargs,
+                )
+
+            require_surface_result(
+                f"{surface_label} published three-key path",
+                published_fixture(),
+                accepted=True,
+            )
+            require_surface_result(
+                f"{surface_label} published missing entry",
+                published_fixture(dispositions=()),
+                accepted=False,
+                reason="no exact in-tool accept-and-track allowlist entry",
+            )
+            require_surface_result(
+                f"{surface_label} published missing statement",
+                published_fixture(omit_statement=True),
+                accepted=False,
+                reason=f"no reviewed OpenVEX statement for {disposition.vulnerability}",
+            )
+            require_surface_result(
+                f"{surface_label} published missing index evidence",
+                run_surface_fixture(
+                    disposition,
+                    surface,
+                    published_product,
+                    trivy=published_trivy,
+                    grype=published_grype,
+                ),
+                accepted=False,
+                reason="no exact in-tool accept-and-track allowlist entry",
+            )
+            altered_statement = expected_accept_and_track_document(disposition, surface)
+            altered_statement["statements"][0]["products"][-1]["@id"] += "-wrong"
+            require_surface_result(
+                f"{surface_label} published altered statement",
+                published_fixture(document=altered_statement),
+                accepted=False,
+                reason="products and subcomponents must match the canonical ordered set",
+            )
+            require_surface_result(
+                f"{surface_label} published altered index digest",
+                run_surface_fixture(
+                    disposition,
+                    surface,
+                    published_product,
+                    trivy=published_trivy,
+                    grype=published_grype,
+                    fixture_index_reference=f"{surface.published_repository}@sha256:{'0' * 64}",
+                    fixture_index_manifest=index_manifest_path,
+                ),
+                accepted=False,
+                reason="index manifest digest mismatch",
+            )
+            reformatted_index = json.dumps(valid_index, indent=2, sort_keys=True).encode("utf-8")
+            index_manifest_path.write_bytes(reformatted_index)
+            require_surface_result(
+                f"{surface_label} published reformatted index bytes",
+                published_fixture(),
+                accepted=False,
+                reason="index manifest digest mismatch",
+            )
+            index_manifest_path.write_bytes(valid_index_bytes)
+            require_surface_result(
+                f"{surface_label} published active expiry",
+                published_fixture(evaluation_date=date(2026, 10, 2)),
+                accepted=False,
+                reason=f"expired accept-and-track entry: {disposition.vulnerability}",
+            )
+            for scanner_name, trivy_fixed_state, grype_fixed_state in (
+                ("Trivy", True, False),
+                ("Grype", False, True),
+            ):
+                fixed_trivy, fixed_grype = surface_reports(
+                    disposition,
+                    published_product,
+                    trivy_fixed_state=trivy_fixed_state,
+                    grype_fixed_state=grype_fixed_state,
+                )
+                require_surface_result(
+                    f"{surface_label} published valid {scanner_name} fix evidence",
+                    run_surface_fixture(
+                        disposition,
+                        surface,
+                        published_product,
+                        trivy=fixed_trivy,
+                        grype=fixed_grype,
+                        fixture_index_reference=published_reference,
+                        fixture_index_manifest=index_manifest_path,
+                    ),
+                    accepted=False,
+                    reason="valid fix evidence refuses accept-and-track disposition",
+                )
+
+            index_mutations: tuple[tuple[str, bytes, str], ...] = (
+                (
+                    "non-index media type",
+                    mutated_index(lambda value: value.update(mediaType=OCI_IMAGE_MANIFEST_MEDIA_TYPE)),
+                    f"index manifest mediaType must be {OCI_IMAGE_INDEX_MEDIA_TYPE}",
+                ),
+                ("malformed JSON", b"{", "index manifest is malformed JSON"),
+                ("non-object top level", serialize_index([]), "index manifest must be a top-level JSON object"),
+                (
+                    "empty manifests",
+                    mutated_index(lambda value: value.update(manifests=[])),
+                    "manifests must not be empty",
+                ),
+                (
+                    "missing schemaVersion",
+                    mutated_index(lambda value: value.pop("schemaVersion")),
+                    "missing schemaVersion",
+                ),
+                (
+                    "wrong schemaVersion",
+                    mutated_index(lambda value: value.update(schemaVersion=3)),
+                    "schemaVersion must equal 2",
+                ),
+                (
+                    "boolean schemaVersion",
+                    mutated_index(lambda value: value.update(schemaVersion=True)),
+                    "schemaVersion must be an integer",
+                ),
+                (
+                    "string schemaVersion",
+                    mutated_index(lambda value: value.update(schemaVersion="2")),
+                    "schemaVersion must be an integer",
+                ),
+                (
+                    "null schemaVersion",
+                    mutated_index(lambda value: value.update(schemaVersion=None)),
+                    "schemaVersion must be an integer",
+                ),
+                (
+                    "non-list manifests",
+                    mutated_index(lambda value: value.update(manifests={})),
+                    "manifests must be a list",
+                ),
+                (
+                    "missing descriptor mediaType",
+                    mutated_index(lambda value: value["manifests"][0].pop("mediaType")),
+                    "manifests[0] is missing mediaType",
+                ),
+                (
+                    "missing descriptor digest",
+                    mutated_index(lambda value: value["manifests"][0].pop("digest")),
+                    "manifests[0] is missing digest",
+                ),
+                (
+                    "missing descriptor size",
+                    mutated_index(lambda value: value["manifests"][0].pop("size")),
+                    "manifests[0] is missing size",
+                ),
+                (
+                    "uppercase descriptor digest",
+                    mutated_index(lambda value: value["manifests"][0].update(digest="sha256:" + "A" * 64)),
+                    "must be a sha256 content digest",
+                ),
+                (
+                    "malformed descriptor digest",
+                    mutated_index(lambda value: value["manifests"][0].update(digest="sha256:short")),
+                    "must be a sha256 content digest",
+                ),
+                (
+                    "non-integer descriptor size",
+                    mutated_index(lambda value: value["manifests"][0].update(size="1234")),
+                    "size must be a non-negative integer",
+                ),
+                (
+                    "boolean descriptor size",
+                    mutated_index(lambda value: value["manifests"][0].update(size=True)),
+                    "size must be a non-negative integer",
+                ),
+                (
+                    "float descriptor size",
+                    mutated_index(lambda value: value["manifests"][0].update(size=1234.5)),
+                    "size must be a non-negative integer",
+                ),
+                (
+                    "negative descriptor size",
+                    mutated_index(lambda value: value["manifests"][0].update(size=-1)),
+                    "size must be a non-negative integer",
+                ),
+                (
+                    "same platform child digest",
+                    mutated_index(lambda value: value["manifests"][1].update(digest=amd64_child_digest)),
+                    "child digests must be distinct",
+                ),
+                (
+                    "unsupported platform",
+                    mutated_index(
+                        lambda value: value["manifests"].append(image_descriptor("sha256:" + "4" * 64, "s390x"))
+                    ),
+                    "unsupported runnable platform linux/s390x",
+                ),
+                (
+                    "duplicate amd64",
+                    mutated_index(
+                        lambda value: value["manifests"].append(image_descriptor("sha256:" + "4" * 64, "amd64"))
+                    ),
+                    "exactly one linux/amd64",
+                ),
+                ("missing arm64", mutated_index(lambda value: value["manifests"].pop(1)), "exactly one linux/arm64"),
+                (
+                    "nested index descriptor",
+                    mutated_index(
+                        lambda value: value["manifests"].append(
+                            {
+                                "mediaType": OCI_IMAGE_INDEX_MEDIA_TYPE,
+                                "digest": "sha256:" + "4" * 64,
+                                "size": 42,
+                                "platform": {"architecture": "s390x", "os": "linux"},
+                            }
+                        )
+                    ),
+                    "must not be a nested image index descriptor",
+                ),
+                (
+                    "missing attestation type",
+                    mutated_index(
+                        lambda value: value["manifests"][2]["annotations"].pop(BUILDKIT_ATTESTATION_TYPE_ANNOTATION)
+                    ),
+                    "unknown/unknown descriptor must carry",
+                ),
+                (
+                    "wrong attestation child",
+                    mutated_index(
+                        lambda value: value["manifests"][2]["annotations"].update(
+                            {BUILDKIT_ATTESTATION_DIGEST_ANNOTATION: "sha256:" + "5" * 64}
+                        )
+                    ),
+                    "attestation reference digest must name an eligible platform child",
+                ),
+                (
+                    "missing attestation reference digest",
+                    mutated_index(
+                        lambda value: value["manifests"][2]["annotations"].pop(BUILDKIT_ATTESTATION_DIGEST_ANNOTATION)
+                    ),
+                    "must be a non-empty string",
+                ),
+                (
+                    "missing attestation mediaType",
+                    mutated_index(lambda value: value["manifests"][2].pop("mediaType")),
+                    "manifests[2] is missing mediaType",
+                ),
+                (
+                    "missing attestation digest",
+                    mutated_index(lambda value: value["manifests"][2].pop("digest")),
+                    "manifests[2] is missing digest",
+                ),
+                (
+                    "missing attestation size",
+                    mutated_index(lambda value: value["manifests"][2].pop("size")),
+                    "manifests[2] is missing size",
+                ),
+                (
+                    "non-string attestation mediaType",
+                    mutated_index(lambda value: value["manifests"][2].update(mediaType=17)),
+                    "mediaType must be a non-empty string",
+                ),
+                (
+                    "non-string attestation digest",
+                    mutated_index(lambda value: value["manifests"][2].update(digest=17)),
+                    "digest must be a non-empty string",
+                ),
+                (
+                    "non-integer attestation size",
+                    mutated_index(lambda value: value["manifests"][2].update(size="567")),
+                    "size must be a non-negative integer",
+                ),
+                (
+                    "extra attestation annotation",
+                    mutated_index(lambda value: value["manifests"][2]["annotations"].update(extra="wrong")),
+                    "annotations must equal the locked BuildKit attestation shape",
+                ),
+                (
+                    "aliased attestation digest",
+                    mutated_index(lambda value: value["manifests"][2].update(digest=amd64_child_digest)),
+                    "attestation descriptor digests must be disjoint",
+                ),
+                (
+                    "architecture swap",
+                    mutated_index(
+                        lambda value: (
+                            value["manifests"][0]["platform"].update(architecture="arm64"),
+                            value["manifests"][1]["platform"].update(architecture="amd64"),
+                        )
+                    ),
+                    "does not match the index child for scanner architecture amd64",
+                ),
+                (
+                    "windows descriptor",
+                    mutated_index(lambda value: value["manifests"][0]["platform"].update(os="windows")),
+                    "unsupported descriptor platform windows/amd64",
+                ),
+                (
+                    "duplicate descriptor",
+                    mutated_index(lambda value: value["manifests"].append(copy.deepcopy(value["manifests"][2]))),
+                    "duplicate or contradictory descriptors are forbidden",
+                ),
+                (
+                    "contradictory duplicate descriptor",
+                    mutated_index(
+                        lambda value: value["manifests"].append(
+                            attestation_descriptor(attestation_digest, arm64_child_digest)
+                        )
+                    ),
+                    "duplicate or contradictory descriptors are forbidden",
+                ),
+            )
+            for mutation_label, raw_index, reason in index_mutations:
+                index_manifest_path.write_bytes(raw_index)
+                mutated_reference = reference_for_index(raw_index, surface.published_repository)
+                require_surface_result(
+                    f"{surface_label} OCI-index mutation {mutation_label}",
+                    run_surface_fixture(
+                        disposition,
+                        surface,
+                        published_product,
+                        trivy=published_trivy,
+                        grype=published_grype,
+                        fixture_index_reference=mutated_reference,
+                        fixture_index_manifest=index_manifest_path,
+                    ),
+                    accepted=False,
+                    reason=reason,
+                )
+            index_manifest_path.write_bytes(valid_index_bytes)
+            require_surface_result(
+                f"{surface_label} index digest submitted as product",
+                run_surface_fixture(
+                    disposition,
+                    surface,
+                    published_reference,
+                    trivy=surface_reports(disposition, published_reference)[0],
+                    grype=surface_reports(disposition, published_reference)[1],
+                    fixture_index_reference=published_reference,
+                    fixture_index_manifest=index_manifest_path,
+                ),
+                accepted=False,
+                reason="the index digest is never eligible as a published-child product",
+            )
+            attestation_product = f"{surface.published_repository}@{attestation_digest}"
+            attestation_trivy, attestation_grype = surface_reports(disposition, attestation_product)
+            require_surface_result(
+                f"{surface_label} attestation descriptor submitted as product",
+                run_surface_fixture(
+                    disposition,
+                    surface,
+                    attestation_product,
+                    trivy=attestation_trivy,
+                    grype=attestation_grype,
+                    fixture_index_reference=published_reference,
+                    fixture_index_manifest=index_manifest_path,
+                ),
+                accepted=False,
+                reason="published-child product digest identifies an attestation descriptor",
+            )
+            tagged_product = f"{surface.published_repository}:latest"
+            tagged_trivy, tagged_grype = surface_reports(disposition, tagged_product)
+            require_surface_result(
+                f"{surface_label} tag-addressed published product",
+                run_surface_fixture(
+                    disposition,
+                    surface,
+                    tagged_product,
+                    trivy=tagged_trivy,
+                    grype=tagged_grype,
+                    fixture_index_reference=published_reference,
+                    fixture_index_manifest=index_manifest_path,
+                ),
+                accepted=False,
+                reason="published-child --product must be a digest-qualified image reference",
+            )
+            wrong_repository = surface.published_repository + "-look-alike"
+            wrong_repository_product = f"{wrong_repository}@{amd64_child_digest}"
+            wrong_repo_trivy, wrong_repo_grype = surface_reports(disposition, wrong_repository_product)
+            require_surface_result(
+                f"{surface_label} wrong published repository",
+                run_surface_fixture(
+                    disposition,
+                    surface,
+                    wrong_repository_product,
+                    trivy=wrong_repo_trivy,
+                    grype=wrong_repo_grype,
+                    fixture_index_reference=reference_for_index(valid_index_bytes, wrong_repository),
+                    fixture_index_manifest=index_manifest_path,
+                ),
+                accepted=False,
+                reason="published-child",
+            )
+            require_surface_result(
+                f"{surface_label} absent child digest",
+                run_surface_fixture(
+                    disposition,
+                    surface,
+                    f"{surface.published_repository}@sha256:{'6' * 64}",
+                    trivy=surface_reports(
+                        disposition,
+                        f"{surface.published_repository}@sha256:{'6' * 64}",
+                    )[0],
+                    grype=surface_reports(
+                        disposition,
+                        f"{surface.published_repository}@sha256:{'6' * 64}",
+                    )[1],
+                    fixture_index_reference=published_reference,
+                    fixture_index_manifest=index_manifest_path,
+                ),
+                accepted=False,
+                reason="published-child product digest is absent from the verified index",
+            )
+            require_surface_result(
+                f"{surface_label} architecture-swapped child",
+                run_surface_fixture(
+                    disposition,
+                    surface,
+                    published_product,
+                    trivy=surface_reports(disposition, published_product, architecture="arm64")[0],
+                    grype=surface_reports(disposition, published_product, architecture="arm64")[1],
+                    fixture_index_reference=published_reference,
+                    fixture_index_manifest=index_manifest_path,
+                ),
+                accepted=False,
+                reason="does not match the index child for scanner architecture arm64",
+            )
+            two_attestations = mutated_index(
+                lambda value: value["manifests"].append(
+                    attestation_descriptor("sha256:" + "4" * 64, arm64_child_digest)
+                )
+            )
+            index_manifest_path.write_bytes(two_attestations)
+            require_surface_result(
+                f"{surface_label} two distinct attestations",
+                run_surface_fixture(
+                    disposition,
+                    surface,
+                    published_product,
+                    trivy=published_trivy,
+                    grype=published_grype,
+                    fixture_index_reference=reference_for_index(
+                        two_attestations,
+                        surface.published_repository,
+                    ),
+                    fixture_index_manifest=index_manifest_path,
+                ),
+                accepted=True,
+            )
+
+        print(
+            "assert-vex self-test: parameterized three-key and OCI-index matrices covered "
+            f"{len(surface_pairs)} published disposition surfaces"
+        )
+
+        td9_disposition, td9_surface = surface_pairs[0]
+        openssl_disposition = ACCEPT_AND_TRACK_DISPOSITIONS[1]
+        openssl_python_surface, openssl_micro_surface = openssl_disposition.surfaces
+        cross_authority_probes = (
+            (
+                "Python statement under micro authority",
+                openssl_micro_surface,
+                openssl_micro_surface.local_products[0],
+                openssl_python_surface,
+                expected_accept_and_track_document(openssl_disposition, openssl_python_surface),
+                f"statement source must be {openssl_micro_surface.statement_path}",
+            ),
+            (
+                "micro statement under Python authority",
+                openssl_python_surface,
+                openssl_python_surface.local_products[0],
+                openssl_micro_surface,
+                expected_accept_and_track_document(openssl_disposition, openssl_micro_surface),
+                f"statement source must be {openssl_python_surface.statement_path}",
+            ),
+            (
+                "TD-9 statement offered for CVE-2026-14456",
+                openssl_python_surface,
+                openssl_python_surface.local_products[0],
+                td9_surface,
+                expected_accept_and_track_document(td9_disposition, td9_surface),
+                "no reviewed OpenVEX statement for CVE-2026-14456",
+            ),
+            (
+                "CVE-2026-14456 statement offered for TD-9",
+                td9_surface,
+                td9_surface.local_products[0],
+                openssl_python_surface,
+                expected_accept_and_track_document(openssl_disposition, openssl_python_surface),
+                "no reviewed OpenVEX statement for CVE-2026-11940",
+            ),
+        )
+        for (
+            label,
+            authority_surface,
+            authority_product,
+            statement_surface,
+            offered_document,
+            reason,
+        ) in cross_authority_probes:
+            authority_disposition = td9_disposition if authority_surface is td9_surface else openssl_disposition
+            require_surface_result(
+                label,
+                run_surface_fixture(
+                    authority_disposition,
+                    authority_surface,
+                    authority_product,
+                    document=offered_document,
+                    statement_surface=statement_surface,
+                ),
+                accepted=False,
+                reason=reason,
+            )
+
+        for product_surface, index_surface, label in (
+            (openssl_python_surface, openssl_micro_surface, "Python product with micro index/reference"),
+            (openssl_micro_surface, openssl_python_surface, "micro product with Python index/reference"),
+        ):
+            cross_product = f"{product_surface.published_repository}@{amd64_child_digest}"
+            cross_trivy, cross_grype = surface_reports(openssl_disposition, cross_product)
+            index_manifest_path.write_bytes(valid_index_bytes)
+            require_surface_result(
+                label,
+                run_surface_fixture(
+                    openssl_disposition,
+                    product_surface,
+                    cross_product,
+                    trivy=cross_trivy,
+                    grype=cross_grype,
+                    fixture_index_reference=reference_for_index(
+                        valid_index_bytes,
+                        index_surface.published_repository,
+                    ),
+                    fixture_index_manifest=index_manifest_path,
+                ),
+                accepted=False,
+                reason=f"--index-reference repository must be {product_surface.published_repository}",
+            )
+
+        for surface in (openssl_python_surface, openssl_micro_surface):
+            wrong_repository = surface.published_repository + "-look-alike"
+            wrong_product = f"{wrong_repository}@{amd64_child_digest}"
+            wrong_trivy, wrong_grype = surface_reports(openssl_disposition, wrong_product)
+            index_manifest_path.write_bytes(valid_index_bytes)
+            require_surface_result(
+                f"{surface.statement_path} correct child under look-alike repository",
+                run_surface_fixture(
+                    openssl_disposition,
+                    surface,
+                    wrong_product,
+                    trivy=wrong_trivy,
+                    grype=wrong_grype,
+                    fixture_index_reference=reference_for_index(valid_index_bytes, wrong_repository),
+                    fixture_index_manifest=index_manifest_path,
+                ),
+                accepted=False,
+                reason="published-child repository does not match a pinned accept-and-track surface",
+            )
+            published_product = f"{surface.published_repository}@{amd64_child_digest}"
+            published_trivy, published_grype = surface_reports(openssl_disposition, published_product)
+            require_surface_result(
+                f"{surface.statement_path} unpaired index reference",
+                run_surface_fixture(
+                    openssl_disposition,
+                    surface,
+                    published_product,
+                    trivy=published_trivy,
+                    grype=published_grype,
+                    fixture_index_reference=reference_for_index(
+                        valid_index_bytes,
+                        surface.published_repository,
+                    ),
+                ),
+                accepted=False,
+                reason="--index-reference and --index-manifest must be supplied together",
+            )
+            require_surface_result(
+                f"{surface.statement_path} unpaired index manifest",
+                run_surface_fixture(
+                    openssl_disposition,
+                    surface,
+                    published_product,
+                    trivy=published_trivy,
+                    grype=published_grype,
+                    fixture_index_manifest=index_manifest_path,
+                ),
+                accepted=False,
+                reason="--index-reference and --index-manifest must be supplied together",
+            )
+
+        print(
+            "assert-vex self-test: cross-authority statement/repository/policy/CVE/package/version/"
+            "paired-input probes rejected; synthetic Trivy CVE-2026-14456 exact-version path accepted"
+        )
 
         critical_trivy = copy.deepcopy(clean_trivy)
         critical_trivy["Results"][0]["Vulnerabilities"] = [

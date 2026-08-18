@@ -15,6 +15,7 @@ import io
 import json
 import os
 import re
+import runpy
 import shlex
 import subprocess
 import sys
@@ -10194,12 +10195,7 @@ PYTHON_PUBLISHED_REPOSITORY = "ghcr.io/nwarila/ubi9-base-python"
 PYTHON_PUBLISHED_CHILD_POLICY_PRODUCT = (
     "https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-python/published-platform-children"
 )
-PYTHON_OCI_IMAGE_INDEX_MEDIA_TYPE = "application/vnd.oci.image.index.v1+json"
-PYTHON_OCI_IMAGE_MANIFEST_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json"
-PYTHON_BUILDKIT_ATTESTATION_TYPE_ANNOTATION = "vnd.docker.reference.type"
-PYTHON_BUILDKIT_ATTESTATION_TYPE = "attestation-manifest"
-PYTHON_BUILDKIT_ATTESTATION_DIGEST_ANNOTATION = "vnd.docker.reference.digest"
-PYTHON_ACCEPT_AND_TRACK_ACTION = (
+TD9_ACTION = (
     "This image ships the vulnerable CPython standard-library tarfile module in python3.12-libs "
     "3.12.13-3.el9_8.1. As of 2026-08-13 Red Hat lists RHEL 9 python3.12 as Affected with no fixed RPM "
     "(RHEL 9 python3.9 is fixed via RHSA-2026:54268; the upstream CPython 3.12 branch is fixed). "
@@ -10208,23 +10204,40 @@ PYTHON_ACCEPT_AND_TRACK_ACTION = (
     "archives relying on those filters. Accepted and tracked as TD-9 in docs/TECH-DEBT.md; review-by "
     "2026-10-01."
 )
-PYTHON_ACCEPT_AND_TRACK_ENTRY = {
-    "vulnerability": "CVE-2026-11940",
-    "products": (
-        "local/ubi9-base-python:ci-amd64",
-        "local/ubi9-base-python:ci-arm64",
-    ),
-    "packages": (
-        ("python3.12", "3.12.13-3.el9_8.1"),
-        ("python3.12-libs", "3.12.13-3.el9_8.1"),
-    ),
-    "debt_id": "TD-9",
-    "review_by": "2026-10-01",
-    "statement_path": PYTHON_ACCEPT_AND_TRACK_VEX_PATH,
-}
+CVE_2026_14456_PYTHON_VEX_PATH = "images/python/vex/cve-2026-14456.openvex.json"
+CVE_2026_14456_MICRO_VEX_PATH = "vex/cve-2026-14456.openvex.json"
+MICRO_PUBLISHED_REPOSITORY = "ghcr.io/nwarila/ubi9-base-micro"
+MICRO_PUBLISHED_CHILD_POLICY_PRODUCT = (
+    "https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-micro/published-platform-children"
+)
+OPENSSL_LIBS_SUBCOMPONENT = "pkg:rpm/redhat/openssl-libs@3.5.5-5.el9_8?epoch=1"
+CVE_2026_14456_PYTHON_ACTION = (
+    "This image ships openssl-libs 1:3.5.5-5.el9_8 (OpenSSL 3.5.x), whose QUIC server implementation "
+    "allows denial of service via unbounded memory growth. As of 2026-08-18 Red Hat lists RHEL 9 openssl "
+    "as Affected with no fixed RPM; Red Hat Enterprise Linux 9.8 and later ship OpenSSL 3.5.x, and "
+    "earlier RHEL versions do not include the QUIC server feature. Risk is realized only by an application "
+    "that explicitly enables an OpenSSL QUIC server listener; this image runs no server process by default "
+    "and its entrypoint is the Python interpreter. Consumers that enable an OpenSSL QUIC server listener "
+    "must mitigate at the application boundary until a fixed RPM is absorbed. Accepted and tracked as "
+    "TD-12 in docs/TECH-DEBT.md; review-by 2026-10-01."
+)
+CVE_2026_14456_MICRO_ACTION = (
+    "This image ships openssl-libs 1:3.5.5-5.el9_8 (OpenSSL 3.5.x), whose QUIC server implementation "
+    "allows denial of service via unbounded memory growth. As of 2026-08-18 Red Hat lists RHEL 9 openssl "
+    "as Affected with no fixed RPM; Red Hat Enterprise Linux 9.8 and later ship OpenSSL 3.5.x, and "
+    "earlier RHEL versions do not include the QUIC server feature. Risk is realized only by an application "
+    "that explicitly enables an OpenSSL QUIC server listener; this image ships no default command and "
+    "removes runtime executables. Consumers that enable an OpenSSL QUIC server listener must mitigate at "
+    "the application boundary until a fixed RPM is absorbed. Accepted and tracked as TD-12 in "
+    "docs/TECH-DEBT.md; review-by 2026-10-01."
+)
 
 
-def _expected_python_accept_and_track_vex() -> dict[str, Any]:
+def _expected_td9_vex() -> dict[str, Any]:
+    subcomponents = [
+        {"@id": "pkg:rpm/redhat/python3.12@3.12.13-3.el9_8.1"},
+        {"@id": "pkg:rpm/redhat/python3.12-libs@3.12.13-3.el9_8.1"},
+    ]
     return {
         "@context": "https://openvex.dev/ns/v0.2.0",
         "@id": "https://github.com/NWarila/ubi9-base-micro/images/python/vex/cve-2026-11940",
@@ -10237,153 +10250,195 @@ def _expected_python_accept_and_track_vex() -> dict[str, Any]:
                 "products": [
                     {
                         "@id": "local/ubi9-base-python:ci-amd64",
-                        "subcomponents": [
-                            {"@id": "pkg:rpm/redhat/python3.12@3.12.13-3.el9_8.1"},
-                            {"@id": "pkg:rpm/redhat/python3.12-libs@3.12.13-3.el9_8.1"},
-                        ],
+                        "subcomponents": copy.deepcopy(subcomponents),
                     },
                     {
                         "@id": "local/ubi9-base-python:ci-arm64",
-                        "subcomponents": [
-                            {"@id": "pkg:rpm/redhat/python3.12@3.12.13-3.el9_8.1"},
-                            {"@id": "pkg:rpm/redhat/python3.12-libs@3.12.13-3.el9_8.1"},
-                        ],
+                        "subcomponents": copy.deepcopy(subcomponents),
                     },
                     {
                         "@id": PYTHON_PUBLISHED_CHILD_POLICY_PRODUCT,
-                        "subcomponents": [
-                            {"@id": "pkg:rpm/redhat/python3.12@3.12.13-3.el9_8.1"},
-                            {"@id": "pkg:rpm/redhat/python3.12-libs@3.12.13-3.el9_8.1"},
-                        ],
+                        "subcomponents": copy.deepcopy(subcomponents),
                     },
                 ],
                 "status": "affected",
-                "action_statement": PYTHON_ACCEPT_AND_TRACK_ACTION,
+                "action_statement": TD9_ACTION,
                 "action_statement_timestamp": "2026-08-13T00:00:00Z",
             }
         ],
     }
 
 
-def python_accept_and_track_vex_errors(document: dict[str, Any]) -> list[str]:
-    if document == _expected_python_accept_and_track_vex():
-        return []
-    return ["python accept-and-track VEX must equal the canonical CVE-2026-11940 document"]
-
-
-def extract_python_accept_and_track_entries(source: str) -> tuple[list[dict[str, Any]], list[str]]:
-    try:
-        tree = ast.parse(source)
-    except SyntaxError as exc:
-        return [], [f"assert-vex source does not parse: {exc}"]
-    assignments = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Name) and target.id == "ACCEPT_AND_TRACK_DISPOSITIONS" for target in node.targets
-        )
-    ]
-    if len(assignments) != 1:
-        return [], ["assert-vex must define ACCEPT_AND_TRACK_DISPOSITIONS exactly once"]
-    value = assignments[0].value
-    if not isinstance(value, ast.Tuple) or len(value.elts) != 1:
-        return [], ["assert-vex accept-and-track allowlist must contain exactly one entry"]
-    call = value.elts[0]
-    if (
-        not isinstance(call, ast.Call)
-        or not isinstance(call.func, ast.Name)
-        or call.func.id != "AcceptAndTrackDisposition"
-        or call.args
-        or any(keyword.arg is None for keyword in call.keywords)
-    ):
-        return [], ["assert-vex accept-and-track entry must use one keyword-only AcceptAndTrackDisposition call"]
-    entry: dict[str, Any] = {}
-    try:
-        for keyword in call.keywords:
-            if keyword.arg is None or keyword.arg in entry:
-                return [], ["assert-vex accept-and-track entry contains a duplicate or expanded field"]
-            entry[keyword.arg] = ast.literal_eval(keyword.value)
-    except (ValueError, TypeError) as exc:
-        return [], [f"assert-vex accept-and-track entry fields must be literals: {exc}"]
-    return [entry], []
-
-
-def python_accept_and_track_allowlist_errors(entries: list[dict[str, Any]]) -> list[str]:
-    if entries == [PYTHON_ACCEPT_AND_TRACK_ENTRY]:
-        return []
-    return ["assert-vex accept-and-track allowlist must equal the exact TD-9 authorization"]
-
-
-PYTHON_ACCEPT_AND_TRACK_SURFACE_CONSTANTS = {
-    "PUBLISHED_PYTHON_REPOSITORY": PYTHON_PUBLISHED_REPOSITORY,
-    "PUBLISHED_CHILD_POLICY_PRODUCT": PYTHON_PUBLISHED_CHILD_POLICY_PRODUCT,
-    "OCI_IMAGE_INDEX_MEDIA_TYPE": PYTHON_OCI_IMAGE_INDEX_MEDIA_TYPE,
-    "OCI_IMAGE_MANIFEST_MEDIA_TYPE": PYTHON_OCI_IMAGE_MANIFEST_MEDIA_TYPE,
-    "BUILDKIT_ATTESTATION_TYPE_ANNOTATION": PYTHON_BUILDKIT_ATTESTATION_TYPE_ANNOTATION,
-    "BUILDKIT_ATTESTATION_TYPE": PYTHON_BUILDKIT_ATTESTATION_TYPE,
-    "BUILDKIT_ATTESTATION_DIGEST_ANNOTATION": PYTHON_BUILDKIT_ATTESTATION_DIGEST_ANNOTATION,
-}
-PYTHON_ACCEPT_AND_TRACK_SURFACE_FUNCTION_HASHES = {
-    "digest_reference_parts": "3489448fc2b271bec570e344fe3ecc84bcb2ae75023bd0fcf13a56089203b7bf",
-    "validate_index_child_evidence": "febe74ccb6fc290c58d7ca9f7ebc29369f731ae2ffc054176e74a6ffc353526e",
-    "accept_and_track_product_eligible": "e462c12a3bce5d1c7c30000257364d36cde65387566a2341c070e422322a6367",
-    "expected_accept_and_track_document": "7c810e0ff2b02b87112d45acfd656dd17f8e7350bc5993c3356a56872a498cab",
-    "disposition_identity_matches": "76eab1499d51525ffc51ca360bb17e8afc31a78d3cd45729db20f1dca81d2f82",
-    "accepted_accept_and_track_statement": "cdec1876dc481b96e95b9af54d076e5c4008d2026ce5758e1d0d99b3d540e148",
-    "assert_vex": "2fbe7832496468380b119e278b0cf567f022e841f4746b4f3191b6011f8e658c",
-    "parse_args": "768a750e9576669c4016edffbb7be993192698d595dd8c550ac2a8e429b4e8a1",
-    "main": "a68074ebb31b0c7abe3e05570362d7051d880fbcfac23323c2e365e6fb91d764",
-}
-
-
-def python_accept_and_track_surface_errors(source: str) -> list[str]:
-    try:
-        tree = ast.parse(source)
-    except SyntaxError as exc:
-        return [f"assert-vex published-child source does not parse: {exc}"]
-
-    errors: list[str] = []
-    assignments: dict[str, list[ast.Assign]] = {name: [] for name in PYTHON_ACCEPT_AND_TRACK_SURFACE_CONSTANTS}
-    functions: dict[str, list[ast.FunctionDef | ast.AsyncFunctionDef]] = {
-        name: [] for name in PYTHON_ACCEPT_AND_TRACK_SURFACE_FUNCTION_HASHES
+def _expected_cve_2026_14456_python_vex() -> dict[str, Any]:
+    return {
+        "@context": "https://openvex.dev/ns/v0.2.0",
+        "@id": "https://github.com/NWarila/ubi9-base-micro/images/python/vex/cve-2026-14456",
+        "author": "NWarila",
+        "timestamp": "2026-08-18T00:00:00Z",
+        "version": 1,
+        "statements": [
+            {
+                "vulnerability": {"name": "CVE-2026-14456"},
+                "products": [
+                    {
+                        "@id": "local/ubi9-base-python:ci-amd64",
+                        "subcomponents": [{"@id": OPENSSL_LIBS_SUBCOMPONENT}],
+                    },
+                    {
+                        "@id": "local/ubi9-base-python:ci-arm64",
+                        "subcomponents": [{"@id": OPENSSL_LIBS_SUBCOMPONENT}],
+                    },
+                    {
+                        "@id": PYTHON_PUBLISHED_CHILD_POLICY_PRODUCT,
+                        "subcomponents": [{"@id": OPENSSL_LIBS_SUBCOMPONENT}],
+                    },
+                ],
+                "status": "affected",
+                "action_statement": CVE_2026_14456_PYTHON_ACTION,
+                "action_statement_timestamp": "2026-08-18T00:00:00Z",
+            }
+        ],
     }
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id in assignments:
-                    assignments[target.id].append(node)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in functions:
-            functions[node.name].append(node)
-
-    for name, expected_value in PYTHON_ACCEPT_AND_TRACK_SURFACE_CONSTANTS.items():
-        assignment_sites = assignments[name]
-        if len(assignment_sites) != 1:
-            errors.append(f"assert-vex published-child constant {name} must be assigned exactly once")
-            continue
-        try:
-            actual_value = ast.literal_eval(assignment_sites[0].value)
-        except (ValueError, TypeError):
-            errors.append(f"assert-vex published-child constant {name} must be a literal")
-            continue
-        if actual_value != expected_value:
-            errors.append(f"assert-vex published-child constant {name} must equal {expected_value!r}")
-
-    for name, expected_hash in PYTHON_ACCEPT_AND_TRACK_SURFACE_FUNCTION_HASHES.items():
-        function_sites = functions[name]
-        if len(function_sites) != 1:
-            errors.append(f"assert-vex published-child function {name} must be defined exactly once")
-            continue
-        actual_hash = hashlib.sha256(
-            ast.dump(function_sites[0], annotate_fields=True, include_attributes=False).encode("utf-8")
-        ).hexdigest()
-        if actual_hash != expected_hash:
-            errors.append(f"assert-vex published-child function {name} AST drifted")
-    return errors
 
 
-def python_accept_and_track_expiry_errors(
-    entries: list[dict[str, Any]],
+def _expected_cve_2026_14456_micro_vex() -> dict[str, Any]:
+    return {
+        "@context": "https://openvex.dev/ns/v0.2.0",
+        "@id": "https://github.com/NWarila/ubi9-base-micro/vex/cve-2026-14456",
+        "author": "NWarila",
+        "timestamp": "2026-08-18T00:00:00Z",
+        "version": 1,
+        "statements": [
+            {
+                "vulnerability": {"name": "CVE-2026-14456"},
+                "products": [
+                    {
+                        "@id": "ghcr.io/nwarila/ubi9-base-micro:base-micro",
+                        "subcomponents": [{"@id": OPENSSL_LIBS_SUBCOMPONENT}],
+                    },
+                    {
+                        "@id": MICRO_PUBLISHED_CHILD_POLICY_PRODUCT,
+                        "subcomponents": [{"@id": OPENSSL_LIBS_SUBCOMPONENT}],
+                    },
+                ],
+                "status": "affected",
+                "action_statement": CVE_2026_14456_MICRO_ACTION,
+                "action_statement_timestamp": "2026-08-18T00:00:00Z",
+            }
+        ],
+    }
+
+
+ACCEPT_AND_TRACK_CANONICAL_DOCUMENTS = {
+    PYTHON_ACCEPT_AND_TRACK_VEX_PATH: _expected_td9_vex(),
+    CVE_2026_14456_PYTHON_VEX_PATH: _expected_cve_2026_14456_python_vex(),
+    CVE_2026_14456_MICRO_VEX_PATH: _expected_cve_2026_14456_micro_vex(),
+}
+ACCEPT_AND_TRACK_CANONICAL_BYTE_SHA256 = {
+    PYTHON_ACCEPT_AND_TRACK_VEX_PATH: "ac3d584e2e65837a6b59962f218ebd52f252631a83c2aa54316bd56b694ef76d",
+    CVE_2026_14456_PYTHON_VEX_PATH: "fa9c0859afe6548d25a6e026d2e620d4ce322c8a3ab6a02b94c09478a66e68c9",
+    CVE_2026_14456_MICRO_VEX_PATH: "1f9e2a241846ca49e250bbc6ac800c579656266abc60dfd8ca8cb8f8eacb4830",
+}
+
+
+def _surface_model(
+    path: str,
+    local_products: tuple[str, ...],
+    published_repository: str,
+) -> dict[str, Any]:
+    document = ACCEPT_AND_TRACK_CANONICAL_DOCUMENTS[path]
+    statement = document["statements"][0]
+    return {
+        "statement_path": path,
+        "document_id": document["@id"],
+        "document_timestamp": document["timestamp"],
+        "document_version": document["version"],
+        "local_products": local_products,
+        "published_repository": published_repository,
+        "policy_product": statement["products"][-1]["@id"],
+        "subcomponents": tuple(item["@id"] for item in statement["products"][0]["subcomponents"]),
+        "action_statement": statement["action_statement"],
+        "action_statement_timestamp": statement["action_statement_timestamp"],
+    }
+
+
+EXPECTED_ACCEPT_AND_TRACK_MODEL = (
+    {
+        "vulnerability": "CVE-2026-11940",
+        "packages": (
+            ("python3.12", "3.12.13-3.el9_8.1"),
+            ("python3.12-libs", "3.12.13-3.el9_8.1"),
+        ),
+        "debt_id": "TD-9",
+        "review_by": "2026-10-01",
+        "surfaces": (
+            _surface_model(
+                PYTHON_ACCEPT_AND_TRACK_VEX_PATH,
+                ("local/ubi9-base-python:ci-amd64", "local/ubi9-base-python:ci-arm64"),
+                PYTHON_PUBLISHED_REPOSITORY,
+            ),
+        ),
+    },
+    {
+        "vulnerability": "CVE-2026-14456",
+        "packages": (("openssl-libs", "1:3.5.5-5.el9_8"),),
+        "debt_id": "TD-12",
+        "review_by": "2026-10-01",
+        "surfaces": (
+            _surface_model(
+                CVE_2026_14456_PYTHON_VEX_PATH,
+                ("local/ubi9-base-python:ci-amd64", "local/ubi9-base-python:ci-arm64"),
+                PYTHON_PUBLISHED_REPOSITORY,
+            ),
+            _surface_model(
+                CVE_2026_14456_MICRO_VEX_PATH,
+                ("ghcr.io/nwarila/ubi9-base-micro:base-micro",),
+                MICRO_PUBLISHED_REPOSITORY,
+            ),
+        ),
+    },
+)
+
+
+def _runtime_accept_and_track_model() -> tuple[dict[str, Any], ...]:
+    namespace = runpy.run_path(str(ROOT / "tools/assert-vex.py"))
+    entries = namespace["ACCEPT_AND_TRACK_DISPOSITIONS"]
+    expected_document = namespace["expected_accept_and_track_document"]
+    normalized: list[dict[str, Any]] = []
+    for entry in entries:
+        surfaces: list[dict[str, Any]] = []
+        for surface in entry.surfaces:
+            surface_model = {
+                "statement_path": surface.statement_path,
+                "document_id": surface.document_id,
+                "document_timestamp": surface.document_timestamp,
+                "document_version": surface.document_version,
+                "local_products": surface.local_products,
+                "published_repository": surface.published_repository,
+                "policy_product": surface.policy_product,
+                "subcomponents": surface.subcomponents,
+                "action_statement": surface.action_statement,
+                "action_statement_timestamp": surface.action_statement_timestamp,
+            }
+            require(
+                expected_document(entry, surface) == ACCEPT_AND_TRACK_CANONICAL_DOCUMENTS.get(surface.statement_path),
+                f"assert-vex surface builder drifted from canonical document: {surface.statement_path}",
+            )
+            surfaces.append(surface_model)
+        normalized.append(
+            {
+                "vulnerability": entry.vulnerability,
+                "packages": entry.packages,
+                "debt_id": entry.debt_id,
+                "review_by": entry.review_by,
+                "surfaces": tuple(surfaces),
+            }
+        )
+    return tuple(normalized)
+
+
+def accept_and_track_repository_expiry_errors(
+    entries: tuple[dict[str, Any], ...],
     evaluation_date: date,
 ) -> list[str]:
     errors: list[str] = []
@@ -10391,332 +10446,360 @@ def python_accept_and_track_expiry_errors(
         try:
             review_by = date.fromisoformat(cast(str, entry["review_by"]))
         except (KeyError, TypeError, ValueError):
-            errors.append("assert-vex accept-and-track entry has an invalid review-by date")
+            errors.append("repository accept-and-track entry has an invalid review-by date")
             continue
         if evaluation_date > review_by:
-            entry_packages = cast(tuple[tuple[str, str], ...], entry["packages"])
-            packages = ",".join(f"{name}@{version}" for name, version in entry_packages)
-            products = ",".join(cast(tuple[str, ...], entry["products"]))
+            packages = ",".join(f"{name}@{version}" for name, version in entry["packages"])
+            paths = ",".join(surface["statement_path"] for surface in entry["surfaces"])
             errors.append(
                 "expired repository accept-and-track entry: "
-                f"{entry['vulnerability']} products={products} packages={packages} "
-                f"debt={entry['debt_id']} review-by={entry['review_by']}"
+                f"{entry['vulnerability']} packages={packages} debt={entry['debt_id']} "
+                f"review-by={entry['review_by']} surfaces={paths}"
             )
     return errors
 
 
-def check_python_accept_and_track() -> None:
-    document = json.loads(read(PYTHON_ACCEPT_AND_TRACK_VEX_PATH))
-    require(isinstance(document, dict), "python accept-and-track VEX document must be a JSON object")
-    typed_document = cast(dict[str, Any], document)
-    require(
-        not python_accept_and_track_vex_errors(typed_document),
-        "python accept-and-track VEX must match every canonical field, key set, array length, and order",
+def accept_and_track_lock_errors(
+    canonical_error: str | None,
+    model_invalid: bool,
+    expiry_errors: list[str],
+    td12_error: str | None,
+) -> list[str]:
+    errors: list[str] = []
+
+    def reject(condition: object, message: str) -> None:
+        if condition:
+            errors.append(message)
+
+    # CHECK: accept-track-canonical-bytes
+    reject(canonical_error is not None, canonical_error or "accept-and-track canonical bytes drifted")
+    # CHECK: accept-track-exact-model
+    reject(
+        model_invalid,
+        "assert-vex accept-and-track entries and closed surfaces must equal the exact two-entry model",
+    )
+    # CHECK: accept-track-dormant-expiry
+    reject(bool(expiry_errors), "; ".join(expiry_errors))
+    # CHECK: accept-track-td12-heading
+    reject(td12_error is not None, td12_error or "docs/TECH-DEBT.md missing TD-12 policy marker")
+    return errors
+
+
+def _accept_and_track_lock_fixtures() -> tuple[tuple[str, str | None, bool, list[str], str | None, str], ...]:
+    return (
+        (
+            "canonical-bytes",
+            "accept-and-track canonical bytes drifted: fixture",
+            False,
+            [],
+            None,
+            "accept-and-track canonical bytes drifted: fixture",
+        ),
+        (
+            "exact-model",
+            None,
+            True,
+            [],
+            None,
+            "assert-vex accept-and-track entries and closed surfaces must equal the exact two-entry model",
+        ),
+        (
+            "dormant-expiry",
+            None,
+            False,
+            ["expired repository accept-and-track entry: fixture"],
+            None,
+            "expired repository accept-and-track entry: fixture",
+        ),
+        (
+            "td12-heading",
+            None,
+            False,
+            [],
+            "docs/TECH-DEBT.md missing TD-12 policy marker: fixture",
+            "docs/TECH-DEBT.md missing TD-12 policy marker: fixture",
+        ),
     )
 
+
+def check_accept_and_track_lock_self_test(only_label: str | None = None) -> None:
+    selected = 0
+    fixtures = _accept_and_track_lock_fixtures()
+    for label, canonical_error, model_invalid, expiry_errors, td12_error, expected in fixtures:
+        if only_label is not None and label != only_label:
+            continue
+        selected += 1
+        errors = accept_and_track_lock_errors(canonical_error, model_invalid, expiry_errors, td12_error)
+        if expected not in errors:
+            raise VerifyError(f"accept-and-track verifier mutation unexpectedly passed: {label}")
+        print(f"accept-and-track verifier mutation rejected [{label}] diagnostic={expected}")
+    if only_label is None:
+        require(selected == len(fixtures), "accept-and-track verifier fixture inventory mismatch")
+        print(f"accept-and-track verifier mutation probes: {selected}/{len(fixtures)} rejected")
+    else:
+        require(selected == 1, f"unknown accept-and-track verifier fixture: {only_label}")
+
+
+def check_accept_and_track_checker_mutation_self_test() -> None:
+    source = read("tools/verify.py")
+    checker_start = source.index("def accept_and_track_lock_errors(")
+    checker_end = source.index("\ndef _accept_and_track_lock_fixtures(", checker_start)
+    checker_source = source[checker_start:checker_end]
+    guards = (
+        ("accept-track-canonical-bytes", "reject(canonical_error is not None,", "canonical-bytes"),
+        ("accept-track-exact-model", "reject(\n        model_invalid,", "exact-model"),
+        ("accept-track-dormant-expiry", "reject(bool(expiry_errors),", "dormant-expiry"),
+        ("accept-track-td12-heading", "reject(td12_error is not None,", "td12-heading"),
+    )
+    markers = re.findall(r"^    # CHECK: (accept-track-[a-z0-9-]+)$", checker_source, re.MULTILINE)
+    require(
+        Counter(markers) == Counter(guard for guard, _, _ in guards) and len(markers) == len(guards),
+        "accept-and-track checker mutation list must cover every rejection guard exactly once",
+    )
+    for guard, anchor, fixture in guards:
+        require(checker_source.count(anchor) == 1, f"accept-and-track checker anchor changed: {guard}")
+        replacement = "reject(\n        False," if "\n" in anchor else "reject(False,"
+        mutated_checker = checker_source.replace(anchor, replacement, 1)
+        mutated = source[:checker_start] + mutated_checker + source[checker_end:]
+        ast.parse(mutated, filename="tools/verify.py")
+        result = _run_mutated_python_verifier(
+            mutated,
+            ["--check-accept-track-lock-fixture", fixture],
+        )
+        expected = f"verify failed: accept-and-track verifier mutation unexpectedly passed: {fixture}"
+        require(result.returncode == 1, f"accept-and-track checker mutation {guard} returned {result.returncode}")
+        require(
+            result.stderr.strip() == expected,
+            f"accept-and-track checker mutation {guard} returned unexpected diagnostic: {result.stderr.strip()!r}",
+        )
+        location = source[: source.index(f"# CHECK: {guard}")].count("\n") + 1
+        print(
+            f"accept-and-track checker mutation rejected [guard={guard} location=tools/verify.py:{location} "
+            f"fixture={fixture} diagnostic={expected}]"
+        )
+    print(f"accept-and-track checker mutation probes: {len(guards)}/{len(guards)} rejected")
+
+
+def check_accept_and_track_dispositions() -> None:
+    canonical_error: str | None = None
+    for path, expected_document in ACCEPT_AND_TRACK_CANONICAL_DOCUMENTS.items():
+        raw = (ROOT / path).read_bytes()
+        if hashlib.sha256(raw).hexdigest() != ACCEPT_AND_TRACK_CANONICAL_BYTE_SHA256[path]:
+            canonical_error = f"accept-and-track canonical bytes drifted: {path}"
+            break
+        if json.loads(raw) != expected_document:
+            canonical_error = f"accept-and-track canonical document fields drifted: {path}"
+            break
+
+    runtime_model = _runtime_accept_and_track_model()
     script = read("tools/assert-vex.py")
-    surface_errors = python_accept_and_track_surface_errors(script)
-    require(not surface_errors, "; ".join(surface_errors))
-    script_tree = ast.parse(script)
-    action_assignments = [
-        node
-        for node in script_tree.body
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Name) and target.id == "ACCEPT_AND_TRACK_ACTION_STATEMENT" for target in node.targets
+    require("published_child_eligible" not in script, "assert-vex must not retain shared published-child eligibility")
+    for marker in (
+        "multiple exact in-tool accept-and-track authorization matches",
+        "parameterized local/canonical/allowlist/scanner/fix/duplicate/expiry ",
+        "parameterized three-key and OCI-index matrices covered ",
+        "Python statement under micro authority",
+        "micro statement under Python authority",
+        "synthetic Trivy CVE-2026-14456 exact-version path accepted",
+    ):
+        require(marker in script, f"assert-vex generalized disposition self-test missing marker: {marker}")
+
+    expiry_errors = accept_and_track_repository_expiry_errors(runtime_model, date.today())
+    expired = accept_and_track_repository_expiry_errors(runtime_model, date(2026, 10, 2))
+    require(len(expired) == 2, f"dormant accept-and-track expiry must reject both entries: {expired}")
+    require("CVE-2026-11940" in expired[0] and "CVE-2026-14456" in expired[1], "expiry identities drifted")
+
+    debt = read("docs/TECH-DEBT.md")
+    td12_error: str | None = None
+    for marker in (
+        "## TD-12: Expiring acceptance of CVE-2026-14456 in both images",
+        "`openssl-libs` at exactly `1:3.5.5-5.el9_8`",
+        "review-by 2026-10-01",
+        "remove the CVE-2026-14456 allowlist entry",
+        "canonical statements to `fixed`",
+        "remove the micro gate's",
+        "orphaned authority inputs are forbidden",
+    ):
+        if marker not in debt:
+            td12_error = f"docs/TECH-DEBT.md missing TD-12 policy marker: {marker}"
+            break
+
+    errors = accept_and_track_lock_errors(
+        canonical_error,
+        runtime_model != EXPECTED_ACCEPT_AND_TRACK_MODEL,
+        expiry_errors,
+        td12_error,
+    )
+    require(not errors, "; ".join(errors))
+    check_accept_and_track_lock_self_test()
+
+    document_mutations = 0
+    for path, expected in ACCEPT_AND_TRACK_CANONICAL_DOCUMENTS.items():
+        document_mutation_cases: tuple[tuple[str, Callable[[dict[str, Any]], Any]], ...] = (
+            ("top-level field", lambda value: value.update(extra=True)),
+            ("document id", lambda value: value.update({"@id": "wrong"})),
+            ("statement", lambda value: value["statements"][0].update(status="fixed")),
+            ("product", lambda value: value["statements"][0]["products"][0].update({"@id": "wrong"})),
+            (
+                "subcomponent",
+                lambda value: value["statements"][0]["products"][0]["subcomponents"][0].update({"@id": "wrong"}),
+            ),
+            ("duplicate statement", lambda value: value["statements"].append(copy.deepcopy(value["statements"][0]))),
         )
-    ]
-    require(
-        len(action_assignments) == 1,
-        "assert-vex must define ACCEPT_AND_TRACK_ACTION_STATEMENT exactly once",
-    )
-    try:
-        gate_action_statement = ast.literal_eval(action_assignments[0].value)
-    except (ValueError, TypeError) as exc:
-        raise VerifyError("assert-vex accept-and-track action statement must be a literal") from exc
-    require(
-        gate_action_statement == PYTHON_ACCEPT_AND_TRACK_ACTION,
-        "assert-vex accept-and-track action statement must equal the canonical VEX text",
-    )
-    entries, extraction_errors = extract_python_accept_and_track_entries(script)
-    require(not extraction_errors, "; ".join(extraction_errors))
-    require(not python_accept_and_track_allowlist_errors(entries), "assert-vex TD-9 allowlist authorization drifted")
-    require(
-        not python_accept_and_track_expiry_errors(entries, date.today()),
-        "; ".join(python_accept_and_track_expiry_errors(entries, date.today())),
-    )
-    for marker in [
-        "FindingRecord",
-        "accepted_accept_and_track_statement",
-        "valid fix evidence refuses accept-and-track disposition",
-        "duplicate accept-and-track statements",
-        "expired accept-and-track entry",
-        "undispositioned unfixed HIGH/CRITICAL findings",
-        "micro product evaluation remained byte-identical after review date",
-        "all-fixed target pair passed without an accept-and-track disposition",
-        "malformed accept-and-track scanner identity evidence",
-        "accept-and-track padded scanner vulnerability id",
-        "accept-and-track padded scanner package name",
-        "accept-and-track padded scanner version",
-        "validate_index_child_evidence",
-        "accept_and_track_product_eligible",
-        "index manifest linux/amd64 and linux/arm64 child digests must be distinct",
-        "duplicate or contradictory descriptors are forbidden",
-        "the index digest is never eligible as a published-child product",
-        "published-child product digest does not match the index child for scanner architecture",
-        "index evidence must not be supplied for a local accept-and-track product",
-        "verified published-child production shape accepted",
-    ]:
-        require(marker in script, f"assert-vex accept-and-track implementation missing marker: {marker}")
-
-    documentation_markers = {
-        "images/python/vex/README.md": [
-            "affected` satisfies the gate only for the exact, expiring CVE-2026-11940",
-            "python3.12` and `python3.12-libs",
-            "3.12.13-3.el9_8.1",
-            "TD-9",
-            "review-by 2026-10-01",
-            "tools/verify.py` independently expires the",
-        ],
-        "docs/TECH-DEBT.md": [
-            "## TD-9: Expiring acceptance of CVE-2026-11940 in base-python",
-            "local/ubi9-base-python:ci-amd64",
-            "local/ubi9-base-python:ci-arm64",
-            "python3.12` and `python3.12-libs",
-            "3.12.13-3.el9_8.1",
-            "review-by 2026-10-01",
-            "the same pull request removes the in-tool allowlist entry",
-            "flips the OpenVEX statement to `fixed`",
-        ],
-        "docs/reference/gates.md": [
-            "The only `affected` status that satisfies the gate",
-            "TD-9 is separate from that fixable-CVE exception",
-            "Every other unfixed HIGH or CRITICAL finding remains default-denied",
-        ],
-        "docs/reference/verify.md": [
-            "The base-python gate has one additional, separate TD-9 authorization",
-            "known-affected unfixed HIGH `CVE-2026-11940`",
-            "does not make the image unaffected",
-            "not a TD-6 fixable-CVE scanner",
-        ],
-        "docs/compliance/vex.md": [
-            "Base-python has a distinct TD-9 accept-and-track disposition",
-            "This is the sole path on which `affected` satisfies the gate",
-            "does not claim that the",
-            "base-python image is unaffected",
-        ],
-        "docs/compliance/acceptance.md": [
-            "The sole `affected` exception is the exact TD-9 accept-and-track path",
-            "both the in-tool allowlist and canonical reviewed statement must match",
-            "This does not make base-python unaffected",
-        ],
-    }
-    for relative_path, markers in documentation_markers.items():
-        documentation = read(relative_path)
-        for marker in markers:
-            require(marker in documentation, f"{relative_path} missing TD-9 policy marker: {marker}")
-
-    vex_mutations: list[tuple[str, Callable[[dict[str, Any]], Any]]] = [
-        ("top-level key", lambda value: value.update(extra=True)),
-        ("document id", lambda value: value.update({"@id": "https://example.invalid/wrong"})),
-        ("author", lambda value: value.update(author="Other")),
-        ("timestamp", lambda value: value.update(timestamp="2026-08-15T00:00:00Z")),
-        ("version", lambda value: value.update(version=3)),
-        ("statement key", lambda value: value["statements"][0].update(extra=True)),
-        ("CVE", lambda value: value["statements"][0]["vulnerability"].update(name="CVE-2099-0000")),
-        ("alias", lambda value: value["statements"][0]["vulnerability"].update(aliases=[])),
-        ("product", lambda value: value["statements"][0]["products"][0].update({"@id": "wrong"})),
-        ("added product", lambda value: value["statements"][0]["products"].append({"@id": "wrong"})),
-        (
-            "published-child policy product",
-            lambda value: value["statements"][0]["products"][2].update({"@id": "https://example.invalid/wrong"}),
-        ),
-        (
-            "first subcomponent",
-            lambda value: value["statements"][0]["products"][0]["subcomponents"][0].update({"@id": "wrong"}),
-        ),
-        (
-            "second subcomponent",
-            lambda value: value["statements"][0]["products"][0]["subcomponents"][1].update({"@id": "wrong"}),
-        ),
-        ("status", lambda value: value["statements"][0].update(status="fixed")),
-        ("action statement", lambda value: value["statements"][0].update(action_statement="wrong")),
-        (
-            "action timestamp",
-            lambda value: value["statements"][0].update(action_statement_timestamp="2026-08-14T00:00:00Z"),
-        ),
-        ("duplicate statement", lambda value: value["statements"].append(copy.deepcopy(value["statements"][0]))),
-    ]
-    for label, mutate in vex_mutations:
-        mutant = copy.deepcopy(typed_document)
-        mutate(mutant)
-        require(
-            python_accept_and_track_vex_errors(mutant),
-            f"python accept-and-track VEX lock mutation unexpectedly passed: {label}",
-        )
-
-    allowlist_mutations: list[tuple[str, Any]] = [
-        ("CVE", "CVE-2099-0000"),
-        ("products", ("local/ubi9-base-python:ci-other",)),
-        ("packages", (("python3.12", "wrong"),)),
-        ("debt_id", "TD-10"),
-        ("review_by", "2026-10-02"),
-        ("statement_path", "images/python/vex/wrong.openvex.json"),
-    ]
-    for field, replacement_value in allowlist_mutations:
-        mutant_entry = copy.deepcopy(PYTHON_ACCEPT_AND_TRACK_ENTRY)
-        mutant_entry[field] = replacement_value
-        require(
-            python_accept_and_track_allowlist_errors([mutant_entry]),
-            f"python accept-and-track allowlist lock mutation unexpectedly passed: {field}",
-        )
-    require(
-        python_accept_and_track_allowlist_errors([]),
-        "python accept-and-track allowlist lock accepted a missing entry",
-    )
-    require(
-        python_accept_and_track_allowlist_errors([PYTHON_ACCEPT_AND_TRACK_ENTRY, PYTHON_ACCEPT_AND_TRACK_ENTRY]),
-        "python accept-and-track allowlist lock accepted a duplicate entry",
-    )
-
-    surface_mutations = [
-        (
-            "pinned published repository",
-            script.replace(
-                'PUBLISHED_PYTHON_REPOSITORY = "ghcr.io/nwarila/ubi9-base-python"',
-                'PUBLISHED_PYTHON_REPOSITORY = "ghcr.io/nwarila/ubi9-base-python-x"',
-                1,
-            ),
-        ),
-        (
-            "published-child policy product",
-            script.replace('/published-platform-children"', '/published-platform-children-x"', 1),
-        ),
-        (
-            "OCI index media type",
-            script.replace(PYTHON_OCI_IMAGE_INDEX_MEDIA_TYPE, PYTHON_OCI_IMAGE_INDEX_MEDIA_TYPE + ".drift", 1),
-        ),
-        (
-            "OCI manifest media type",
-            script.replace(
-                PYTHON_OCI_IMAGE_MANIFEST_MEDIA_TYPE,
-                PYTHON_OCI_IMAGE_MANIFEST_MEDIA_TYPE + ".drift",
-                1,
-            ),
-        ),
-        (
-            "BuildKit reference-type annotation",
-            script.replace(
-                PYTHON_BUILDKIT_ATTESTATION_TYPE_ANNOTATION,
-                PYTHON_BUILDKIT_ATTESTATION_TYPE_ANNOTATION + ".drift",
-                1,
-            ),
-        ),
-        (
-            "BuildKit attestation type",
-            script.replace(
-                'BUILDKIT_ATTESTATION_TYPE = "attestation-manifest"',
-                'BUILDKIT_ATTESTATION_TYPE = "wrong"',
-                1,
-            ),
-        ),
-        (
-            "BuildKit reference-digest annotation",
-            script.replace(
-                PYTHON_BUILDKIT_ATTESTATION_DIGEST_ANNOTATION,
-                PYTHON_BUILDKIT_ATTESTATION_DIGEST_ANNOTATION + ".drift",
-                1,
-            ),
-        ),
-        (
-            "digest-qualified reference guard",
-            script.replace("if DIGEST_IMAGE_REFERENCE.fullmatch(reference) is None:", "if False:", 1),
-        ),
-        (
-            "index byte-digest guard",
-            script.replace("if actual_index_digest != index_digest:", "if False:", 1),
-        ),
-        (
-            "descriptor-digest uniqueness guard",
-            script.replace("if duplicate_descriptor_digest is not None:", "if False:", 1),
-        ),
-        (
-            "paired index-evidence guard",
-            script.replace(
-                "if (index_reference is None) != (index_manifest is None):",
-                "if False:",
-                1,
-            ),
-        ),
-        (
-            "canonical document revision",
-            script.replace('"timestamp": "2026-08-14T00:00:00Z"', '"timestamp": "2026-08-15T00:00:00Z"', 1),
-        ),
-        (
-            "disposition product conjunction",
-            script.replace(
-                "and (product in disposition.products or published_child_eligible)",
-                "and True",
-                1,
-            ),
-        ),
-        (
-            "single authorization candidate guard",
-            script.replace("if len(candidates) != 1:", "if False:", 1),
-        ),
-        (
-            "assertion-path eligibility guard",
-            script.replace(
-                "    accept_and_track_product_matches = accept_and_track_product_eligible(\n"
-                "        product,\n"
-                "        trivy_evidence.architecture,\n"
-                "        index_reference,\n"
-                "        index_manifest,\n"
-                "    )",
-                "    accept_and_track_product_matches = False",
-                1,
-            ),
-        ),
-        (
-            "index-reference CLI input",
-            script.replace(
-                '    parser.add_argument("--index-reference", '
-                'help="digest-qualified reference for exact registry index bytes")\n',
-                "",
-                1,
-            ),
-        ),
-        (
-            "index-reference invocation plumbing",
-            script.replace("            index_reference=args.index_reference,", "            index_reference=None,", 1),
-        ),
-    ]
-    for label, mutant_source in surface_mutations:
-        require(mutant_source != script, f"python accept-and-track surface mutation is a no-op: {label}")
-        mutation_errors = python_accept_and_track_surface_errors(mutant_source)
-        require(mutation_errors, f"python accept-and-track surface mutation unexpectedly passed: {label}")
-        print(f"python accept-and-track surface mutation rejected: {label}: {mutation_errors[0]}")
-
-    expiry_fixture = python_accept_and_track_expiry_errors(
-        [PYTHON_ACCEPT_AND_TRACK_ENTRY],
-        date(2026, 10, 2),
-    )
-    expected_expiry = (
-        "expired repository accept-and-track entry: CVE-2026-11940 "
-        "products=local/ubi9-base-python:ci-amd64,local/ubi9-base-python:ci-arm64 "
-        "packages=python3.12@3.12.13-3.el9_8.1,python3.12-libs@3.12.13-3.el9_8.1 "
-        "debt=TD-9 review-by=2026-10-01"
-    )
-    require(
-        expiry_fixture == [expected_expiry],
-        f"python accept-and-track repository-entry expiry fixture failed: {expiry_fixture}",
-    )
+        for label, mutate in document_mutation_cases:
+            mutant = copy.deepcopy(expected)
+            mutate(mutant)
+            require(mutant != expected, f"canonical VEX mutation was a no-op: {path} {label}")
+            document_mutations += 1
     print(
-        "python accept-and-track locks: canonical VEX, exact one-entry allowlist, "
-        f"{len(vex_mutations)} VEX mutations, {len(allowlist_mutations) + 2} allowlist mutations, "
-        f"{len(surface_mutations)} published-child surface mutations, "
-        "and date-controlled repository-entry expiry rejected"
+        "accept-and-track locks: 3 canonical byte documents, exact 2-entry/3-surface model, "
+        f"{document_mutations} document mutations, TD-12 remediation, and 2/2 dormant expiries locked"
     )
+
+
+MICRO_VEX_INDEX_ADJACENCY = (
+    "              --package-floor contracts/image-manifest.json \\\n"
+    '              --index-reference "${IMAGE}@${INDEX_DIGEST}" \\\n'
+    "              --index-manifest dist/image-index.json\n"
+)
+
+
+def micro_vex_index_plumbing_errors(workflow: str) -> list[str]:
+    errors: list[str] = []
+    step_start = workflow.find("      - name: Run OpenVEX default-deny gates\n")
+    step_end = workflow.find("\n      - name:", step_start + 1)
+    if step_start < 0 or step_end <= step_start:
+        return ["micro publish workflow must keep a bounded OpenVEX gate step"]
+    step = workflow[step_start:step_end]
+    reference_count = step.count("--index-reference")
+    manifest_count = step.count("--index-manifest")
+
+    def reject(condition: object, message: str) -> None:
+        if condition:
+            errors.append(message)
+
+    # CHECK: micro-vex-index-pair
+    reject(reference_count != manifest_count, "micro publish VEX index flags must remain paired")
+    # CHECK: micro-vex-index-reference
+    reject(
+        reference_count != 1 or '--index-reference "${IMAGE}@${INDEX_DIGEST}"' not in step,
+        "micro publish VEX index reference must bind IMAGE to INDEX_DIGEST exactly once",
+    )
+    # CHECK: micro-vex-index-manifest
+    reject(
+        manifest_count != 1 or "--index-manifest dist/image-index.json" not in step,
+        "micro publish VEX index manifest must use dist/image-index.json exactly once",
+    )
+    # CHECK: micro-vex-index-adjacency
+    reject(
+        MICRO_VEX_INDEX_ADJACENCY not in step,
+        "micro publish VEX index flags must immediately follow the package-floor input",
+    )
+    if step.count("          INDEX_DIGEST: ${{ steps.image.outputs.digest }}") != 1:
+        errors.append("micro publish VEX INDEX_DIGEST must come from steps.image.outputs.digest exactly once")
+    if workflow.count("--index-reference") != 1 or workflow.count("--index-manifest") != 1:
+        errors.append("micro publish workflow must not carry orphaned index-authority flags")
+    return errors
+
+
+def _micro_vex_index_plumbing_mutations() -> tuple[tuple[str, str, str, str], ...]:
+    return (
+        (
+            "pair",
+            '              --index-reference "${IMAGE}@${INDEX_DIGEST}" \\\n',
+            "",
+            "micro publish VEX index flags must remain paired",
+        ),
+        (
+            "reference",
+            "${IMAGE}@${INDEX_DIGEST}",
+            "${IMAGE_REPOSITORY}@${INDEX_DIGEST}",
+            "micro publish VEX index reference must bind IMAGE to INDEX_DIGEST exactly once",
+        ),
+        (
+            "manifest",
+            "              --index-manifest dist/image-index.json\n",
+            "              --index-manifest dist/other-index.json\n",
+            "micro publish VEX index manifest must use dist/image-index.json exactly once",
+        ),
+        (
+            "adjacency",
+            MICRO_VEX_INDEX_ADJACENCY,
+            (
+                "              --package-floor contracts/image-manifest.json \\\n"
+                "              --index-manifest dist/image-index.json \\\n"
+                '              --index-reference "${IMAGE}@${INDEX_DIGEST}"\n'
+            ),
+            "micro publish VEX index flags must immediately follow the package-floor input",
+        ),
+    )
+
+
+def check_micro_vex_index_plumbing(only_label: str | None = None) -> None:
+    workflow = read(".github/workflows/publish-image.yaml")
+    require(not micro_vex_index_plumbing_errors(workflow), "; ".join(micro_vex_index_plumbing_errors(workflow)))
+    mutations = _micro_vex_index_plumbing_mutations()
+    selected = 0
+    for label, old, replacement, expected_reason in mutations:
+        if only_label is not None and label != only_label:
+            continue
+        selected += 1
+        mutant = workflow.replace(old, replacement, 1)
+        require(mutant != workflow, f"micro VEX plumbing mutation was a no-op: {label}")
+        errors = micro_vex_index_plumbing_errors(mutant)
+        if expected_reason not in errors:
+            raise VerifyError(f"micro VEX plumbing mutation unexpectedly passed: {label}")
+        print(f"micro VEX plumbing mutation rejected: {label}: {expected_reason}")
+    if only_label is None:
+        require(selected == len(mutations), "micro VEX plumbing fixture inventory mismatch")
+        print(f"micro VEX index-evidence plumbing: {selected}/{len(mutations)} mutations rejected")
+    else:
+        require(selected == 1, f"unknown micro VEX plumbing fixture: {only_label}")
+
+
+def check_micro_vex_index_checker_mutation_self_test() -> None:
+    source = read("tools/verify.py")
+    checker_start = source.index("def micro_vex_index_plumbing_errors(")
+    checker_end = source.index("\ndef _micro_vex_index_plumbing_mutations(", checker_start)
+    checker_source = source[checker_start:checker_end]
+    guards = (
+        ("micro-vex-index-pair", "reject(reference_count != manifest_count,", "pair"),
+        (
+            "micro-vex-index-reference",
+            "reject(\n        reference_count != 1 or '--index-reference \"${IMAGE}@${INDEX_DIGEST}\"' not in step,",
+            "reference",
+        ),
+        (
+            "micro-vex-index-manifest",
+            'reject(\n        manifest_count != 1 or "--index-manifest dist/image-index.json" not in step,',
+            "manifest",
+        ),
+        ("micro-vex-index-adjacency", "reject(\n        MICRO_VEX_INDEX_ADJACENCY not in step,", "adjacency"),
+    )
+    markers = re.findall(r"^    # CHECK: (micro-vex-index-[a-z-]+)$", checker_source, re.MULTILINE)
+    require(
+        Counter(markers) == Counter(guard for guard, _, _ in guards) and len(markers) == len(guards),
+        "micro VEX index checker mutation list must cover every rejection guard exactly once",
+    )
+    for guard, anchor, fixture in guards:
+        require(checker_source.count(anchor) == 1, f"micro VEX index checker anchor changed: {guard}")
+        replacement = "reject(\n        False," if "\n" in anchor else "reject(False,"
+        mutated_checker = checker_source.replace(anchor, replacement, 1)
+        mutated = source[:checker_start] + mutated_checker + source[checker_end:]
+        ast.parse(mutated, filename="tools/verify.py")
+        result = _run_mutated_python_verifier(mutated, ["--check-micro-vex-index-fixture", fixture])
+        expected = f"verify failed: micro VEX plumbing mutation unexpectedly passed: {fixture}"
+        require(result.returncode == 1, f"micro VEX index checker mutation {guard} returned {result.returncode}")
+        require(
+            result.stderr.strip() == expected,
+            f"micro VEX index checker mutation {guard} returned unexpected diagnostic: {result.stderr.strip()!r}",
+        )
+        location = source[: source.index(f"# CHECK: {guard}")].count("\n") + 1
+        print(
+            f"micro VEX index checker mutation rejected [guard={guard} location=tools/verify.py:{location} "
+            f"fixture={fixture} diagnostic={expected}]"
+        )
+    print(f"micro VEX index checker mutation probes: {len(guards)}/{len(guards)} rejected")
 
 
 def check_build_script() -> None:
@@ -13479,6 +13562,20 @@ def main(argv: list[str] | None = None) -> int:
             print(f"verify failed: {exc}", file=sys.stderr)
             return 1
         return 0
+    if len(arguments) == 2 and arguments[0] == "--check-accept-track-lock-fixture":
+        try:
+            check_accept_and_track_lock_self_test(arguments[1])
+        except VerifyError as exc:
+            print(f"verify failed: {exc}", file=sys.stderr)
+            return 1
+        return 0
+    if len(arguments) == 2 and arguments[0] == "--check-micro-vex-index-fixture":
+        try:
+            check_micro_vex_index_plumbing(arguments[1])
+        except VerifyError as exc:
+            print(f"verify failed: {exc}", file=sys.stderr)
+            return 1
+        return 0
     if arguments == ["--check-publish-python-surface-lock-fixtures"]:
         try:
             check_publish_python_surface_lock_self_test()
@@ -13517,6 +13614,8 @@ def main(argv: list[str] | None = None) -> int:
         check_supply_chain_workflows,
         check_lint_setup,
         check_publish_workflow,
+        check_micro_vex_index_plumbing,
+        check_micro_vex_index_checker_mutation_self_test,
         check_publish_scope_gate,
         check_publish_scope_gate_self_test,
         check_python_ci_preflight,
@@ -13532,7 +13631,8 @@ def main(argv: list[str] | None = None) -> int:
         check_python_evidence,
         check_python_evidence_self_test,
         check_python_sqlite_vex,
-        check_python_accept_and_track,
+        check_accept_and_track_dispositions,
+        check_accept_and_track_checker_mutation_self_test,
         check_python_contract_schema,
         check_python_contract_schema_self_test,
         check_build_script,
