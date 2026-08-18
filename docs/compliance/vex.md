@@ -21,72 +21,74 @@ consumers away from the vulnerable call path through the TD-6 review date,
 package-, version-, CVE-, and date-scoped files under `security/` are the only
 scanner suppressors.
 
-Base-python has a distinct TD-9 accept-and-track disposition for the
-known-affected unfixed HIGH `CVE-2026-11940`. Red Hat lists RHEL 9
-`python3.12` as Affected with no fixed RPM as of 2026-08-13. It is limited to
-exactly `python3.12` and `python3.12-libs` at `3.12.13-3.el9_8.1`, and
-`review-by 2026-10-01`.
+The gate has two exact, expiring accept-and-track dispositions:
 
-For the legacy local-product path, the two-key authorization requires both the
-closed allowlist in `tools/assert-vex.py` and the canonical reviewed `affected`
-statement in `images/python/vex/cve-2026-11940.openvex.json`, and applies only
-to `local/ubi9-base-python:ci-amd64` and
-`local/ubi9-base-python:ci-arm64`.
+- TD-9 covers known-affected unfixed HIGH `CVE-2026-11940` on exactly
+  `python3.12` and `python3.12-libs` at `3.12.13-3.el9_8.1` in base-python. Red
+  Hat listed RHEL 9 `python3.12` as Affected with no fixed RPM as of 2026-08-13.
+- TD-12 covers known-affected unfixed HIGH `CVE-2026-14456` on exactly
+  `openssl-libs` at `1:3.5.5-5.el9_8` in both base-python and base-micro. Red
+  Hat listed RHEL 9 `openssl` as Affected with no fixed RPM as of 2026-08-18;
+  RHEL 9.8 and later ship the affected OpenSSL 3.5.x QUIC server, and risk
+  requires an application to explicitly enable a QUIC server listener.
 
-The tool also implements a production-wired path for a digest-addressed child
-under the pinned `ghcr.io/nwarila/ubi9-base-python` repository. Its
-authorization is the
-conjunction of fixed in-tool constraints, the canonical reviewed statement, and
-index evidence supplied through paired `--index-reference` and
-`--index-manifest` inputs. The tool verifies the exact bytes against the
-reference digest, derives exactly one `linux/amd64` child and one `linux/arm64`
-child with distinct digests, locks the BuildKit attestation platform and
-annotations, requires every descriptor digest in `manifests` to be unique
-across all roles, and requires the product digest to match the child for the
-architecture reported by both scanners. Its
-duplicate-or-contradictory descriptor diagnostic names the first and repeated
-positions. The index digest and attestation digests are never eligible. For an
-otherwise well-formed index, submitting a distinct attestation-descriptor digest
-is a product-eligibility rejection; the separate child/attestation
-digest-disjointness guard rejects an alias before child-product eligibility is
-decided. The VEX-side policy does not constrain attestation count or per-child
-reference cardinality, and does not close the top-level key set of either
-descriptor kind: it accepts measured `urls`, `data`, and `artifactType`
-additions on runnable and attestation descriptors. It also does not close the
-runnable `platform` key set, accepting an invented member there. Before this
-gate runs, the publish-side resolver requires exactly the four-key runnable and
-five-key attestation descriptor shapes, exact `architecture` and `os` platform
-objects, and exactly one attestation reference per child.
-Version 2 of the canonical statement names this scope with a
-non-image-matchable policy IRI, so it is not a bare repository wildcard.
+Both entries have `review-by 2026-10-01`. The in-tool model is a closed set of
+dispositions, each with one or more exact statement surfaces. A surface binds
+its canonical statement path and contents, action text, local products,
+non-image-matchable policy IRI, and pinned published repository. Candidate
+selection must resolve to exactly one surface; zero matches confer no
+authorization, and multiple matches fail closed. Authority from one CVE,
+statement, product, repository, or policy IRI cannot satisfy another surface.
 
-On each production run, the merged workflow binds this dynamic authorization
-input to a trusted origin for that run. It fetches the exact bytes once from the registry at the
-push-reported digest, corroborates their SHA-256, protects every cross-job
-transfer with a checksum manifest, and gives the same digest to signing,
-attestation, VEX, provenance, collision-check, and alias consumers. That binding
-is limited to the index that run pushed and read back. It does not make alias
-application atomic against an external writer, and TD-11 tracks all three
-VEX-side descriptor-policy asymmetries. The 2026-08-17 production attempt failed
-in `registry-served gates and evidence` while `Install publication gate tools`
-tried to install Syft without Cosign available. That prerequisite is now
-repaired and lock-enforced; production proof remains pending the next `main`
-push. The package exists publicly and serves only unaliased, unsigned candidate
-digests. Its two BuildKit `mode=max` provenance attestation manifests exist; no
-production gate evidence, Cosign signature or attestation, SLSA-generator
-provenance, Rekor record, or consumer alias exists.
+Local products use a two-key authorization: the exact disposition surface and
+its canonical reviewed `affected` statement must both match. The local products
+are `local/ubi9-base-python:ci-amd64`,
+`local/ubi9-base-python:ci-arm64`, and
+`ghcr.io/nwarila/ubi9-base-micro:base-micro`. TD-9 uses
+`images/python/vex/cve-2026-11940.openvex.json`; TD-12 uses
+`images/python/vex/cve-2026-14456.openvex.json` for Python and
+`vex/cve-2026-14456.openvex.json` for micro.
 
-A mismatch, a duplicate statement, or valid fix evidence from either scanner
-leaves the finding un-vexed. The raw scanner vulnerability ID, package name, and
-installed version must each have no leading or trailing whitespace on either
-path; padded identity evidence is malformed and is rejected rather than
-normalized into an exact match. Candidate evaluations fail after the review
-date, and `tools/verify.py` expires the entry even when no matching finding
-remains.
+Digest-addressed published children use a three-key authorization: the exact
+disposition surface, its canonical statement, and paired `--index-reference`
+plus `--index-manifest` evidence must all match. The Python surfaces pin
+`ghcr.io/nwarila/ubi9-base-python`; the micro surface pins
+`ghcr.io/nwarila/ubi9-base-micro`. The tool verifies the supplied bytes against
+the reference digest, derives exactly one `linux/amd64` child and one
+`linux/arm64` child with distinct digests, locks the BuildKit attestation
+platform and annotations, requires every descriptor digest in `manifests` to be
+unique across all roles, and requires the product digest to match the child for
+the architecture reported by both scanners. The index digest and attestation
+digests are never eligible, and child/attestation digest aliasing is rejected.
 
-This is the sole path on which `affected` satisfies the gate. All other
-`affected` statements remain documentary. TD-9 does not suppress raw scanner
-reports, does not alter the HIGH/CRITICAL threshold, and does not claim that the
-base-python image is unaffected. Consumers must not rely on
-`tarfile.extractall()` `data` or `tar` filters to contain untrusted archives
-until a fixed RPM is absorbed.
+The VEX-side index policy does not constrain attestation count or per-child
+reference cardinality and does not close the top-level key set of either
+descriptor kind or the runnable `platform` key set. It accepts the measured
+additional-field cases tracked in TD-11. The Python publisher's stricter index
+resolver rejects those shapes before its VEX gate. The micro publisher uses the
+common VEX-side policy directly, so those exact asymmetries remain part of its
+tracked production boundary.
+
+Each merged publisher binds the dynamic evidence to the index that run pushed.
+The Python publisher reads the index once by the push-reported digest,
+corroborates its SHA-256, checksum-protects cross-job transfers, and gives the
+same digest to every consumer. The micro publisher passes the pushed digest and
+the exact `dist/image-index.json` bytes it already read from the registry to
+both child gate calls in the same job. Production proof of the new TD-12
+published-child paths remains pending the merge-triggered runs. The earlier
+Python production attempt remains incomplete: its public package serves only
+unaliased, unsigned candidate digests, with no production gate evidence,
+Cosign signature or attestation, SLSA-generator provenance, Rekor record, or
+consumer alias.
+
+A mismatch, duplicate statement, byte-noncanonical scanner identity, or valid
+fix evidence from either scanner leaves the finding un-vexed. Candidate
+evaluations fail after the review date, and `tools/verify.py` expires both
+entries even when their findings are dormant. These exact paths are the only
+ones on which `affected` satisfies the gate; all other `affected` statements
+remain documentary. They suppress no scanner report, do not alter the
+HIGH/CRITICAL threshold, and do not claim that either image is unaffected.
+Consumers must not rely on `tarfile.extractall()` `data` or `tar` filters to
+contain untrusted archives until TD-9 is remediated. Consumers that enable an
+OpenSSL QUIC server listener must mitigate at the application boundary until
+TD-12 is remediated.

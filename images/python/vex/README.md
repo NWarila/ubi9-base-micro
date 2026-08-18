@@ -9,9 +9,10 @@ Accepted statements must be OpenVEX JSON files with:
 - `products[].@id` matching the exact image reference scanned, or the same reference prefixed with `pkg:oci/`.
 - `status: "fixed"` or `status: "not_affected"` with one of the standard OpenVEX justifications, except for the exact accept-and-track path below.
 
-`affected` satisfies the gate only for the exact, expiring CVE-2026-11940
-accept-and-track authorization implemented in `tools/assert-vex.py` and matched
-by `cve-2026-11940.openvex.json`. Every other `affected` statement, and every
+`affected` satisfies the gate only for the exact, expiring accept-and-track
+authorizations implemented in `tools/assert-vex.py`: CVE-2026-11940 matched by
+`cve-2026-11940.openvex.json`, and CVE-2026-14456 matched by
+`cve-2026-14456.openvex.json`. Every other `affected` statement, and every
 `under_investigation` statement, remains documentary and does not satisfy the
 gate. Files under `vex/` require review through `.github/CODEOWNERS`. The
 pull-request release preflight does not attest OpenVEX. The production publisher
@@ -34,17 +35,29 @@ products ship the affected `python3.12` and `python3.12-libs` packages at
 non-image-matchable policy IRI
 `https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-python/published-platform-children`.
 The IRI documents policy scope without becoming a bare repository wildcard and
-does not assert that any such image or index has been published.
+does not assert that any such image or index has been published. The statement
+tracks acceptance as TD-9 through `review-by 2026-10-01`; it does not claim
+that the package or image is unaffected.
 
-For the two legacy CI products, the gate accepts the finding only when the
-document and the in-tool allowlist match every canonical product, package,
-version, and status, and the action statement contains the exact TD-9 and
-`review-by 2026-10-01` markers. For a digest-addressed child under the pinned
-GHCR repository, the production path instead requires the conjunction of fixed
-in-tool constraints, the same canonical reviewed statement, and paired index
-evidence. `--index-reference` identifies an index digest and
-`--index-manifest` supplies its exact bytes. The tool recomputes the byte digest,
-enforces an OCI index with exactly one `linux/amd64` child and one `linux/arm64`
+`cve-2026-14456.openvex.json` records that both base-python CI products ship
+`openssl-libs` at exactly `1:3.5.5-5.el9_8`. It names the same pinned published
+repository through the non-image-matchable Python policy IRI. Red Hat listed
+RHEL 9 `openssl` as Affected with no fixed RPM as of 2026-08-18; RHEL 9.8 and
+later ship the affected OpenSSL 3.5.x QUIC server, and exploitation requires an
+application to explicitly enable a QUIC server listener. The image runs no
+server process by default and starts the Python interpreter. The statement
+tracks acceptance as TD-12 through `review-by 2026-10-01`; it does not claim
+that the package or image is unaffected.
+
+For either accepted finding on the two local CI products, the gate requires two
+keys: the exact in-tool disposition entry and the matching byte-canonical
+reviewed statement. The complete CVE, package/version set, product surface,
+statement path, and action text must match. For a digest-addressed child under
+the pinned `ghcr.io/nwarila/ubi9-base-python` repository, the production path
+requires three keys: the same disposition entry, the surface's canonical
+statement, and paired index evidence. `--index-reference` identifies an index
+digest and `--index-manifest` supplies its exact bytes. The tool recomputes the
+byte digest, enforces an OCI index with exactly one `linux/amd64` child and one `linux/arm64`
 child with distinct digests, locks the BuildKit attestation platform and
 annotations, requires a unique digest for every descriptor in `manifests`
 across all roles, and binds the product to the child matching the
@@ -80,12 +93,13 @@ unaliased, unsigned candidate digests. Its two BuildKit `mode=max` provenance
 attestation manifests exist; no production gate evidence, Cosign signature or
 attestation, SLSA-generator provenance, Rekor record, or consumer alias exists.
 
+An authorization on one disposition or image surface cannot satisfy another.
 The authorization is refused if either scanner supplies valid fix evidence. The
 raw scanner vulnerability ID, package name, and installed version must also be
 byte-canonical on both paths: surrounding whitespace is malformed evidence and
 is rejected rather than normalized into an exact match. Gate expiry is scoped
 to a present matching candidate; `tools/verify.py` independently expires the
-repository entry after the review date.
+repository entries after the review date, including while a finding is dormant.
 
 `sqlite-component-not-present.openvex.json` records five distinct
 `not_affected` / `component_not_present` dispositions for CVE-2026-51296,

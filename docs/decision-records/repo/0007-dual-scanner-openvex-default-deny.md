@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-06-21
-- Last reviewed: 2026-08-16
+- Last reviewed: 2026-08-18
 - Scope: repo
 
 ## Context
@@ -22,24 +22,38 @@ and verify the attestations with the repository workflow identity. The
 base-python publisher gates and attaches the byte-unmodified
 `images/python/vex/` documents to both platform children.
 
-The only `affected` statement that satisfies the gate is the exact, expiring
-TD-9 accept-and-track disposition for known-affected `CVE-2026-11940`, with the
-complete `python3.12` and `python3.12-libs` package set at
-`3.12.13-3.el9_8.1` and `review-by 2026-10-01`. The legacy local-product path
-is a two-key authorization: an exact in-tool allowlist for the two base-python
-CI products and the canonical reviewed statement must both match.
+An `affected` statement satisfies the gate only through an exact, expiring
+accept-and-track disposition. The tool models a closed set of N disposition
+entries. Each entry binds one CVE, its complete package/version set, a debt ID,
+a review date, and one or more statement surfaces. Each surface binds its
+canonical statement path and contents, action text, local products,
+non-image-matchable policy IRI, and pinned published repository. The current
+entries are:
 
-The decision also permits a second product-eligibility path for a
-digest-addressed child under the in-tool pinned
-`ghcr.io/nwarila/ubi9-base-python` repository. That path is authorized only by
-the conjunction of the fixed in-tool constraints, the canonical reviewed
-statement, and index evidence supplied through paired `--index-reference` and
-`--index-manifest` inputs. The tool verifies the exact index bytes against the
-reference digest, requires exactly one `linux/amd64` image manifest and one
-`linux/arm64` image manifest with distinct digests, locks the BuildKit
-attestation platform and annotations, requires index-wide
-descriptor-digest uniqueness across all roles, and binds the product digest to
-the child for the architecture reported by both scanners. The
+- TD-9 for known-affected `CVE-2026-11940`, with the complete `python3.12` and
+  `python3.12-libs` set at `3.12.13-3.el9_8.1` on the base-python surface; and
+- TD-12 for known-affected `CVE-2026-14456`, with `openssl-libs` at exactly
+  `1:3.5.5-5.el9_8` on separate base-python and base-micro surfaces.
+
+Both entries have `review-by 2026-10-01`. A local product uses a two-key
+authorization: the exact in-tool disposition surface and its byte-canonical
+reviewed statement must both match. This covers the two base-python CI products
+and the locally loaded `ghcr.io/nwarila/ubi9-base-micro:base-micro` product.
+
+A digest-addressed published child uses a three-key authorization: the exact
+in-tool disposition surface, its byte-canonical reviewed statement, and index
+evidence supplied through paired `--index-reference` and `--index-manifest`
+inputs must all match. Each surface pins its own repository,
+`ghcr.io/nwarila/ubi9-base-python` or
+`ghcr.io/nwarila/ubi9-base-micro`. The tool verifies the exact index bytes
+against the reference digest, requires exactly one `linux/amd64` image manifest
+and one `linux/arm64` image manifest with distinct digests, locks the BuildKit
+attestation platform and annotations, requires index-wide descriptor-digest
+uniqueness across all roles, and binds the product digest to the child for the
+architecture reported by both scanners. Candidate selection must resolve to
+exactly one disposition surface; zero matches confer no authorization and
+multiple matches fail closed. A statement, product, policy IRI, repository, or
+index from one surface cannot authorize another. The
 duplicate-or-contradictory descriptor diagnostic names the first and repeated
 positions; the child/attestation digest-disjointness guard remains separate with
 its own diagnostic. The index digest is never eligible, and a distinct
@@ -58,22 +72,25 @@ attestation reference per child.
 The descriptor classification locks a producer convention; index metadata
 alone does not prove that an `unknown/unknown` image-manifest descriptor is
 non-runnable. More importantly, digest verification authenticates the supplied
-bytes only relative to the supplied digest. On each production run, the merged
-caller binds that dynamic authorization input to the index the same run pushed:
-one digest-addressed registry readback is SHA-256-corroborated against push
-metadata, every cross-job transfer is checksum-verified, and signing,
-attestation, VEX, provenance, collision checks, and aliases all receive the same
-digest. The first such production execution remains post-merge. This binding is
-limited to the index that run pushed and read back; it does not close the
-external-writer alias race. TD-11 tracks the remaining VEX-side descriptor,
+bytes only relative to the supplied digest. Each merged production caller binds
+that dynamic authorization input to the index the same run pushed. The Python
+publisher performs one digest-addressed registry readback, corroborates its
+SHA-256 against push metadata, checksum-verifies every cross-job transfer, and
+gives the same digest to signing, attestation, VEX, provenance, collision, and
+alias consumers. The micro publisher passes the pushed digest and the exact
+`dist/image-index.json` bytes it already read from the registry to both child
+gate calls in the same job. Production proof of the new TD-12 published-child
+paths remains pending the merge-triggered runs. These bindings are limited to
+the index each run pushed and read back, and the Python binding does not close
+the external-writer alias race. TD-11 tracks the remaining VEX-side descriptor,
 runnable-platform, and attestation-cardinality asymmetries.
 
-Valid fix evidence from either scanner refuses either product path. Raw scanner
+Valid fix evidence from either scanner refuses every accept-and-track path. Raw scanner
 vulnerability IDs, package names, and installed versions must also be
 byte-canonical: surrounding whitespace is malformed evidence and is rejected
 rather than normalized into an exact match. Every other `affected` statement
-remains documentary, and this path does not make the base-python image
-unaffected or suppress a raw scanner finding.
+remains documentary, and these paths do not make either image unaffected or
+suppress a raw scanner finding.
 
 The OpenVEX classifier and the hardening decision-envelope generator apply the
 same fixability truth table. Trivy fix metadata grants a fix only when every
@@ -94,10 +111,10 @@ classification to the pull-request decision and nightly drift issue.
 - Scanner summaries cannot upgrade malformed fix metadata into an actionable
   fix or remove it from the unfixed OpenVEX set.
 - Unfixed findings require explicit reviewed status and justification.
-- A known-affected finding can pass only through one of the exact, expiring
-  product paths above. The two-key description applies only to legacy local
-  products; the published-child path additionally depends on the production
-  workflow's registry-origin-bound index evidence.
+- A known-affected finding can pass only through one exact, expiring surface.
+  Local products use two keys; published children use three and additionally
+  depend on the production workflow's repository-correct, digest-verified index
+  evidence.
 - Empty VEX is not manufactured when there are no unfixed HIGH or CRITICAL
   findings.
 - Published VEX documents become signed supply-chain evidence, not comments in
@@ -112,4 +129,5 @@ classification to the pull-request decision and nightly drift issue.
 - Repository details: `docs/compliance/vex.md`, `vex/README.md`,
   `images/python/vex/README.md`, `docs/TECH-DEBT.md`, `tools/assert-vex.py`,
   `tools/summarize-gates.py`, `tools/render-pr-decision.py`,
-  `tools/render-drift-issue.py`, `.github/workflows/publish-image.yaml`
+  `tools/render-drift-issue.py`, `.github/workflows/publish-image.yaml`,
+  `.github/workflows/publish-python.yaml`

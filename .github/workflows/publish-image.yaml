@@ -571,6 +571,7 @@ jobs:
       - name: Run OpenVEX default-deny gates
         env:
           IMAGE: ${{ steps.image.outputs.image }}
+          INDEX_DIGEST: ${{ steps.image.outputs.digest }}
           AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
           ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
         run: |
@@ -615,7 +616,9 @@ jobs:
               --product "${image_ref}" \
               --trivy-json "${trivy_json}" \
               --grype-json "${grype_json}" \
-              --package-floor contracts/image-manifest.json
+              --package-floor contracts/image-manifest.json \
+              --index-reference "${IMAGE}@${INDEX_DIGEST}" \
+              --index-manifest dist/image-index.json
           done
 
       - name: Attest rpmdb SBOMs
