@@ -46,11 +46,11 @@ Documentation for this repository follows the Diataxis framework.
 - [`stig.md`](compliance/stig.md) - image-scoped RHEL9 STIG tailoring, mass-N/A guard, ARF predicate type, and scan scope.
 - [`vex.md`](compliance/vex.md) - CODEOWNERS-gated VEX authoring flow for the
   default-deny unfixed HIGH/CRITICAL gate, including the exact expiring TD-9
-  accept-and-track disposition.
+  and TD-12 accept-and-track dispositions.
 
 ## Maintenance Ledgers
 
 - [`TECH-DEBT.md`](TECH-DEBT.md) - tracked repository debt and scoped exceptions,
   including the Python identity-step static-analysis boundary, expiring
-  known-affected CVE disposition, external-writer alias race, and measured
+  known-affected CVE dispositions, external-writer alias race, and measured
   VEX-side descriptor-key-set and attestation-cardinality asymmetries.

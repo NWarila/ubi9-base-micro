@@ -18,6 +18,17 @@ and this project adheres to
 
 ### Security
 
+- Added the exact, expiring TD-12 accept-and-track disposition for
+  `CVE-2026-14456` on `openssl-libs` at `1:3.5.5-5.el9_8` in both images. The
+  disposition model now supports closed per-image surfaces: local Python and
+  micro products require the exact in-tool entry plus their canonical reviewed
+  `affected` statement, while published children additionally require
+  repository-correct, digest-verified OCI index evidence. New canonical
+  OpenVEX documents cover the Python and micro products, and the micro
+  publisher now supplies the index evidence it already reads from GHCR. Both
+  entries expire after `review-by 2026-10-01`, refuse valid fix evidence, and
+  suppress no raw finding. Production proof of the new published-child paths
+  remains pending the merge-triggered runs.
 - Added an exact, expiring accept-and-track disposition for the known-affected
   base-python `CVE-2026-11940` finding on `python3.12` and
   `python3.12-libs` at `3.12.13-3.el9_8.1`. The legacy local-product path is a
@@ -32,16 +43,17 @@ and this project adheres to
   attestation platform and annotations, requires every descriptor digest to be
   unique across the index, and separately requires child and attestation
   digests to be disjoint. It does not close either descriptor kind's top-level
-  key set or constrain attestation cardinality: measured `urls`, `data`, and
-  `artifactType` additions on runnable and attestation descriptors are accepted,
-  as are excess or duplicate per-child attestation references. That path
+  key set or the runnable `platform` key set, and does not constrain attestation
+  cardinality: measured `urls`, `data`, and `artifactType` additions on runnable
+  and attestation descriptors are accepted, as are excess or duplicate per-child
+  attestation references. That path
   combines fixed in-tool constraints, the canonical statement, and registry
   index evidence. The
   publisher fetches those bytes once by the push-reported digest, corroborates
   their SHA-256, protects cross-job transfers, and uses that digest for every
   consumer. Its stricter publish-side resolver requires exactly the four-key
   runnable descriptor and five-key attestation descriptor shapes, and exactly
-  one BuildKit attestation reference per child. TD-11 tracks both measured
+  one BuildKit attestation reference per child. TD-11 tracks all three measured
   VEX-side gaps.
   Both paths refuse valid fix evidence and byte-noncanonical scanner identities,
   expire after `review-by 2026-10-01`, suppress no raw finding, and do not make
