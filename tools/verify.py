@@ -10850,8 +10850,10 @@ def assert_vex_source_lock_errors(source: str) -> list[str]:
         tree = ast.parse(source)
     except SyntaxError as exc:
         return [f"assert-vex source does not parse: {exc}"]
-    assignments = {name: [] for name in ASSERT_VEX_SOURCE_CONSTANTS}
-    functions = {name: [] for name in ASSERT_VEX_SOURCE_FUNCTION_HASHES}
+    assignments: dict[str, list[ast.Assign]] = {name: [] for name in ASSERT_VEX_SOURCE_CONSTANTS}
+    functions: dict[str, list[ast.FunctionDef | ast.AsyncFunctionDef]] = {
+        name: [] for name in ASSERT_VEX_SOURCE_FUNCTION_HASHES
+    }
     for node in tree.body:
         if isinstance(node, ast.Assign):
             for target in node.targets:
@@ -10862,23 +10864,23 @@ def assert_vex_source_lock_errors(source: str) -> list[str]:
 
     errors: list[str] = []
     for name, expected in ASSERT_VEX_SOURCE_CONSTANTS.items():
-        sites = assignments[name]
-        if len(sites) != 1:
+        assignment_sites = assignments[name]
+        if len(assignment_sites) != 1:
             errors.append(f"assert-vex source constant {name} must be assigned exactly once")
             continue
         try:
-            actual = ast.literal_eval(sites[0].value)
+            actual = ast.literal_eval(assignment_sites[0].value)
         except (ValueError, TypeError):
             errors.append(f"assert-vex source constant {name} must be a literal")
             continue
         if actual != expected:
             errors.append(f"assert-vex source constant {name} must equal {expected!r}")
     for name, expected in ASSERT_VEX_SOURCE_FUNCTION_HASHES.items():
-        sites = functions[name]
-        if len(sites) != 1:
+        function_sites = functions[name]
+        if len(function_sites) != 1:
             errors.append(f"assert-vex source function {name} must be defined exactly once")
             continue
-        actual = hashlib.sha256(ast.dump(sites[0], include_attributes=False).encode()).hexdigest()
+        actual = hashlib.sha256(ast.dump(function_sites[0], include_attributes=False).encode()).hexdigest()
         if actual != expected:
             errors.append(f"assert-vex source function {name} AST drifted")
     return errors
@@ -10988,9 +10990,9 @@ def check_accept_and_track_dispositions() -> None:
             ("duplicate statement", lambda value: value["statements"].append(copy.deepcopy(value["statements"][0]))),
         )
         for label, mutate in document_mutation_cases:
-            mutant = copy.deepcopy(expected)
-            mutate(mutant)
-            require(mutant != expected, f"canonical VEX mutation was a no-op: {path} {label}")
+            document_mutant = copy.deepcopy(expected)
+            mutate(document_mutant)
+            require(document_mutant != expected, f"canonical VEX mutation was a no-op: {path} {label}")
             document_mutations += 1
 
     documentation_mutations = 0
@@ -11000,12 +11002,12 @@ def check_accept_and_track_dispositions() -> None:
                 documentation[path].count(marker) == 1,
                 f"{path} {disposition} disposition documentation marker must occur exactly once: {marker!r}",
             )
-            mutant = dict(documentation)
-            mutant[path] = mutant[path].replace(marker, "", 1)
+            documentation_mutant = dict(documentation)
+            documentation_mutant[path] = documentation_mutant[path].replace(marker, "", 1)
             expected_error = (
                 f"{path} must contain exactly one {disposition} disposition documentation marker: {marker!r}"
             )
-            mutation_errors = accept_and_track_documentation_errors(mutant)
+            mutation_errors = accept_and_track_documentation_errors(documentation_mutant)
             if expected_error not in mutation_errors:
                 raise VerifyError(
                     f"accept-and-track documentation prose mutation unexpectedly passed: "
