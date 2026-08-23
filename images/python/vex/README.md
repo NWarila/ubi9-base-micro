@@ -114,3 +114,16 @@ inventory provides the contract-derived runtime-package marker, while Grype's
 findings-only `matches` list may be empty. `tools/assert-vex.py` then separately
 binds the report identities to each other and to the scanned product before it
 evaluates findings and dispositions.
+
+`cve-2026-53613.openvex.json` records a `not_affected` /
+`vulnerable_code_not_present` disposition for the Grype finding on `libuuid` at
+exactly `0:2.37.4-25.el9`. Red Hat identifies the vulnerable code as `mount(8)`;
+the `/usr/bin/mount` payload belongs to `util-linux-core`, while `libuuid` is a
+separate binary package from the same `util-linux` source RPM. Neither
+`util-linux` nor `util-linux-core` is installed in the base-python image on
+either architecture, so the vulnerable code is absent. The document binds both
+local CI products and the published-platform-children policy product to the
+same exact `libuuid` subcomponent. The gate requires the canonical statement
+and package/version pair for local products; a published child additionally
+requires repository-correct, digest-verified OCI index evidence. This permanent
+not-affected disposition is not tracked technical debt.

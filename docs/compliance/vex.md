@@ -92,3 +92,14 @@ Consumers must not rely on `tarfile.extractall()` `data` or `tar` filters to
 contain untrusted archives until TD-9 is remediated. Consumers that enable an
 OpenSSL QUIC server listener must mitigate at the application boundary until
 TD-12 is remediated.
+
+Base-python also has one permanent exact `not_affected` disposition:
+`CVE-2026-53613` on `libuuid` at `0:2.37.4-25.el9`, with justification
+`vulnerable_code_not_present`. Grype reaches `libuuid` through its `util-linux`
+source RPM, but the vulnerable `mount(8)` payload is shipped by
+`util-linux-core`; neither `util-linux` nor `util-linux-core` is installed in
+the image on either architecture. The canonical statement binds the two local
+CI products and the base-python published-child policy surface to the exact
+`libuuid` subcomponent. Local and published-child evaluation uses the same
+two-key and three-key authority boundaries described above. This disposition
+has no review date and is not technical debt.

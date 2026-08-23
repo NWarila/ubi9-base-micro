@@ -175,6 +175,27 @@ class AcceptAndTrackDisposition:
     surfaces: tuple[AcceptAndTrackSurface, ...]
 
 
+@dataclass(frozen=True)
+class ExactNotAffectedSurface:
+    statement_path: str
+    document_id: str
+    document_timestamp: str
+    document_version: int
+    local_products: tuple[str, ...]
+    published_repository: str
+    policy_product: str
+    subcomponents: tuple[str, ...]
+    impact_statement: str
+
+
+@dataclass(frozen=True)
+class ExactNotAffectedDisposition:
+    vulnerability: str
+    packages: tuple[tuple[str, str], ...]
+    justification: str
+    surfaces: tuple[ExactNotAffectedSurface, ...]
+
+
 ACCEPT_AND_TRACK_DISPOSITIONS = (
     AcceptAndTrackDisposition(
         vulnerability="CVE-2026-11940",
@@ -243,6 +264,39 @@ ACCEPT_AND_TRACK_DISPOSITIONS = (
                 subcomponents=("pkg:rpm/redhat/openssl-libs@3.5.5-5.el9_8?epoch=1",),
                 action_statement=CVE_2026_14456_MICRO_ACTION_STATEMENT,
                 action_statement_timestamp="2026-08-18T00:00:00Z",
+            ),
+        ),
+    ),
+)
+
+
+CVE_2026_53613_IMPACT_STATEMENT = (
+    "The installed libuuid package is built from the util-linux source RPM, so Grype maps CVE-2026-53613 "
+    "to it. The vulnerable code is mount(8) at /usr/bin/mount, which is shipped by util-linux-core. Neither "
+    "util-linux nor util-linux-core is installed in either image architecture; only libuuid "
+    "0:2.37.4-25.el9 is installed from that source RPM. Therefore the vulnerable code is not present in "
+    "this product."
+)
+
+EXACT_NOT_AFFECTED_DISPOSITIONS = (
+    ExactNotAffectedDisposition(
+        vulnerability="CVE-2026-53613",
+        packages=(("libuuid", "2.37.4-25.el9"),),
+        justification="vulnerable_code_not_present",
+        surfaces=(
+            ExactNotAffectedSurface(
+                statement_path="images/python/vex/cve-2026-53613.openvex.json",
+                document_id="https://github.com/NWarila/ubi9-base-micro/images/python/vex/cve-2026-53613",
+                document_timestamp="2026-08-23T00:00:00Z",
+                document_version=1,
+                local_products=(
+                    "local/ubi9-base-python:ci-amd64",
+                    "local/ubi9-base-python:ci-arm64",
+                ),
+                published_repository="ghcr.io/nwarila/ubi9-base-python",
+                policy_product=PUBLISHED_PYTHON_CHILD_POLICY_PRODUCT,
+                subcomponents=("pkg:rpm/redhat/libuuid@2.37.4-25.el9?epoch=0",),
+                impact_statement=CVE_2026_53613_IMPACT_STATEMENT,
             ),
         ),
     ),
@@ -497,6 +551,75 @@ def accept_and_track_surface_candidates(
         expected = ",".join(repositories) if repositories else "none"
         raise VexError(
             "published-child repository does not match a pinned accept-and-track surface: "
+            f"observed={product_repository} expected={expected}"
+        )
+    validate_index_child_evidence(
+        product,
+        architecture,
+        index_reference,
+        index_manifest,
+        product_repository,
+    )
+    return published_candidates
+
+
+def exact_not_affected_surface_candidates(
+    finding: Finding,
+    product: str,
+    architecture: str,
+    index_reference: str | None,
+    index_manifest: Path | None,
+    dispositions: tuple[ExactNotAffectedDisposition, ...],
+) -> list[tuple[ExactNotAffectedDisposition, ExactNotAffectedSurface]]:
+    if (index_reference is None) != (index_manifest is None):
+        raise VexError("--index-reference and --index-manifest must be supplied together")
+
+    identity_candidates = [
+        disposition
+        for disposition in dispositions
+        if disposition.vulnerability == finding.vulnerability
+        and finding_package_versions(finding) == frozenset(disposition.packages)
+    ]
+    local_candidates = [
+        (disposition, surface)
+        for disposition in identity_candidates
+        for surface in disposition.surfaces
+        if product in surface.local_products
+    ]
+    if local_candidates:
+        if index_reference is not None:
+            raise VexError("index evidence must not be supplied for a local exact not-affected product")
+        return local_candidates
+    if not identity_candidates:
+        return []
+    if index_reference is None or index_manifest is None:
+        return []
+
+    product_repository, _product_digest = digest_reference_parts(product, "published-child --product")
+    index_repository, _index_digest = digest_reference_parts(index_reference, "--index-reference")
+    repositories = sorted(
+        {surface.published_repository for disposition in identity_candidates for surface in disposition.surfaces}
+    )
+    if product_repository not in repositories:
+        if len(repositories) == 1:
+            raise VexError(f"published-child --product repository must be {repositories[0]}")
+        expected = ",".join(repositories) if repositories else "none"
+        raise VexError(
+            "published-child repository does not match a pinned exact not-affected surface: "
+            f"observed={product_repository} expected={expected}"
+        )
+    if index_repository != product_repository:
+        raise VexError(f"--index-reference repository must be {product_repository}")
+    published_candidates = [
+        (disposition, surface)
+        for disposition in identity_candidates
+        for surface in disposition.surfaces
+        if surface.published_repository == product_repository
+    ]
+    if not published_candidates:
+        expected = ",".join(repositories) if repositories else "none"
+        raise VexError(
+            "published-child repository does not match a pinned exact not-affected surface: "
             f"observed={product_repository} expected={expected}"
         )
     validate_index_child_evidence(
@@ -1094,6 +1217,35 @@ def expected_accept_and_track_document(
     }
 
 
+def expected_exact_not_affected_document(
+    disposition: ExactNotAffectedDisposition,
+    surface: ExactNotAffectedSurface,
+) -> dict[str, Any]:
+    products = [
+        {
+            "@id": product,
+            "subcomponents": [{"@id": subcomponent} for subcomponent in surface.subcomponents],
+        }
+        for product in (*surface.local_products, surface.policy_product)
+    ]
+    return {
+        "@context": "https://openvex.dev/ns/v0.2.0",
+        "@id": surface.document_id,
+        "author": "NWarila",
+        "timestamp": surface.document_timestamp,
+        "version": surface.document_version,
+        "statements": [
+            {
+                "vulnerability": {"name": disposition.vulnerability},
+                "products": products,
+                "status": "not_affected",
+                "justification": disposition.justification,
+                "impact_statement": surface.impact_statement,
+            }
+        ],
+    }
+
+
 def finding_package_versions(finding: Finding) -> frozenset[tuple[str, str]]:
     return frozenset((record.package, record.version) for record in finding.records if not record.has_fix)
 
@@ -1102,6 +1254,9 @@ def statement_path_matches(path: Path, expected: str) -> bool:
     canonical_paths = {
         surface.statement_path for disposition in ACCEPT_AND_TRACK_DISPOSITIONS for surface in disposition.surfaces
     }
+    canonical_paths.update(
+        surface.statement_path for disposition in EXACT_NOT_AFFECTED_DISPOSITIONS for surface in disposition.surfaces
+    )
     matching_paths = [
         candidate
         for candidate in canonical_paths
@@ -1173,6 +1328,56 @@ def accept_and_track_statement_rejection(
         return "accept-and-track action_statement_timestamp does not match the canonical value"
     if document != expected:
         return "accept-and-track statement does not match the canonical document"
+    return None
+
+
+def exact_not_affected_statement_rejection(
+    statement: Statement,
+    disposition: ExactNotAffectedDisposition,
+    surface: ExactNotAffectedSurface,
+) -> str | None:
+    if not statement_path_matches(statement.path, surface.statement_path):
+        return f"statement source must be {surface.statement_path}"
+
+    document = statement.document
+    expected = expected_exact_not_affected_document(disposition, surface)
+    top_keys = {"@context", "@id", "author", "timestamp", "version", "statements"}
+    if set(document) != top_keys:
+        return "exact not-affected document has unexpected or missing top-level fields"
+    for key in ("@context", "@id", "author", "timestamp", "version"):
+        if document.get(key) != expected[key]:
+            return f"exact not-affected document field {key} does not match the canonical value"
+
+    raw_statements = document.get("statements")
+    if not isinstance(raw_statements, list) or len(raw_statements) != 1:
+        return "exact not-affected document must contain exactly one statement"
+    raw = statement.statement
+    statement_keys = {
+        "vulnerability",
+        "products",
+        "status",
+        "justification",
+        "impact_statement",
+    }
+    if set(raw) != statement_keys:
+        return "exact not-affected statement has unexpected or missing fields"
+    vulnerability = raw.get("vulnerability")
+    if not isinstance(vulnerability, dict) or set(vulnerability) != {"name"}:
+        return "exact not-affected vulnerability must contain only its name"
+    if vulnerability.get("name") != disposition.vulnerability:
+        return f"exact not-affected vulnerability must be {disposition.vulnerability}"
+
+    expected_statement = expected["statements"][0]
+    if raw.get("products") != expected_statement["products"]:
+        return "exact not-affected products and subcomponents must match the canonical ordered set"
+    if raw.get("status") != "not_affected":
+        return "exact not-affected status must be not_affected"
+    if raw.get("justification") != disposition.justification:
+        return f"exact not-affected justification must be {disposition.justification}"
+    if raw.get("impact_statement") != surface.impact_statement:
+        return "exact not-affected impact_statement does not match the canonical text"
+    if document != expected:
+        return "exact not-affected statement does not match the canonical document"
     return None
 
 
@@ -1255,6 +1460,59 @@ def accepted_accept_and_track_statement(
     return statement, disposition, surface, None
 
 
+def accepted_exact_not_affected_statement(
+    finding: Finding,
+    product: str,
+    statements: list[Statement],
+    dispositions: tuple[ExactNotAffectedDisposition, ...],
+    architecture: str,
+    index_reference: str | None,
+    index_manifest: Path | None,
+) -> tuple[Statement | None, ExactNotAffectedDisposition | None, ExactNotAffectedSurface | None, str | None]:
+    identity_rejections = sorted({rejection for record in finding.records for rejection in record.identity_rejections})
+    if identity_rejections:
+        return (
+            None,
+            None,
+            None,
+            "malformed exact not-affected scanner identity evidence: " + "; ".join(identity_rejections),
+        )
+    candidates = exact_not_affected_surface_candidates(
+        finding,
+        product,
+        architecture,
+        index_reference,
+        index_manifest,
+        dispositions,
+    )
+    if not candidates:
+        return None, None, None, "no exact in-tool not-affected disposition entry"
+    if len(candidates) > 1:
+        return None, None, None, f"multiple exact in-tool not-affected disposition matches: {len(candidates)}"
+    disposition, surface = candidates[0]
+    canonical_pairs = [
+        (canonical_disposition, canonical_surface)
+        for canonical_disposition in EXACT_NOT_AFFECTED_DISPOSITIONS
+        for canonical_surface in canonical_disposition.surfaces
+    ]
+    if (disposition, surface) not in canonical_pairs:
+        return None, None, None, "in-tool not-affected entry does not match the canonical authorization"
+
+    target_statements = [
+        statement for statement in statements if disposition.vulnerability in statement.vulnerabilities
+    ]
+    if len(target_statements) > 1:
+        locations = ",".join(f"{statement.path}#{statement.index}" for statement in target_statements)
+        raise VexError(f"duplicate exact not-affected statements for {disposition.vulnerability}: {locations}")
+    if not target_statements:
+        return None, None, None, f"no reviewed OpenVEX statement for {disposition.vulnerability}"
+    statement = target_statements[0]
+    rejection = exact_not_affected_statement_rejection(statement, disposition, surface)
+    if rejection is not None:
+        return None, None, None, rejection
+    return statement, disposition, surface, None
+
+
 def assert_vex(
     product: str,
     trivy_json: Path,
@@ -1264,6 +1522,7 @@ def assert_vex(
     emit: bool = True,
     *,
     accept_and_track: tuple[AcceptAndTrackDisposition, ...] = ACCEPT_AND_TRACK_DISPOSITIONS,
+    exact_not_affected: tuple[ExactNotAffectedDisposition, ...] = EXACT_NOT_AFFECTED_DISPOSITIONS,
     today: date | None = None,
     index_reference: str | None = None,
     index_manifest: Path | None = None,
@@ -1286,9 +1545,11 @@ def assert_vex(
     evaluation_date = date.today() if today is None else today
     missing: list[Finding] = []
     rejection_reasons: list[tuple[Finding, str]] = []
+    exact_not_affected_rejection_reasons: list[tuple[Finding, str]] = []
     matched: list[tuple[Finding, Statement]] = []
     tracked: list[tuple[Finding, Statement, AcceptAndTrackDisposition, AcceptAndTrackSurface]] = []
     accept_and_track_vulnerabilities = {disposition.vulnerability for disposition in ACCEPT_AND_TRACK_DISPOSITIONS}
+    exact_not_affected_vulnerabilities = {disposition.vulnerability for disposition in EXACT_NOT_AFFECTED_DISPOSITIONS}
     for finding in findings:
         if finding.vulnerability in accept_and_track_vulnerabilities:
             statement, disposition, surface, rejection = accepted_accept_and_track_statement(
@@ -1307,6 +1568,25 @@ def assert_vex(
                 missing.append(finding)
                 if rejection is not None:
                     rejection_reasons.append((finding, rejection))
+            continue
+        if finding.vulnerability in exact_not_affected_vulnerabilities:
+            exact_statement, exact_disposition_match, exact_surface_match, rejection = (
+                accepted_exact_not_affected_statement(
+                    finding,
+                    product,
+                    statements,
+                    exact_not_affected,
+                    trivy_evidence.architecture,
+                    index_reference,
+                    index_manifest,
+                )
+            )
+            if exact_statement is not None and exact_disposition_match is not None and exact_surface_match is not None:
+                matched.append((finding, exact_statement))
+            else:
+                missing.append(finding)
+                if rejection is not None:
+                    exact_not_affected_rejection_reasons.append((finding, rejection))
             continue
         statement = accepted_statement(finding, product, statements)
         if statement is None:
@@ -1338,6 +1618,8 @@ def assert_vex(
         if emit:
             for finding, reason in rejection_reasons:
                 print(f"accept-and-track rejected for {finding.vulnerability}: {reason}", file=sys.stderr)
+            for finding, reason in exact_not_affected_rejection_reasons:
+                print(f"exact not-affected rejected for {finding.vulnerability}: {reason}", file=sys.stderr)
             print("un-vexed unfixed HIGH/CRITICAL findings:", file=sys.stderr)
             for finding in missing:
                 scanners = ",".join(sorted(finding.scanners))
@@ -4922,6 +5204,207 @@ def self_test() -> int:
         print(
             "assert-vex self-test: cross-authority statement/repository/policy/CVE/package/version/"
             "paired-input probes rejected; synthetic Trivy CVE-2026-14456 exact-version path accepted"
+        )
+
+        exact_disposition = EXACT_NOT_AFFECTED_DISPOSITIONS[0]
+        exact_surface = exact_disposition.surfaces[0]
+        exact_document = expected_exact_not_affected_document(exact_disposition, exact_surface)
+
+        def exact_reports(
+            fixture_product: str,
+            *,
+            architecture: str = "amd64",
+            package: str = "libuuid",
+            version: str = "2.37.4-25.el9",
+        ) -> tuple[dict[str, Any], dict[str, Any]]:
+            trivy = copy.deepcopy(clean_trivy)
+            grype = copy.deepcopy(clean_grype)
+            bind_accept_reports(trivy, grype, fixture_product, architecture)
+            trivy["Results"][0]["Packages"] = [
+                {"Name": "glibc", "Version": "2.34"},
+                {"Name": package, "Version": version},
+            ]
+            trivy["Results"][0]["Vulnerabilities"] = []
+            grype["matches"] = [
+                {
+                    "vulnerability": {
+                        "id": exact_disposition.vulnerability,
+                        "severity": "High",
+                        "fix": {"versions": [], "state": "not-fixed"},
+                    },
+                    "artifact": {"name": package, "version": version},
+                }
+            ]
+            return trivy, grype
+
+        def run_exact_fixture(
+            fixture_product: str,
+            *,
+            architecture: str = "amd64",
+            package: str = "libuuid",
+            version: str = "2.37.4-25.el9",
+            document: dict[str, Any] | None = None,
+            authority_path: str = "images/python/vex/cve-2026-53613.openvex.json",
+            fixture_index_reference: str | None = None,
+            fixture_index_manifest: Path | None = None,
+        ) -> tuple[int | None, str, VexError | None]:
+            fixture_trivy, fixture_grype = exact_reports(
+                fixture_product,
+                architecture=architecture,
+                package=package,
+                version=version,
+            )
+            fixture_vex_dir = tmp / Path(authority_path).parent
+            fixture_vex_dir.mkdir(parents=True, exist_ok=True)
+            for old_document in fixture_vex_dir.glob("*.json"):
+                old_document.unlink()
+            selected_document = exact_document if document is None else document
+            write_json(fixture_vex_dir / Path(authority_path).name, selected_document)
+            write_json(trivy_json, fixture_trivy)
+            write_json(grype_json, fixture_grype)
+            write_json(package_floor, clean_floor)
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            try:
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    result = assert_vex(
+                        fixture_product,
+                        trivy_json,
+                        grype_json,
+                        package_floor,
+                        fixture_vex_dir,
+                        emit=True,
+                        exact_not_affected=EXACT_NOT_AFFECTED_DISPOSITIONS,
+                        index_reference=fixture_index_reference,
+                        index_manifest=fixture_index_manifest,
+                    )
+            except VexError as exc:
+                return None, stdout.getvalue() + stderr.getvalue(), exc
+            return result, stdout.getvalue() + stderr.getvalue(), None
+
+        def require_exact_result(
+            label: str,
+            result: tuple[int | None, str, VexError | None],
+            *,
+            accepted: bool,
+            reason: str = "",
+        ) -> None:
+            status, output, error = result
+            combined = output + (str(error) if error is not None else "")
+            disposition_line = f"accepted VEX: {exact_disposition.vulnerability} status=not_affected"
+            if accepted:
+                if error is not None or status != 0 or disposition_line not in output:
+                    print(
+                        f"self-test failed: {label} did not accept: status={status} error={error} output={output}",
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(1)
+                print(f"assert-vex self-test: {label} accepted")
+                return
+            if (error is None and status != 1) or reason not in combined:
+                print(
+                    f"self-test failed: {label} rejected for wrong reason: "
+                    f"status={status} error={error} output={output}",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if disposition_line in output:
+                print(f"self-test failed: {label} emitted a disposition: {output}", file=sys.stderr)
+                raise SystemExit(1)
+            print(f"assert-vex self-test: {label} rejected: {reason}")
+
+        positive_exact_probes = (
+            (
+                "exact not-affected local amd64 production shape",
+                run_exact_fixture("local/ubi9-base-python:ci-amd64"),
+            ),
+            (
+                "exact not-affected local arm64 production shape",
+                run_exact_fixture("local/ubi9-base-python:ci-arm64", architecture="arm64"),
+            ),
+        )
+        for label, probe_result in positive_exact_probes:
+            require_exact_result(label, probe_result, accepted=True)
+
+        exact_published_product = f"{exact_surface.published_repository}@{amd64_child_digest}"
+        index_manifest_path.write_bytes(valid_index_bytes)
+        require_exact_result(
+            "exact not-affected published child production shape",
+            run_exact_fixture(
+                exact_published_product,
+                fixture_index_reference=reference_for_index(
+                    valid_index_bytes,
+                    exact_surface.published_repository,
+                ),
+                fixture_index_manifest=index_manifest_path,
+            ),
+            accepted=True,
+        )
+
+        wrong_package_document = copy.deepcopy(exact_document)
+        wrong_package_document["statements"][0]["products"][0]["subcomponents"][0]["@id"] = (
+            "pkg:rpm/redhat/util-linux-core@2.37.4-25.el9?epoch=0"
+        )
+        wrong_version_document = copy.deepcopy(exact_document)
+        wrong_version_document["statements"][0]["products"][0]["subcomponents"][0]["@id"] = (
+            "pkg:rpm/redhat/libuuid@2.37.4-26.el9?epoch=0"
+        )
+        wrong_policy_document = copy.deepcopy(exact_document)
+        wrong_policy_document["statements"][0]["products"][-1]["@id"] = PUBLISHED_MICRO_CHILD_POLICY_PRODUCT
+        negative_exact_probes = (
+            (
+                "exact not-affected wrong product",
+                run_exact_fixture("local/ubi9-base-python:ci-amd64-lookalike"),
+                "no exact in-tool not-affected disposition entry",
+            ),
+            (
+                "exact not-affected wrong scanner package",
+                run_exact_fixture("local/ubi9-base-python:ci-amd64", package="util-linux-core"),
+                "no exact in-tool not-affected disposition entry",
+            ),
+            (
+                "exact not-affected wrong scanner version",
+                run_exact_fixture("local/ubi9-base-python:ci-amd64", version="2.37.4-26.el9"),
+                "no exact in-tool not-affected disposition entry",
+            ),
+            (
+                "exact not-affected wrong subcomponent package",
+                run_exact_fixture(
+                    "local/ubi9-base-python:ci-amd64",
+                    document=wrong_package_document,
+                ),
+                "exact not-affected products and subcomponents must match the canonical ordered set",
+            ),
+            (
+                "exact not-affected wrong subcomponent version",
+                run_exact_fixture(
+                    "local/ubi9-base-python:ci-amd64",
+                    document=wrong_version_document,
+                ),
+                "exact not-affected products and subcomponents must match the canonical ordered set",
+            ),
+            (
+                "exact not-affected wrong statement authority",
+                run_exact_fixture(
+                    "local/ubi9-base-python:ci-amd64",
+                    authority_path="vex/cve-2026-53613.openvex.json",
+                ),
+                "statement source must be images/python/vex/cve-2026-53613.openvex.json",
+            ),
+            (
+                "exact not-affected wrong policy authority",
+                run_exact_fixture(
+                    "local/ubi9-base-python:ci-amd64",
+                    document=wrong_policy_document,
+                ),
+                "exact not-affected products and subcomponents must match the canonical ordered set",
+            ),
+        )
+        for label, probe_result, reason in negative_exact_probes:
+            require_exact_result(label, probe_result, accepted=False, reason=reason)
+        print(
+            "assert-vex self-test: exact not-affected matrix accepted 3/3 local/published production shapes "
+            "and rejected 7/7 wrong product/package/version/authority probes"
         )
 
         critical_trivy = copy.deepcopy(clean_trivy)

@@ -1230,6 +1230,7 @@ def check_required_files() -> None:
         "images/python/vex/README.md",
         "images/python/vex/cve-2026-11940.openvex.json",
         "images/python/vex/cve-2026-31790.openvex.json",
+        "images/python/vex/cve-2026-53613.openvex.json",
         "images/python/vex/sqlite-component-not-present.openvex.json",
         "images/python/tools/run-python-gates.sh",
         ".github/workflows/python-ci.yaml",
