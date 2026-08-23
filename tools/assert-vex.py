@@ -5252,8 +5252,9 @@ def self_test() -> int:
             fixture_product: str,
             *,
             architecture: str = "amd64",
+            package: str = "libuuid",
+            version: str = "2.37.4-25.el9",
         ) -> tuple[dict[str, Any], dict[str, Any]]:
-            package, version = exact_disposition.packages[0]
             trivy = copy.deepcopy(clean_trivy)
             grype = copy.deepcopy(clean_grype)
             bind_accept_reports(trivy, grype, fixture_product, architecture)
@@ -5278,6 +5279,10 @@ def self_test() -> int:
             fixture_product: str,
             *,
             architecture: str = "amd64",
+            package: str = "libuuid",
+            version: str = "2.37.4-25.el9",
+            document: dict[str, Any] | None = None,
+            authority_path: str = "images/python/vex/cve-2026-53613.openvex.json",
             fixture_index_reference: str | None = None,
             fixture_index_manifest: Path | None = None,
             injected_inventory_package: str | None = None,
@@ -5285,16 +5290,19 @@ def self_test() -> int:
             fixture_trivy, fixture_grype = exact_reports(
                 fixture_product,
                 architecture=architecture,
+                package=package,
+                version=version,
             )
             if injected_inventory_package is not None:
                 fixture_trivy["Results"][0]["Packages"].append(
                     {"Name": injected_inventory_package, "Version": "2.37.4-25.el9"}
                 )
-            fixture_vex_dir = tmp / Path(exact_surface.statement_path).parent
+            fixture_vex_dir = tmp / Path(authority_path).parent
             fixture_vex_dir.mkdir(parents=True, exist_ok=True)
             for old_document in fixture_vex_dir.glob("*.json"):
                 old_document.unlink()
-            write_json(fixture_vex_dir / Path(exact_surface.statement_path).name, exact_document)
+            selected_document = exact_document if document is None else document
+            write_json(fixture_vex_dir / Path(authority_path).name, selected_document)
             write_json(trivy_json, fixture_trivy)
             write_json(grype_json, fixture_grype)
             write_json(package_floor, clean_floor)
@@ -5390,9 +5398,71 @@ def self_test() -> int:
             reason=absence_contradiction,
         )
 
+        wrong_package_document = copy.deepcopy(exact_document)
+        wrong_package_document["statements"][0]["products"][0]["subcomponents"][0]["@id"] = (
+            "pkg:rpm/redhat/util-linux-core@2.37.4-25.el9?epoch=0"
+        )
+        wrong_version_document = copy.deepcopy(exact_document)
+        wrong_version_document["statements"][0]["products"][0]["subcomponents"][0]["@id"] = (
+            "pkg:rpm/redhat/libuuid@2.37.4-26.el9?epoch=0"
+        )
+        wrong_policy_document = copy.deepcopy(exact_document)
+        wrong_policy_document["statements"][0]["products"][-1]["@id"] = PUBLISHED_MICRO_CHILD_POLICY_PRODUCT
+        negative_exact_probes = (
+            (
+                "exact not-affected wrong product",
+                run_exact_fixture("local/ubi9-base-python:ci-amd64-lookalike"),
+                "no exact in-tool not-affected disposition entry",
+            ),
+            (
+                "exact not-affected wrong scanner package",
+                run_exact_fixture("local/ubi9-base-python:ci-amd64", package="util-linux-core"),
+                "no exact in-tool not-affected disposition entry",
+            ),
+            (
+                "exact not-affected wrong scanner version",
+                run_exact_fixture("local/ubi9-base-python:ci-amd64", version="2.37.4-26.el9"),
+                "no exact in-tool not-affected disposition entry",
+            ),
+            (
+                "exact not-affected wrong subcomponent package",
+                run_exact_fixture(
+                    "local/ubi9-base-python:ci-amd64",
+                    document=wrong_package_document,
+                ),
+                "exact not-affected products and subcomponents must match the canonical ordered set",
+            ),
+            (
+                "exact not-affected wrong subcomponent version",
+                run_exact_fixture(
+                    "local/ubi9-base-python:ci-amd64",
+                    document=wrong_version_document,
+                ),
+                "exact not-affected products and subcomponents must match the canonical ordered set",
+            ),
+            (
+                "exact not-affected wrong statement authority",
+                run_exact_fixture(
+                    "local/ubi9-base-python:ci-amd64",
+                    authority_path="vex/cve-2026-53613.openvex.json",
+                ),
+                "statement source must be images/python/vex/cve-2026-53613.openvex.json",
+            ),
+            (
+                "exact not-affected wrong policy authority",
+                run_exact_fixture(
+                    "local/ubi9-base-python:ci-amd64",
+                    document=wrong_policy_document,
+                ),
+                "exact not-affected products and subcomponents must match the canonical ordered set",
+            ),
+        )
+        for label, probe_result, reason in negative_exact_probes:
+            require_exact_result(label, probe_result, accepted=False, reason=reason)
+
         print(
             "assert-vex self-test: exact not-affected accepted 3/3 local/published production shapes "
-            "and rejected the required absent-package contradiction"
+            "and rejected the required absent-package contradiction plus 7/7 exact negative probes"
         )
 
         critical_trivy = copy.deepcopy(clean_trivy)

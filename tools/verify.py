@@ -10836,9 +10836,13 @@ ASSERT_VEX_SOURCE_FUNCTION_HASHES = {
     "digest_reference_parts": "3489448fc2b271bec570e344fe3ecc84bcb2ae75023bd0fcf13a56089203b7bf",
     "validate_index_child_evidence": "a7d882a03702ddc9ead0c8b193e7d992391cf9539cc03bd0389cd948a30a307c",
     "accept_and_track_surface_candidates": "18f6dfe0ac1058d0c1e62caf930cba39f00faeeca1b27236c935ccf9ce384e73",
+    "exact_not_affected_surface_candidates": "08f57d81a38f12cf3e51171245b9fb4bd236df84e932d718e187379552aff31a",
     "accept_and_track_product_eligible": "60d2bd902f5898f203bfdf65d1165e1340de94e4ba89ba32323d7750c004b0aa",
     "expected_accept_and_track_document": "2102b5dfc024b224c57d62626c7b8864d9ca7cfc4252c8c91611646d0747cde1",
+    "expected_exact_not_affected_document": "47571c302cce984ec05f8686b0a595f998137c14cf85c9b61197bcf28c058209",
+    "vulnerable_code_absence_rejection": "a8b7f4fb107f3c986cca725755d2d238f230c4a85516a1d9d818765f6f0d997e",
     "accepted_accept_and_track_statement": "fbb3a448c1062c6f15b7203e4648a2bea9d832588f7e4571958a0c271242f4d6",
+    "accepted_exact_not_affected_statement": "fd76aa6b2bc2b0bd82b179c0cde966f37f72272589d320827aa9c40b1cea998d",
     "assert_vex": "0077183069f678c99b53d1522465697e5c1ea69f1c48e989f4ba2b65f18f13d8",
     "parse_args": "768a750e9576669c4016edffbb7be993192698d595dd8c550ac2a8e429b4e8a1",
     "main": "a68074ebb31b0c7abe3e05570362d7051d880fbcfac23323c2e365e6fb91d764",
@@ -10915,6 +10919,24 @@ def check_accept_and_track_dispositions() -> None:
                 1,
             ),
             "assert-vex source constant BUILDKIT_ATTESTATION_TYPE must equal 'attestation-manifest'",
+        ),
+        (
+            "vulnerable-code absence justification guard",
+            script.replace(
+                'if statement.justification != "vulnerable_code_not_present":',
+                "if False:",
+                1,
+            ),
+            "assert-vex source function vulnerable_code_absence_rejection AST drifted",
+        ),
+        (
+            "exact not-affected canonical statement guard",
+            script.replace(
+                "rejection = exact_not_affected_statement_rejection(statement, disposition, surface)",
+                "rejection = None",
+                1,
+            ),
+            "assert-vex source function accepted_exact_not_affected_statement AST drifted",
         ),
     )
     for label, mutant, expected_reason in source_mutations:
@@ -11017,7 +11039,7 @@ def check_accept_and_track_dispositions() -> None:
     print(
         "accept-and-track locks: 3 canonical byte documents, exact 2-entry/3-surface model, "
         f"{document_mutations} document mutations, {documentation_mutations} documentation prose mutations "
-        "across 6 files, 7 literal constants/9 function ASTs, and 2/2 dormant expiries locked"
+        "across 6 files, 7 literal constants/13 function ASTs, and 2/2 dormant expiries locked"
     )
 
 

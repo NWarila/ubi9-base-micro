@@ -109,8 +109,8 @@ dormant. Every other unfixed HIGH or CRITICAL finding remains default-denied.
 Repository verification reports 3 canonical byte documents, the exact
 2-entry/3-surface model, 18 document mutations, 50 disposition documentation
 prose mutations across 6 files, and 2/2 dormant expiries locked. It exact-locks
-the published-child source through seven literal constants and nine current
-function ASTs. Its four
+the published-child and permanent-not-affected source through seven literal
+constants and 13 current function ASTs. Its four
 accept-and-track verifier mutations and four corresponding checker mutations
 are also required to fail. These counts describe repository self-tests, not
 production executions.
