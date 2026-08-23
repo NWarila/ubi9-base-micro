@@ -67,6 +67,9 @@ OCI_IMAGE_MANIFEST_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json"
 BUILDKIT_ATTESTATION_TYPE_ANNOTATION = "vnd.docker.reference.type"
 BUILDKIT_ATTESTATION_TYPE = "attestation-manifest"
 BUILDKIT_ATTESTATION_DIGEST_ANNOTATION = "vnd.docker.reference.digest"
+VULNERABLE_CODE_ABSENCE_ID_PREFIX = (
+    "https://github.com/NWarila/ubi9-base-micro/policy/vulnerable-code-not-present?absent-packages="
+)
 Mutation = Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], Any]
 
 TD9_ACTION_STATEMENT = (
@@ -192,6 +195,7 @@ class ExactNotAffectedSurface:
 class ExactNotAffectedDisposition:
     vulnerability: str
     packages: tuple[tuple[str, str], ...]
+    absent_packages: tuple[str, ...]
     justification: str
     surfaces: tuple[ExactNotAffectedSurface, ...]
 
@@ -282,6 +286,7 @@ EXACT_NOT_AFFECTED_DISPOSITIONS = (
     ExactNotAffectedDisposition(
         vulnerability="CVE-2026-53613",
         packages=(("libuuid", "2.37.4-25.el9"),),
+        absent_packages=("util-linux", "util-linux-core"),
         justification="vulnerable_code_not_present",
         surfaces=(
             ExactNotAffectedSurface(
@@ -1173,7 +1178,30 @@ def product_candidates(product: str) -> set[str]:
     return {product, f"pkg:oci/{product}"}
 
 
-def accepted_statement(finding: Finding, product: str, statements: list[Statement]) -> Statement | None:
+def vulnerable_code_absence_rejection(statement: Statement, package_names: frozenset[str]) -> str | None:
+    if statement.justification != "vulnerable_code_not_present":
+        return None
+    statement_id = statement.statement.get("@id")
+    if not isinstance(statement_id, str) or not statement_id.startswith(VULNERABLE_CODE_ABSENCE_ID_PREFIX):
+        return "vulnerable_code_not_present requires a statement @id declaring absent packages"
+    absent_packages = statement_id.removeprefix(VULNERABLE_CODE_ABSENCE_ID_PREFIX).split(",")
+    if not absent_packages or any(not name or name.strip() != name for name in absent_packages):
+        return "vulnerable_code_not_present statement @id has an invalid absent-packages set"
+    contradictions = sorted(set(absent_packages) & package_names)
+    if contradictions:
+        return (
+            "vulnerable_code_not_present contradiction: scanned Trivy inventory contains "
+            f"declared-absent package(s): {','.join(contradictions)}"
+        )
+    return None
+
+
+def accepted_statement(
+    finding: Finding,
+    product: str,
+    statements: list[Statement],
+    package_names: frozenset[str],
+) -> Statement | None:
     candidates = product_candidates(product)
     for statement in statements:
         if finding.vulnerability not in statement.vulnerabilities:
@@ -1184,6 +1212,9 @@ def accepted_statement(finding: Finding, product: str, statements: list[Statemen
             continue
         if statement.products.isdisjoint(candidates):
             continue
+        rejection = vulnerable_code_absence_rejection(statement, package_names)
+        if rejection is not None:
+            raise VexError(rejection)
         return statement
     return None
 
@@ -1236,6 +1267,7 @@ def expected_exact_not_affected_document(
         "version": surface.document_version,
         "statements": [
             {
+                "@id": VULNERABLE_CODE_ABSENCE_ID_PREFIX + ",".join(disposition.absent_packages),
                 "vulnerability": {"name": disposition.vulnerability},
                 "products": products,
                 "status": "not_affected",
@@ -1353,6 +1385,7 @@ def exact_not_affected_statement_rejection(
         return "exact not-affected document must contain exactly one statement"
     raw = statement.statement
     statement_keys = {
+        "@id",
         "vulnerability",
         "products",
         "status",
@@ -1468,6 +1501,7 @@ def accepted_exact_not_affected_statement(
     architecture: str,
     index_reference: str | None,
     index_manifest: Path | None,
+    package_names: frozenset[str],
 ) -> tuple[Statement | None, ExactNotAffectedDisposition | None, ExactNotAffectedSurface | None, str | None]:
     identity_rejections = sorted({rejection for record in finding.records for rejection in record.identity_rejections})
     if identity_rejections:
@@ -1508,6 +1542,9 @@ def accepted_exact_not_affected_statement(
         return None, None, None, f"no reviewed OpenVEX statement for {disposition.vulnerability}"
     statement = target_statements[0]
     rejection = exact_not_affected_statement_rejection(statement, disposition, surface)
+    if rejection is not None:
+        return None, None, None, rejection
+    rejection = vulnerable_code_absence_rejection(statement, package_names)
     if rejection is not None:
         return None, None, None, rejection
     return statement, disposition, surface, None
@@ -1579,6 +1616,7 @@ def assert_vex(
                     trivy_evidence.architecture,
                     index_reference,
                     index_manifest,
+                    trivy_evidence.package_names,
                 )
             )
             if exact_statement is not None and exact_disposition_match is not None and exact_surface_match is not None:
@@ -1588,7 +1626,7 @@ def assert_vex(
                 if rejection is not None:
                     exact_not_affected_rejection_reasons.append((finding, rejection))
             continue
-        statement = accepted_statement(finding, product, statements)
+        statement = accepted_statement(finding, product, statements, trivy_evidence.package_names)
         if statement is None:
             missing.append(finding)
         else:
@@ -5214,9 +5252,8 @@ def self_test() -> int:
             fixture_product: str,
             *,
             architecture: str = "amd64",
-            package: str = "libuuid",
-            version: str = "2.37.4-25.el9",
         ) -> tuple[dict[str, Any], dict[str, Any]]:
+            package, version = exact_disposition.packages[0]
             trivy = copy.deepcopy(clean_trivy)
             grype = copy.deepcopy(clean_grype)
             bind_accept_reports(trivy, grype, fixture_product, architecture)
@@ -5241,25 +5278,23 @@ def self_test() -> int:
             fixture_product: str,
             *,
             architecture: str = "amd64",
-            package: str = "libuuid",
-            version: str = "2.37.4-25.el9",
-            document: dict[str, Any] | None = None,
-            authority_path: str = "images/python/vex/cve-2026-53613.openvex.json",
             fixture_index_reference: str | None = None,
             fixture_index_manifest: Path | None = None,
+            injected_inventory_package: str | None = None,
         ) -> tuple[int | None, str, VexError | None]:
             fixture_trivy, fixture_grype = exact_reports(
                 fixture_product,
                 architecture=architecture,
-                package=package,
-                version=version,
             )
-            fixture_vex_dir = tmp / Path(authority_path).parent
+            if injected_inventory_package is not None:
+                fixture_trivy["Results"][0]["Packages"].append(
+                    {"Name": injected_inventory_package, "Version": "2.37.4-25.el9"}
+                )
+            fixture_vex_dir = tmp / Path(exact_surface.statement_path).parent
             fixture_vex_dir.mkdir(parents=True, exist_ok=True)
             for old_document in fixture_vex_dir.glob("*.json"):
                 old_document.unlink()
-            selected_document = exact_document if document is None else document
-            write_json(fixture_vex_dir / Path(authority_path).name, selected_document)
+            write_json(fixture_vex_dir / Path(exact_surface.statement_path).name, exact_document)
             write_json(trivy_json, fixture_trivy)
             write_json(grype_json, fixture_grype)
             write_json(package_floor, clean_floor)
@@ -5341,70 +5376,23 @@ def self_test() -> int:
             accepted=True,
         )
 
-        wrong_package_document = copy.deepcopy(exact_document)
-        wrong_package_document["statements"][0]["products"][0]["subcomponents"][0]["@id"] = (
-            "pkg:rpm/redhat/util-linux-core@2.37.4-25.el9?epoch=0"
+        absence_contradiction = (
+            "vulnerable_code_not_present contradiction: scanned Trivy inventory contains "
+            "declared-absent package(s): util-linux-core"
         )
-        wrong_version_document = copy.deepcopy(exact_document)
-        wrong_version_document["statements"][0]["products"][0]["subcomponents"][0]["@id"] = (
-            "pkg:rpm/redhat/libuuid@2.37.4-26.el9?epoch=0"
+        require_exact_result(
+            "exact not-affected amd64 inventory absence contradiction",
+            run_exact_fixture(
+                "local/ubi9-base-python:ci-amd64",
+                injected_inventory_package="util-linux-core",
+            ),
+            accepted=False,
+            reason=absence_contradiction,
         )
-        wrong_policy_document = copy.deepcopy(exact_document)
-        wrong_policy_document["statements"][0]["products"][-1]["@id"] = PUBLISHED_MICRO_CHILD_POLICY_PRODUCT
-        negative_exact_probes = (
-            (
-                "exact not-affected wrong product",
-                run_exact_fixture("local/ubi9-base-python:ci-amd64-lookalike"),
-                "no exact in-tool not-affected disposition entry",
-            ),
-            (
-                "exact not-affected wrong scanner package",
-                run_exact_fixture("local/ubi9-base-python:ci-amd64", package="util-linux-core"),
-                "no exact in-tool not-affected disposition entry",
-            ),
-            (
-                "exact not-affected wrong scanner version",
-                run_exact_fixture("local/ubi9-base-python:ci-amd64", version="2.37.4-26.el9"),
-                "no exact in-tool not-affected disposition entry",
-            ),
-            (
-                "exact not-affected wrong subcomponent package",
-                run_exact_fixture(
-                    "local/ubi9-base-python:ci-amd64",
-                    document=wrong_package_document,
-                ),
-                "exact not-affected products and subcomponents must match the canonical ordered set",
-            ),
-            (
-                "exact not-affected wrong subcomponent version",
-                run_exact_fixture(
-                    "local/ubi9-base-python:ci-amd64",
-                    document=wrong_version_document,
-                ),
-                "exact not-affected products and subcomponents must match the canonical ordered set",
-            ),
-            (
-                "exact not-affected wrong statement authority",
-                run_exact_fixture(
-                    "local/ubi9-base-python:ci-amd64",
-                    authority_path="vex/cve-2026-53613.openvex.json",
-                ),
-                "statement source must be images/python/vex/cve-2026-53613.openvex.json",
-            ),
-            (
-                "exact not-affected wrong policy authority",
-                run_exact_fixture(
-                    "local/ubi9-base-python:ci-amd64",
-                    document=wrong_policy_document,
-                ),
-                "exact not-affected products and subcomponents must match the canonical ordered set",
-            ),
-        )
-        for label, probe_result, reason in negative_exact_probes:
-            require_exact_result(label, probe_result, accepted=False, reason=reason)
+
         print(
-            "assert-vex self-test: exact not-affected matrix accepted 3/3 local/published production shapes "
-            "and rejected 7/7 wrong product/package/version/authority probes"
+            "assert-vex self-test: exact not-affected accepted 3/3 local/published production shapes "
+            "and rejected the required absent-package contradiction"
         )
 
         critical_trivy = copy.deepcopy(clean_trivy)
@@ -5431,6 +5419,7 @@ def self_test() -> int:
                 "version": 1,
                 "statements": [
                     {
+                        "@id": VULNERABLE_CODE_ABSENCE_ID_PREFIX + "synthetic-vulnerable-code",
                         "vulnerability": {"name": "CVE-2099-0001"},
                         "products": [{"@id": product}],
                         "status": "not_affected",

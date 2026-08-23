@@ -127,3 +127,8 @@ same exact `libuuid` subcomponent. The gate requires the canonical statement
 and package/version pair for local products; a published child additionally
 requires repository-correct, digest-verified OCI index evidence. This permanent
 not-affected disposition is not tracked technical debt.
+
+For `vulnerable_code_not_present`, this repository uses the OpenVEX statement
+`@id` query `absent-packages=` as a comma-separated, machine-readable set of RPM
+package names that must be absent from Trivy's scanned inventory. A present
+declared-absent package contradicts the authorization and fails the gate.

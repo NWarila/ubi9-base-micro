@@ -10823,6 +10823,67 @@ def check_accept_and_track_checker_mutation_self_test() -> None:
     print(f"accept-and-track checker mutation probes: {len(guards)}/{len(guards)} rejected")
 
 
+ASSERT_VEX_SOURCE_CONSTANTS = {
+    "PUBLISHED_PYTHON_REPOSITORY": PYTHON_PUBLISHED_REPOSITORY,
+    "PUBLISHED_PYTHON_CHILD_POLICY_PRODUCT": PYTHON_PUBLISHED_CHILD_POLICY_PRODUCT,
+    "OCI_IMAGE_INDEX_MEDIA_TYPE": "application/vnd.oci.image.index.v1+json",
+    "OCI_IMAGE_MANIFEST_MEDIA_TYPE": "application/vnd.oci.image.manifest.v1+json",
+    "BUILDKIT_ATTESTATION_TYPE_ANNOTATION": "vnd.docker.reference.type",
+    "BUILDKIT_ATTESTATION_TYPE": "attestation-manifest",
+    "BUILDKIT_ATTESTATION_DIGEST_ANNOTATION": "vnd.docker.reference.digest",
+}
+ASSERT_VEX_SOURCE_FUNCTION_HASHES = {
+    "digest_reference_parts": "3489448fc2b271bec570e344fe3ecc84bcb2ae75023bd0fcf13a56089203b7bf",
+    "validate_index_child_evidence": "a7d882a03702ddc9ead0c8b193e7d992391cf9539cc03bd0389cd948a30a307c",
+    "accept_and_track_surface_candidates": "18f6dfe0ac1058d0c1e62caf930cba39f00faeeca1b27236c935ccf9ce384e73",
+    "accept_and_track_product_eligible": "60d2bd902f5898f203bfdf65d1165e1340de94e4ba89ba32323d7750c004b0aa",
+    "expected_accept_and_track_document": "2102b5dfc024b224c57d62626c7b8864d9ca7cfc4252c8c91611646d0747cde1",
+    "accepted_accept_and_track_statement": "fbb3a448c1062c6f15b7203e4648a2bea9d832588f7e4571958a0c271242f4d6",
+    "assert_vex": "0077183069f678c99b53d1522465697e5c1ea69f1c48e989f4ba2b65f18f13d8",
+    "parse_args": "768a750e9576669c4016edffbb7be993192698d595dd8c550ac2a8e429b4e8a1",
+    "main": "a68074ebb31b0c7abe3e05570362d7051d880fbcfac23323c2e365e6fb91d764",
+}
+
+
+def assert_vex_source_lock_errors(source: str) -> list[str]:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return [f"assert-vex source does not parse: {exc}"]
+    assignments = {name: [] for name in ASSERT_VEX_SOURCE_CONSTANTS}
+    functions = {name: [] for name in ASSERT_VEX_SOURCE_FUNCTION_HASHES}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in assignments:
+                    assignments[target.id].append(node)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in functions:
+            functions[node.name].append(node)
+
+    errors: list[str] = []
+    for name, expected in ASSERT_VEX_SOURCE_CONSTANTS.items():
+        sites = assignments[name]
+        if len(sites) != 1:
+            errors.append(f"assert-vex source constant {name} must be assigned exactly once")
+            continue
+        try:
+            actual = ast.literal_eval(sites[0].value)
+        except (ValueError, TypeError):
+            errors.append(f"assert-vex source constant {name} must be a literal")
+            continue
+        if actual != expected:
+            errors.append(f"assert-vex source constant {name} must equal {expected!r}")
+    for name, expected in ASSERT_VEX_SOURCE_FUNCTION_HASHES.items():
+        sites = functions[name]
+        if len(sites) != 1:
+            errors.append(f"assert-vex source function {name} must be defined exactly once")
+            continue
+        actual = hashlib.sha256(ast.dump(sites[0], include_attributes=False).encode()).hexdigest()
+        if actual != expected:
+            errors.append(f"assert-vex source function {name} AST drifted")
+    return errors
+
+
 def check_accept_and_track_dispositions() -> None:
     canonical_error: str | None = None
     for path, expected_document in ACCEPT_AND_TRACK_CANONICAL_DOCUMENTS.items():
@@ -10836,6 +10897,32 @@ def check_accept_and_track_dispositions() -> None:
 
     runtime_model = _runtime_accept_and_track_model()
     script = read("tools/assert-vex.py")
+    source_errors = assert_vex_source_lock_errors(script)
+    require(not source_errors, "; ".join(source_errors))
+    source_mutations = (
+        (
+            "paired index-evidence guard",
+            script.replace("if (index_reference is None) != (index_manifest is None):", "if False:", 1),
+            "assert-vex source function accept_and_track_surface_candidates AST drifted",
+        ),
+        (
+            "BuildKit attestation type",
+            script.replace(
+                'BUILDKIT_ATTESTATION_TYPE = "attestation-manifest"',
+                'BUILDKIT_ATTESTATION_TYPE = "wrong"',
+                1,
+            ),
+            "assert-vex source constant BUILDKIT_ATTESTATION_TYPE must equal 'attestation-manifest'",
+        ),
+    )
+    for label, mutant, expected_reason in source_mutations:
+        require(mutant != script, f"assert-vex source mutation is a no-op: {label}")
+        mutation_errors = assert_vex_source_lock_errors(mutant)
+        require(
+            mutation_errors == [expected_reason],
+            f"assert-vex source mutation {label} returned {mutation_errors!r}",
+        )
+        print(f"assert-vex source mutation rejected: {label}: {expected_reason}")
     require("published_child_eligible" not in script, "assert-vex must not retain shared published-child eligibility")
     for marker in (
         "multiple exact in-tool accept-and-track authorization matches",
@@ -10928,7 +11015,7 @@ def check_accept_and_track_dispositions() -> None:
     print(
         "accept-and-track locks: 3 canonical byte documents, exact 2-entry/3-surface model, "
         f"{document_mutations} document mutations, {documentation_mutations} documentation prose mutations "
-        "across 6 files, and 2/2 dormant expiries locked"
+        "across 6 files, 7 literal constants/9 function ASTs, and 2/2 dormant expiries locked"
     )
 
 
