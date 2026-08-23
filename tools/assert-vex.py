@@ -4757,7 +4757,37 @@ def self_test() -> int:
         td9_disposition, td9_surface = surface_pairs[0]
         openssl_disposition = ACCEPT_AND_TRACK_DISPOSITIONS[1]
         openssl_python_surface, openssl_micro_surface = openssl_disposition.surfaces
+        python_policy_in_micro_document = expected_accept_and_track_document(
+            openssl_disposition,
+            openssl_micro_surface,
+        )
+        python_policy_in_micro_document["statements"][0]["products"][-1]["@id"] = (
+            "https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-python/published-platform-children"
+        )
+        micro_policy_in_python_document = expected_accept_and_track_document(
+            openssl_disposition,
+            openssl_python_surface,
+        )
+        micro_policy_in_python_document["statements"][0]["products"][-1]["@id"] = (
+            "https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-micro/published-platform-children"
+        )
         cross_authority_probes = (
+            (
+                "Python policy IRI substituted into micro document",
+                openssl_micro_surface,
+                openssl_micro_surface.local_products[0],
+                openssl_micro_surface,
+                python_policy_in_micro_document,
+                "accept-and-track products and subcomponents must match the canonical ordered set",
+            ),
+            (
+                "micro policy IRI substituted into Python document",
+                openssl_python_surface,
+                openssl_python_surface.local_products[0],
+                openssl_python_surface,
+                micro_policy_in_python_document,
+                "accept-and-track products and subcomponents must match the canonical ordered set",
+            ),
             (
                 "Python statement under micro authority",
                 openssl_micro_surface,
