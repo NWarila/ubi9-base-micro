@@ -83,6 +83,12 @@ if ! sudo podman image exists "${podman_target}" > /dev/null 2>&1; then
   echo "Podman scan target could not be resolved for ${image_ref}" >&2
   exit 1
 fi
+resolved_arch="$(sudo podman image inspect --format '{{.Architecture}}' "${podman_target}" 2> /dev/null || true)"
+resolved_os="$(sudo podman image inspect --format '{{.Os}}' "${podman_target}" 2> /dev/null || true)"
+if [[ "${resolved_arch}" != "${arch}" || "${resolved_os}" != "linux" ]]; then
+  echo "Podman scan target platform mismatch for ${image_ref}: expected linux/${arch}, observed ${resolved_os:-<unknown>}/${resolved_arch:-<unknown>}" >&2
+  exit 1
+fi
 
 arf="${out_dir}/base-python.${arch}.stig.arf.xml"
 report="${out_dir}/base-python.${arch}.stig.report.html"
