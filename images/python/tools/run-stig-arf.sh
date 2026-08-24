@@ -85,7 +85,7 @@ if ! sudo podman image exists "${podman_target}" >/dev/null 2>&1; then
 fi
 inspect_observation="$(sudo podman image inspect --format '{{.Id}} {{.Architecture}} {{.Os}}' "${podman_target}" 2>/dev/null || true)"
 read -r resolved_image_id resolved_arch resolved_os inspect_extra <<<"${inspect_observation}"
-if [[ ! "${resolved_image_id:-}" =~ ^sha256:[0-9a-f]{64}$ || -n "${inspect_extra:-}" || "${inspect_observation}" == *$'\n'* ]]; then
+if [[ ! "${resolved_image_id:-}" =~ ^(sha256:)?[0-9a-f]{64}$ || -n "${inspect_extra:-}" || "${inspect_observation}" == *$'\n'* ]]; then
   echo "Podman scan target has an invalid image ID for ${image_ref}: ${resolved_image_id:-<unknown>}" >&2
   exit 1
 fi
