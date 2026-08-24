@@ -63,12 +63,10 @@ python "${repo_root}/tools/assert-stig-tailoring.py" \
 
 podman_target="${image_ref}"
 if ! sudo podman image exists "${image_ref}" > /dev/null 2>&1; then
-  if docker image inspect "${image_ref}" > /dev/null 2>&1; then
-    if [[ "${image_ref}" == *@sha256:* ]]; then
-      podman_target="localhost/stig-scan:${image_ref##*@sha256:}"
-      docker tag "${image_ref}" "${podman_target}"
-    fi
-    docker save "${podman_target}" | sudo podman load
+  if [[ "${image_ref}" == *@sha256:* ]]; then
+    sudo podman pull --arch "${arch}" "${image_ref}"
+  elif docker image inspect "${image_ref}" > /dev/null 2>&1; then
+    docker save "${image_ref}" | sudo podman load
   else
     sudo podman pull --arch "${arch}" "${image_ref}"
   fi
