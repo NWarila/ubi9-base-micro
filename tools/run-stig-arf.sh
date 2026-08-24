@@ -10,7 +10,7 @@
 set -euo pipefail
 
 usage() {
-  cat <<'USAGE'
+  cat << 'USAGE'
 Usage: tools/run-stig-arf.sh <image-ref> <arch> <platform> <output-dir>
 
 Runs the image-scoped RHEL9 STIG tailoring against an image with oscap-podman,
@@ -62,21 +62,21 @@ python "${repo_root}/tools/assert-stig-tailoring.py" \
   --datastream "${datastream}"
 
 podman_target="${image_ref}"
-if ! sudo podman image exists "${image_ref}" >/dev/null 2>&1; then
+if ! sudo podman image exists "${image_ref}" > /dev/null 2>&1; then
   if [[ "${image_ref}" == *@sha256:* ]]; then
     sudo podman pull --arch "${arch}" "${image_ref}"
-  elif docker image inspect "${image_ref}" >/dev/null 2>&1; then
+  elif docker image inspect "${image_ref}" > /dev/null 2>&1; then
     docker save "${image_ref}" | sudo podman load
   else
     sudo podman pull --arch "${arch}" "${image_ref}"
   fi
 fi
-if ! sudo podman image exists "${podman_target}" >/dev/null 2>&1; then
+if ! sudo podman image exists "${podman_target}" > /dev/null 2>&1; then
   echo "Podman scan target could not be resolved for ${image_ref}" >&2
   exit 1
 fi
-inspect_observation="$(sudo podman image inspect --format '{{.Id}} {{.Architecture}} {{.Os}}' "${podman_target}" 2>/dev/null || true)"
-read -r resolved_image_id resolved_arch resolved_os inspect_extra <<<"${inspect_observation}"
+inspect_observation="$(sudo podman image inspect --format '{{.Id}} {{.Architecture}} {{.Os}}' "${podman_target}" 2> /dev/null || true)"
+read -r resolved_image_id resolved_arch resolved_os inspect_extra <<< "${inspect_observation}"
 if [[ ! "${resolved_image_id:-}" =~ ^(sha256:)?[0-9a-f]{64}$ || -n "${inspect_extra:-}" || "${inspect_observation}" == *$'\n'* ]]; then
   echo "Podman scan target has an invalid image ID for ${image_ref}: ${resolved_image_id:-<unknown>}" >&2
   exit 1
@@ -97,7 +97,7 @@ identity_container_id=""
 
 cleanup_identity_container() {
   if [[ -n "${identity_container_id}" ]]; then
-    sudo podman rm "${identity_container_id}" >/dev/null 2>&1
+    sudo podman rm "${identity_container_id}" > /dev/null 2>&1
   fi
 }
 trap cleanup_identity_container EXIT
@@ -121,7 +121,7 @@ fi
 
 identity_container_id="$(sudo podman create "${podman_target}" /stig-rootfs-export)"
 sudo podman export --output "${rootfs_tar}" "${identity_container_id}"
-sudo podman rm "${identity_container_id}" >/dev/null
+sudo podman rm "${identity_container_id}" > /dev/null
 identity_container_id=""
 
 python "${repo_root}/tools/assert-rootfs-identity.py" \
