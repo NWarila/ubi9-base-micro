@@ -359,3 +359,18 @@ VEX-side policy is the production boundary for these shapes. Tightening
 `tools/assert-vex.py`, or adding an equivalent strict resolver before the micro
 gate, remains separate follow-up work. Production behavior for the new micro
 authorization remains unproved until the merge-triggered run.
+
+## TD-13: STIG scan-target platform-guard limits
+
+The STIG scan-target guard compares the image config blob's `.Architecture` and
+`.Os`; it does not compare the selected index descriptor's platform with that
+config or inspect layer binaries. A broken or hostile image producer could
+therefore supply a config that disagrees with the rootfs. This is an accepted
+limitation because these images come from this repository's own pinned,
+identity-asserted builder.
+
+The guard also does not validate the `platform` argument or the ARM `.Variant`.
+This is an accepted limitation because both real call sites pass consistent
+`linux/amd64` or `linux/arm64` values. Finally, the guard rejects non-canonical
+architecture aliases such as `aarch64` and `x86_64`; this is accepted because
+BuildKit emits the canonical `amd64` and `arm64` values.
