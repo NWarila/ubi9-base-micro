@@ -13,7 +13,7 @@
 # direct_rpm: keyutils-libs-1.6.3-1.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/k/keyutils-libs-1.6.3-1.el9.x86_64.rpm|96d75824948387a884d206865db534cd3d46f32422efcb020c20060b59edb27c
 # direct_rpm: krb5-libs-1.21.1-10.el9_8.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/k/krb5-libs-1.21.1-10.el9_8.x86_64.rpm|8906be9f2d414c5f4e1218db0c94955c2b3394b43a04b7dbcc2ef66c4340ebc6
 # direct_rpm: libacl-2.4.0-1.el9_8.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libacl-2.4.0-1.el9_8.x86_64.rpm|a81fb7a4d7c946e9bd886ee3c471a4b5040dedbb8ffb2a388120b2094be93cc8
-# direct_rpm: libattr-2.5.1-3.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libattr-2.5.1-3.el9.x86_64.rpm|6519f028915fbd7ee0474f0bf4e98e35f04b5d0cf7be9f66c0cb9eafac0b8c5a
+# direct_rpm: libattr-2.6.0-1.el9_8.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libattr-2.6.0-1.el9_8.x86_64.rpm|9e37537f690c748f7f05faa80966072f118ec722e38ef332fe19cf22b087349f
 # direct_rpm: libcap-2.48-10.el9_8.1.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libcap-2.48-10.el9_8.1.x86_64.rpm|d4805439b10fa551b7535cf30ca28d4d5862132c9c429b2b31221bea7f43263a
 # direct_rpm: libcom_err-1.46.5-8.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libcom_err-1.46.5-8.el9.x86_64.rpm|b7593ee2d841c69573d8ed553b7416ef727b2c77c0473416a5dadf4b567bf547
 # direct_rpm: libffi-3.4.2-8.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/l/libffi-3.4.2-8.el9.x86_64.rpm|dde0012a94c6f3825e605b095b15767d89c2b87a5da097348310d7e87721c645
@@ -32,12 +32,12 @@
 # direct_rpm: pcre-8.44-4.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/p/pcre-8.44-4.el9.x86_64.rpm|e9ddc7d57d4f6e7400b66bcc78b9bafc1f05630e3e0d2a14000bc907f429ddc4
 # direct_rpm: pcre2-10.40-6.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/p/pcre2-10.40-6.el9.x86_64.rpm|75db1e5a50e7b1794d7ba18212d95cd2684559da9e7c52eee46490302c7f24dd
 # direct_rpm: pcre2-syntax-10.40-6.el9.noarch|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/p/pcre2-syntax-10.40-6.el9.noarch.rpm|d386b5e9b3a4b077b2ba143882e605750855dd3354f13c55fa12ed26908cb442
-# direct_rpm: python3.12-3.12.13-3.el9_8.1.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/p/python3.12-3.12.13-3.el9_8.1.x86_64.rpm|e3824eb610d0a5c444a9c49462dcd3c31e9ef2ce0b6f42f5b75e0d492a64deb6
-# direct_rpm: python3.12-libs-3.12.13-3.el9_8.1.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/p/python3.12-libs-3.12.13-3.el9_8.1.x86_64.rpm|2135bca6d950ad5e8b3cc18e370fdeeedbe7bff413362247b28e0336d3bccb9d
+# direct_rpm: python3.12-3.12.14-1.el9_8.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/p/python3.12-3.12.14-1.el9_8.x86_64.rpm|10640d8db1555fb7ae4e63c62be4b8f341032fb3ee52cc7176047438ab893b1f
+# direct_rpm: python3.12-libs-3.12.14-1.el9_8.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/p/python3.12-libs-3.12.14-1.el9_8.x86_64.rpm|0eaade47a20924ba0fe3fb0a93898e053772248793069f40c1ba80c5115fddbb
 # direct_rpm: python3.12-pip-wheel-23.2.1-5.el9.noarch|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/p/python3.12-pip-wheel-23.2.1-5.el9.noarch.rpm|b3271e01edab5152b4f62515faca4c171fb842b4e871f7d30651a076de621b0e
 # direct_rpm: readline-8.1-4.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/r/readline-8.1-4.el9.x86_64.rpm|01bf315b3bc44c28515c4d33d49173b23d7979d2a09b7b15f749d434b60851e6
 # direct_rpm: sed-4.8-10.el9.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/s/sed-4.8-10.el9.x86_64.rpm|45e246453dc9eb1bad6a71c6f349aad1b1b2e1bf3ec645b80f0ed04fe69c960e
-# direct_rpm: sqlite-libs-3.34.1-10.el9_8.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/s/sqlite-libs-3.34.1-10.el9_8.x86_64.rpm|7dc2202e08184890c851dcb2218a9abce14da150f12dfb8663ca306416e1d8d4
+# direct_rpm: sqlite-libs-3.34.1-11.el9_8.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/s/sqlite-libs-3.34.1-11.el9_8.x86_64.rpm|e5c20e933ec01f746a6c59a94cb99f46c6138dab3f387f0d02dab47f356e2e98
 # direct_rpm: xz-libs-5.2.5-8.el9_0.x86_64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/x/xz-libs-5.2.5-8.el9_0.x86_64.rpm|de263f880a4394f04b5e84254ba0a88d781b5bd63665c9e028bc10351490c982
 bash-5.1.8-9.el9.x86_64|no|bash|0|5.1.8|9.el9|x86_64|b8f0eef3902e37be3f0a12862b09e50f0b0fd069abc4a432a2352fc49fc03363|57e93b1739cc3512f9f29dcaa8a38055
 bzip2-libs-1.0.8-11.el9.x86_64|yes|bzip2-libs|0|1.0.8|11.el9|x86_64|07d66939f4e0de54b07a32d06260053118c05a8d7a038983376900b99fd284a3|3a6f4ccb134d5da6cdf27dc0787ece78
@@ -51,7 +51,7 @@ grep-3.6-5.el9.x86_64|no|grep|0|3.6|5.el9|x86_64|b9cdbebee23363176fbf362e3e00686
 keyutils-libs-1.6.3-1.el9.x86_64|yes|keyutils-libs|0|1.6.3|1.el9|x86_64|adc06145bec57dd4852528b4a202b85ee2ad1a23126f26510d71c9935dc8d369|b54e3142740b6e285108b7ef32ce1f21
 krb5-libs-1.21.1-10.el9_8.x86_64|yes|krb5-libs|0|1.21.1|10.el9_8|x86_64|d0216ab04cad2bcf550e8ba8b5b8e9d9d8bd400048bb7cafff6f2df3bb110aa3|c3955173677197cbd55f3b5b499f8732
 libacl-2.4.0-1.el9_8.x86_64|no|libacl|0|2.4.0|1.el9_8|x86_64|354ea4cbdd6dad393ae69bbc39b7f47a314dd9e35ef233488c02238763808cae|6661a94ed261e0b37a99cdc218b9d57f
-libattr-2.5.1-3.el9.x86_64|no|libattr|0|2.5.1|3.el9|x86_64|d9b217c8d2daa72744e1989ff6c4576b58b0b930cdc4807c95f854dc07240a14|52ccab71d2ac43945dc5d604e96548c4
+libattr-2.6.0-1.el9_8.x86_64|no|libattr|0|2.6.0|1.el9_8|x86_64|fac37a5b343f0bd5291f16a0797137e028de293c6a227139da0be68492095b73|68ea88200e775be067f70799666366d0
 libcap-2.48-10.el9_8.1.x86_64|no|libcap|0|2.48|10.el9_8.1|x86_64|21de2f3b59f83c4020e2e2f23f4cdd32c409d482c7e85b740cbc35a4f0d2f23d|4573ce501e01f8d6122985fc42ddd2a1
 libcom_err-1.46.5-8.el9.x86_64|yes|libcom_err|0|1.46.5|8.el9|x86_64|6a181ed6f3d234a18ac2482a1dd21ecfb4eb1c6596845d85410659a19ac5e818|a0c169c792f79fe5f94e325c14c1395e
 libffi-3.4.2-8.el9.x86_64|yes|libffi|0|3.4.2|8.el9|x86_64|8669a3080103e571e9ec5695f1d466e9a7bb1ae8162b9f720d878b5221536212|1f03e75008a5fd3adfa0ed87b078fb4a
@@ -70,10 +70,10 @@ ncurses-libs-6.2-12.20210508.el9.x86_64|yes|ncurses-libs|0|6.2|12.20210508.el9|x
 pcre-8.44-4.el9.x86_64|no|pcre|0|8.44|4.el9|x86_64|8668fbdd2c67b998f6a4ffef3dd2e28c2f89e53bddf4d8aa688ec312a3443bdb|48ed4c003ccd17ed52bc12bec2416c1d
 pcre2-10.40-6.el9.x86_64|yes|pcre2|0|10.40|6.el9|x86_64|29a0e11f7660c86d8aa75f0ead82e55f08cae6cec5563b967bd06cac58e02539|6bad562d1fe17248c677891016d5c18e
 pcre2-syntax-10.40-6.el9.noarch|yes|pcre2-syntax|0|10.40|6.el9|noarch|95100a5fab111a468d8dc8bc1e1bd98c84a377bb182514fe410aa66025fc81d5|e16f2b328f130d319f08c995f4d3315b
-python3.12-3.12.13-3.el9_8.1.x86_64|yes|python3.12|0|3.12.13|3.el9_8.1|x86_64|4e0906c31e81f1acc64d831df5aebc71dcd5a8b53394598972db6efa34ae037e|dfa367fe1b7f199c41abc564a71f3af4
-python3.12-libs-3.12.13-3.el9_8.1.x86_64|yes|python3.12-libs|0|3.12.13|3.el9_8.1|x86_64|8bb31c187d963e730701383baaf0dc8b21fe24aa5379aeb5368a2fc44591c8e1|a678406955f7201c85dd0fa1ebbd53b8
+python3.12-3.12.14-1.el9_8.x86_64|yes|python3.12|0|3.12.14|1.el9_8|x86_64|8a584626d10e6904e64305aee395bba79ab0197ff3fbda2a2bc886404741e1df|01ef928eb754bc718d83e5ddf1b3d5b8
+python3.12-libs-3.12.14-1.el9_8.x86_64|yes|python3.12-libs|0|3.12.14|1.el9_8|x86_64|4efcdb9f1a31f68e8aa73fed98b670eacd99b8e59086e3363f1f2ead9cf79c25|560ff9ceea6e22cad595ea1ca8ff4c2f
 python3.12-pip-wheel-23.2.1-5.el9.noarch|yes|python3.12-pip-wheel|0|23.2.1|5.el9|noarch|3fa760910ea0dc5a9057805a6af565d0c24c9a32028fe1f59955f2fe067f3e4b|a54442064cd31c734bdcd395a759784d
 readline-8.1-4.el9.x86_64|yes|readline|0|8.1|4.el9|x86_64|483e285d0683d4270ebc41655bb333c2f9aaac33074c34920aec4ee4ae5fbd54|7478efacfb9b7c24b4d936e7268503e7
 sed-4.8-10.el9.x86_64|no|sed|0|4.8|10.el9|x86_64|91106972102993984c14f2285146575348678a13c36b3aefd6abca8e21d3bfbf|df10629bbbf80b74ea258f2a9e751825
-sqlite-libs-3.34.1-10.el9_8.x86_64|no|sqlite-libs|0|3.34.1|10.el9_8|x86_64|8fdfdb3ab2ab86c4438c677159eadb68590c2c6e21aacd1534e1db5ed06fa009|421620c84f09b3300b9ff4ed669cce33
+sqlite-libs-3.34.1-11.el9_8.x86_64|no|sqlite-libs|0|3.34.1|11.el9_8|x86_64|f3b5064f043636b1bc688acb11cbb43817f8a5f54f3a5d9e1c00efb5f098fd38|880a4ef7e5b6e28a73466c328f98a7bc
 xz-libs-5.2.5-8.el9_0.x86_64|yes|xz-libs|0|5.2.5|8.el9_0|x86_64|e363c02a2cfcd67ba168033aba85cbfda36257d0b7ae8531dbc313f0acbfda42|61e8a8681c25f1ed8b22cd560ac1da7c
