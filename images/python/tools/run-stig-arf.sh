@@ -69,13 +69,31 @@ python "${repo_root}/tools/assert-stig-tailoring.py" \
   --controls-yaml "${controls}" \
   --datastream "${datastream}"
 
+podman_target="${image_ref}"
 if ! sudo podman image exists "${image_ref}" > /dev/null 2>&1; then
-  if docker image inspect "${image_ref}" > /dev/null 2>&1; then
+  if [[ "${image_ref}" == *@sha256:* ]]; then
+    sudo podman pull --arch "${arch}" "${image_ref}"
+  elif docker image inspect "${image_ref}" > /dev/null 2>&1; then
     docker save "${image_ref}" | sudo podman load
   else
     sudo podman pull --arch "${arch}" "${image_ref}"
   fi
 fi
+if ! sudo podman image exists "${podman_target}" > /dev/null 2>&1; then
+  echo "Podman scan target could not be resolved for ${image_ref}" >&2
+  exit 1
+fi
+inspect_observation="$(sudo podman image inspect --format '{{.Id}} {{.Architecture}} {{.Os}}' "${podman_target}" 2> /dev/null || true)"
+read -r resolved_image_id resolved_arch resolved_os inspect_extra <<< "${inspect_observation}"
+if [[ ! "${resolved_image_id:-}" =~ ^(sha256:)?[0-9a-f]{64}$ || -n "${inspect_extra:-}" || "${inspect_observation}" == *$'\n'* ]]; then
+  echo "Podman scan target has an invalid image ID for ${image_ref}: ${resolved_image_id:-<unknown>}" >&2
+  exit 1
+fi
+if [[ "${resolved_arch}" != "${arch}" || "${resolved_os}" != "linux" ]]; then
+  echo "Podman scan target platform mismatch for ${image_ref}: expected linux/${arch}, observed ${resolved_os:-<unknown>}/${resolved_arch:-<unknown>}" >&2
+  exit 1
+fi
+podman_target="${resolved_image_id}"
 
 arf="${out_dir}/base-python.${arch}.stig.arf.xml"
 report="${out_dir}/base-python.${arch}.stig.report.html"
@@ -93,7 +111,7 @@ cleanup_identity_container() {
 trap cleanup_identity_container EXIT
 
 oscap_status=0
-if sudo oscap-podman "${image_ref}" xccdf eval \
+if sudo oscap-podman "${podman_target}" xccdf eval \
   --tailoring-file "${tailoring}" \
   --profile "${profile}" \
   --results-arf "${arf}" \
@@ -109,7 +127,7 @@ if [[ "${oscap_status}" != "0" && "${oscap_status}" != "2" ]]; then
   exit "${oscap_status}"
 fi
 
-identity_container_id="$(sudo podman create "${image_ref}" /stig-rootfs-export)"
+identity_container_id="$(sudo podman create "${podman_target}" /stig-rootfs-export)"
 sudo podman export --output "${rootfs_tar}" "${identity_container_id}"
 sudo podman rm "${identity_container_id}" > /dev/null
 identity_container_id=""
