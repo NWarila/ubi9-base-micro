@@ -33,8 +33,8 @@
         "ncurses-libs-6.2-12.20210508.el9.x86_64",
         "pcre2-10.40-6.el9.x86_64",
         "pcre2-syntax-10.40-6.el9.noarch",
-        "python3.12-3.12.13-3.el9_8.1.x86_64",
-        "python3.12-libs-3.12.13-3.el9_8.1.x86_64",
+        "python3.12-3.12.14-1.el9_8.x86_64",
+        "python3.12-libs-3.12.14-1.el9_8.x86_64",
         "python3.12-pip-wheel-23.2.1-5.el9.noarch",
         "readline-8.1-4.el9.x86_64",
         "xz-libs-5.2.5-8.el9_0.x86_64"
@@ -59,8 +59,8 @@
         "ncurses-libs-6.2-12.20210508.el9.aarch64",
         "pcre2-10.40-6.el9.aarch64",
         "pcre2-syntax-10.40-6.el9.noarch",
-        "python3.12-3.12.13-3.el9_8.1.aarch64",
-        "python3.12-libs-3.12.13-3.el9_8.1.aarch64",
+        "python3.12-3.12.14-1.el9_8.aarch64",
+        "python3.12-libs-3.12.14-1.el9_8.aarch64",
         "python3.12-pip-wheel-23.2.1-5.el9.noarch",
         "readline-8.1-4.el9.aarch64",
         "xz-libs-5.2.5-8.el9_0.aarch64"

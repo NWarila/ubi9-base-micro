@@ -11,7 +11,7 @@
     "amd64": [
       {
         "package": "python3.12-libs",
-        "path": "/usr/lib/.build-id/da/5677abef2e197752f29bb0858e059c5dd853c5",
+        "path": "/usr/lib/.build-id/25/d179ab0964692e50f739c920f84b862d9d827f",
         "kind": "symlink"
       },
       {
@@ -113,7 +113,7 @@
     "arm64": [
       {
         "package": "python3.12-libs",
-        "path": "/usr/lib/.build-id/4a/e9ee800c7402c23f7863da73d13f8bf6ca2b54",
+        "path": "/usr/lib/.build-id/6c/76e7f5c98973eba1c3e222c03025e4ea7a8345",
         "kind": "symlink"
       },
       {
