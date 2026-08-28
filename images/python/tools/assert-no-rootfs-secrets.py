@@ -108,8 +108,8 @@ class StatementExemption:
 CPYTHON_STATEMENT_EXEMPTIONS: Final[tuple[StatementExemption, ...]] = (
     StatementExemption(
         "usr/lib64/python3.12/ftplib.py",
-        943,
-        943,
+        952,
+        952,
         "7edd18a012c3b5db675b79cf134e8a2918927e9d350093c6d85a1d8d99cd723a",
         "credential-assignment",
     ),
