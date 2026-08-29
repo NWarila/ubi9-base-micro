@@ -2,16 +2,11 @@
 
 The publish workflow publishes `ghcr.io/nwarila/ubi9-base-micro` by digest from `.github/workflows/publish-image.yaml`. It signs the image digest with Cosign keyless from the repository workflow identity, attaches Syft rpmdb-derived SPDX and CycloneDX SBOM attestations to each platform child digest, gates fixable MEDIUM, HIGH, and CRITICAL findings with both Trivy and Grype, applies the OpenVEX default-deny policy to unfixed HIGH and CRITICAL findings, runs the tailored RHEL9 STIG ARF gate, generates and attests the NIST SP 800-190 section 4.1 image predicate and the STIG ARF summary predicate, then passes the index digest to the SLSA container generator reusable workflow. The final push-only roll-up verifies that the full attestation set is Rekor-logged.
 
-This page is the completed-publication contract for `base-micro`. The
-`base-python` publisher's 2026-08-17 production attempt failed in
-`registry-served gates and evidence` while `Install publication gate tools`
-tried to install Syft without Cosign available. That prerequisite is now
-repaired and lock-enforced; production proof remains pending the next `main`
-push. After a successful production publication, use the Python-specific
-commands in
+This page is the completed-publication contract for `base-micro`. For
+`base-python`, use the Python-specific commands in
 [`../how-to/verify-a-published-image.md`](../how-to/verify-a-published-image.md#verify-base-python)
 and the subject matrix in
-[`verification-contract.md`](verification-contract.md#base-python-published-evidence-contract-not-yet-produced).
+[`verification-contract.md`](verification-contract.md#image-family-publication-evidence-contract).
 
 ## Prerequisites
 
@@ -36,11 +31,11 @@ The SLSA generator tag `v2.1.0` is allowed only with the workflow tag-integrity 
 
 ## Contract
 
-Start from the immutable per-commit tag for the completed publish. Resolve its image index and then resolve both platform children from that pinned index:
+Start from the policy-intended create-once per-commit tag for the completed publish. Resolve its image index and then resolve both platform children from that pinned index:
 
 ```sh
 IMAGE="ghcr.io/nwarila/ubi9-base-micro"
-TAG="base-micro-<short_sha>"                 # immutable per-commit tag (normative input)
+TAG="base-micro-<short_sha>"                 # policy-intended create-once tag
 INDEX_DIGEST="$(crane digest "${IMAGE}:${TAG}")"
 INDEX_REF="${IMAGE}@${INDEX_DIGEST}"
 AMD64_DIGEST="$(crane digest --platform linux/amd64 "${INDEX_REF}")"
@@ -189,10 +184,24 @@ Python publisher fetches the bytes once by the push-reported digest,
 corroborates their SHA-256, checksum-protects cross-job transfers, and gives the
 same digest to every consumer. The micro publisher supplies the pushed digest
 and exact `dist/image-index.json` bytes it already read from the registry to
-both child calls in the same job. Both workflows are configured, but production
-proof of the new TD-12 published-child paths remains pending the merge-triggered
-runs. The Python publication chain also remains unproven for the earlier reason
-described above.
+both child calls in the same job. As verified on 2026-08-29, GitHub reported
+[`Publish image` run 32671091120, attempt 1](https://github.com/NWarila/ubi9-base-micro/actions/runs/32671091120/attempts/1)
+completed successfully for `.github/workflows/publish-image.yaml` on push commit
+`07da8231817c232ffd1c99e067673fcad6049bad`; its registry-gate logs recorded the
+TD-12 `CVE-2026-14456` accept-and-track disposition and zero undispositioned
+findings for both digest-addressed micro children,
+`ghcr.io/nwarila/ubi9-base-micro@sha256:068513099e9d658f90822acac19b23edfdac93d1bc466d0787fb2e82e7e43c60`
+and
+`ghcr.io/nwarila/ubi9-base-micro@sha256:a0785566b22f550532b3497b6de61464ac4d982488d03acc54a81bcd0cdb4358`.
+GitHub likewise reported
+[`Publish Python image` run 33212723050, attempt 1](https://github.com/NWarila/ubi9-base-micro/actions/runs/33212723050/attempts/1)
+completed successfully for `.github/workflows/publish-python.yaml` on push
+commit `d83526192b83be0f45c4f9b90da213559c15a334`; its registry-gate logs recorded
+the same TD-12 result with zero undispositioned findings for both Python child
+digests,
+`ghcr.io/nwarila/ubi9-base-python@sha256:f054a09c2378ae46f1f8d7e302aeee22ea6ba73cf6cd070a753e87e0e1c5cbb0`
+and
+`ghcr.io/nwarila/ubi9-base-python@sha256:b56759303abc8c702abbc9f20289bc5f5af3029689ff963dfcd6c91c84bd44fc`.
 
 Valid fix evidence from either scanner and byte-noncanonical raw scanner
 identities refuse authorization. `tools/verify.py` independently expires the
@@ -213,10 +222,6 @@ BuildKit SBOM generation is disabled in the publish build with `--sbom=false`. T
 
 The `ghcr.io/nwarila/ubi9-base-micro` package is publicly readable. The complete
 pull and verification chain above works from a clean machine without registry
-authentication. The `ghcr.io/nwarila/ubi9-base-python` package also exists
-publicly, but serves only unaliased, unsigned candidate digests from the failed
-production attempt. Its two BuildKit `mode=max` provenance attestation manifests
-exist; no production gate evidence, Cosign signature or attestation,
-SLSA-generator provenance, Rekor record, or consumer alias exists. This page's
-Python verification procedure therefore remains contingent on a successful
-production publication.
+authentication. Current and historical `base-python` service observations are
+bound to an immutable digest in the
+[canonical publication evidence contract](verification-contract.md#image-family-publication-evidence-contract).

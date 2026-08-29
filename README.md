@@ -171,16 +171,14 @@ RHEL9 STIG ARF attestation, and a fail-closed byte-for-byte digest gate.
 ## Image Family
 
 `ubi9-base-micro` is the root image. `base-python` has its own two-phase
-publication workflow; its first production attempt created a public GHCR package
-that currently serves unaliased, unsigned candidate digests. Those candidates
-must not be treated as a successfully published consumer image until the gates,
-signatures, consumer alias, and anonymous verification succeed. The remaining
-language variants are planned as `images/<variant>/` trees.
+publication workflow. Its current and historical publication evidence is in the
+[canonical publication evidence contract](docs/reference/verification-contract.md#image-family-publication-evidence-contract).
+The remaining language variants are planned as `images/<variant>/` trees.
 
 | Image | Status | Base relationship | Runtime scope |
 | --- | --- | --- | --- |
 | `base-micro` | Current repository | Root image | glibc, CA trust, rpmdb, OpenSSL #4857 provider |
-| `base-python` | Publisher merged; awaiting first successful publication | `FROM base-micro@sha256:<digest>` | CPython runtime on the micro floor |
+| `base-python` | Dedicated publisher | `FROM base-micro@sha256:<digest>` | CPython runtime on the micro floor |
 | `base-node` | Planned | `FROM base-micro@sha256:<digest>` | Node.js runtime on the micro floor |
 | `base-java` | Planned | `FROM base-micro@sha256:<digest>` | OpenJDK runtime on the micro floor |
 
@@ -227,15 +225,8 @@ The published root-image namespace is:
 ghcr.io/nwarila/ubi9-base-micro
 ```
 
-The merged Python publisher targets
-`ghcr.io/nwarila/ubi9-base-python`. Its 2026-08-17 production attempt failed in
-`registry-served gates and evidence` while `Install publication gate tools`
-tried to install Syft without Cosign available. The prerequisite is now repaired
-and lock-enforced; production proof remains pending the next `main` push. The
-package exists publicly and serves only unaliased, unsigned candidate digests.
-Its two BuildKit `mode=max` provenance attestation manifests exist; no production
-gate evidence, Cosign signature or attestation, SLSA-generator provenance, Rekor
-record, or consumer alias exists.
+The Python publisher targets `ghcr.io/nwarila/ubi9-base-python`; see the
+[canonical publication evidence contract](docs/reference/verification-contract.md#image-family-publication-evidence-contract).
 
 ## Security and Compliance Posture
 

@@ -21,7 +21,7 @@ Python `tarfile` archive encoding.
 `canonical_rootfs_digest` is asserted at the scope of each image's reviewed
 Docker Buildx profile. The non-Python workflows pin the setup action SHA but
 still let it select Buildx `latest` and the default moving BuildKit driver image.
-The production-attempted `base-python` path instead pins Buildx by
+The `base-python` path instead pins Buildx by
 version, expected commit, and Linux-amd64 asset SHA-256 and pins its BuildKit
 driver with a versioned digest-qualified reference in
 `images/python/docker-bake.json`. Micro's Buildx and BuildKit remain unpinned by
@@ -33,13 +33,8 @@ are the per-file content digests recorded in the contract, specifically
 `rpmdb_sha256` for `/var/lib/rpm/rpmdb.sqlite` and `fips_so_sha256` for
 `/usr/lib64/ossl-modules/fips.so`.
 
-The 2026-08-17 production attempt failed in `registry-served gates and evidence`
-while `Install publication gate tools` tried to install Syft without Cosign
-available. That prerequisite is now repaired and lock-enforced; production proof
-remains pending the next `main` push. The package exists publicly and serves only
-unaliased, unsigned candidate digests. Its two BuildKit `mode=max` provenance
-attestation manifests exist; no production gate evidence, Cosign signature or
-attestation, SLSA-generator provenance, Rekor record, or consumer alias exists.
+Current and historical production evidence for that path is in the
+[canonical publication evidence contract](../reference/verification-contract.md#image-family-publication-evidence-contract).
 
 The Python reproducibility matrix runs the `repro` target twice with no cache
 for each architecture, compares both exported rootfs trees, and asserts the
@@ -154,8 +149,8 @@ scope.
   uses a local Docker exporter without claiming that policy. The pull-request
   preflight remains confined to its loopback registry. The production workflow
   is capable of exporting an unaliased candidate to GHCR by digest.
-  Base-python has a failed publish result at this revision: the workflow exported
-  public, unaliased candidate digests before its registry-served gate job failed.
+  Current and historical production evidence is in the
+  [canonical publication evidence contract](../reference/verification-contract.md#image-family-publication-evidence-contract).
 - `images/python/docker-bake.json` is the base-python build definition. Its
   shared target owns the graph inputs, while the `ci`, `release`, and `repro`
   targets own distinct exporter, cache, provenance, and SBOM policies.

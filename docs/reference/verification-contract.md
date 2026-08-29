@@ -13,17 +13,17 @@ runtime package floor, footprint ceiling, Cosign identity, OIDC issuer, SLSA
 builder ID, and repository-generated attestation predicate types. A worked
 consumer check lives in
 [`../../contracts/examples/README.md`](../../contracts/examples/README.md).
-The production-attempted `base-python` image has its distinct contract in
+The `base-python` image has its distinct contract in
 [`../../images/python/contracts/image-manifest.json`](../../images/python/contracts/image-manifest.json),
 validated by its adjacent schema. That manifest also declares the Python
 workflow identity and its six repository-generated predicate types, including
-the index-only trust contract. It does not assert that those production
-attestations already exist.
+the index-only trust contract. Publication evidence is recorded below against an
+immutable digest rather than inferred from that declarative manifest.
 
 | Boundary | Runs on | Proves | Does not prove |
 | --- | --- | --- | --- |
 | Pull request | `pull_request` to `main` | Repository contract, lint, local build, hardening, FIPS artifact checks, SBOM and scanner gates, OpenVEX policy, NIST predicate validation, tailored STIG ARF, byte-for-byte rootfs reproducibility, and the Python release exporter exercised against a loopback-bound ephemeral registry. | Project or external publication, published signatures or attestations, SLSA provenance over a consumer-resolvable digest, Rekor roll-up, or anonymous GHCR pull. |
-| Publish | `push` to `main`, root-image `v*` tags, and Python `python/v*` tags | After a successful image-specific run: multi-arch publish, Cosign keyless signature, Syft rpmdb-derived SPDX and CycloneDX attestations, NIST SP 800-190 and STIG ARF predicates, OpenVEX attestations when needed, SLSA L3 provenance, and Rekor roll-up. Python additionally requires the index-only trust contract. | A failed Python attempt can leave public, unaliased candidate digests and BuildKit provenance without production gate evidence, signatures, Cosign attestations, SLSA-generator provenance, Rekor records, or aliases; the 2026-08-17 attempt did so. |
+| Publish | `push` to `main`, root-image `v*` tags, and Python `python/v*` tags | After a successful image-specific run: multi-arch publish, Cosign keyless signature, Syft rpmdb-derived SPDX and CycloneDX attestations, NIST SP 800-190 and STIG ARF predicates, OpenVEX attestations when needed, SLSA L3 provenance, and Rekor roll-up. Python additionally requires the index-only trust contract. | A tag's later resolution, later package visibility, later anonymous accessibility, or the continued presence of signatures and attestations. Those mutable service properties require a dated observation bound to an immutable digest. |
 | Post-publish audit | Clean unauthenticated verifier | Anonymous pull by digest and the full image-specific `cosign` plus `slsa-verifier` contract in [`verify.md`](verify.md) or [`../how-to/verify-a-published-image.md`](../how-to/verify-a-published-image.md#verify-base-python). | Future rebuild currency or downstream family-coherence status. |
 
 ## Micro publish scope
@@ -46,21 +46,9 @@ run creates no new micro publication and does not remove or re-point any
 already-published digest or revision-bound attestation.
 
 The Python publish boundary above describes repository capability and the
-requirements for a successful publication. The 2026-08-17 production attempt
-failed in `registry-served gates and evidence` while `Install publication gate
-tools` tried to install Syft without Cosign available. The package nevertheless
-exists publicly and serves unaliased, unsigned candidate digests only. The
-successful, signed image described by this contract is not yet consumable under
-a consumer alias.
-Only the existing candidate digests are publicly consumable by digest at this
-revision; they remain unaliased and unsigned. The successful-image claims require
-evidence from the corresponding completed boundary.
-
-The candidate's two BuildKit `mode=max` provenance attestation manifests exist.
-No production gate evidence, Cosign signature or attestation, SLSA-generator
-provenance, Rekor record, or consumer alias exists. The missing Cosign
-prerequisite is now repaired and lock-enforced; production proof remains pending
-the next `main` push.
+requirements for a successful publication. Current and historical observations
+are maintained in the
+[canonical publication evidence contract](#image-family-publication-evidence-contract).
 
 ## Python publish scope
 
@@ -109,15 +97,19 @@ write, not an external or project publication: it creates no project package,
 public or moving alias, production signature or attestation, SLSA or Rekor
 record, or consumer-resolvable digest.
 
-Pull-request preflight jobs grant `contents: read` only and contain no external
-registry credential or login surface. Push-only publication jobs receive the
-smallest additional package or OIDC permissions needed by their role and carry
-an exact base-repository guard. Repository verification checks those boundaries
-and binds each complete committed workflow to an expected SHA-256 and byte
-length, requiring a corresponding visible verifier edit for any YAML-surface
-change. Those byte locks do not extend to the scripts or pinned external code
-the workflows invoke. The `python / required` reducer is not a required
-repository status context.
+The surviving `publish-python.yaml` verifier applies 28 named semantic rejection
+guards: trigger, job graph, concurrency, exact permission inventory, nine
+base-repository guards, fail-closed spellings, Cosign action/version/adjacency,
+SLSA generator caller, digest exporter, closed release argv, OCI label binding,
+attestation subject matrix, signing, trust contract, provenance, alias ordering,
+alias collisions, independent verification, contract identity, publish scope,
+gate battery, index dataflow, VEX production caller, SLSA execution-certificate
+binding, pre-alias absence, and tag isolation. It also binds the complete file to
+an expected SHA-256 and byte length. That surface lock is a drift alarm, not a
+semantic replacement. The deleted secret-reference, registry-credential,
+OIDC/signing-absence, registry-container, Docker-floor, and BuildKit-network
+preflight checks have no live equivalent. The `python / required` reducer is not
+a required repository status context.
 
 The publish path uses exact certificate identities. The repository workflow
 identity signs image signatures and repository-generated predicates; the SLSA
@@ -130,7 +122,57 @@ https://github.com/slsa-framework/slsa-github-generator/.github/workflows/genera
 https://token.actions.githubusercontent.com
 ```
 
-## Base-python published evidence contract (not yet produced)
+## Image family publication evidence contract
+
+Only an `@sha256` image reference is immutable. Every tag or alias resolution,
+including a commit or version alias intended to be create-once, is a dated
+registry observation. Package visibility, anonymous accessibility, evidence
+presence, and workflow conclusions are also dated service observations and do
+not become permanent properties of a digest.
+
+### Verified base-python evidence record
+
+Verified base-python evidence record, refreshed 2026-08-29 UTC: the immutable subject
+`ghcr.io/nwarila/ubi9-base-python@sha256:1fd3b3659c3fae216fb904ad482e675ba316b96db10637da427eb66b53defe56`
+was produced from commit `d83526192b83be0f45c4f9b90da213559c15a334` by
+[publishing run attempt 1](https://github.com/NWarila/ubi9-base-micro/actions/runs/33212723050/attempts/1).
+For that same digest, a 2026-08-29 anonymous, empty-credential registry read
+succeeded; its Cosign signature and Python trust-contract attestation verified
+at the repository workflow identity with transparency-log inclusion; and its
+SLSA attestation and `slsa-verifier` result verified the named commit,
+`refs/heads/main`, and pinned generator. The separate
+[anonymous verification job](https://github.com/NWarila/ubi9-base-micro/actions/runs/33219400518/job/99010080494)
+for run attempt 1 was observed successful on 2026-08-29 and is bound to that
+digest. Alias snapshot at `2026-08-29T02:53:54Z`: both the moving `:base-python`
+alias and the policy-intended create-once `:base-python-dff74825297a` alias
+resolved to
+`sha256:3bed3ce13460449ded0f4c9093603a8eed281eca6886462f173e2d03219e5e45`.
+That snapshot is historical; query GHCR for current alias resolution.
+
+### Verified base-micro evidence record
+
+Verified base-micro evidence record, refreshed 2026-08-29 UTC: the immutable
+subject
+`ghcr.io/nwarila/ubi9-base-micro@sha256:5c39a56672a72c5d13fd95fab4df0203cdb90aff256de114027e6987c5bcb9e2`
+was produced from commit `07da8231817c232ffd1c99e067673fcad6049bad` by
+[publishing run attempt 1](https://github.com/NWarila/ubi9-base-micro/actions/runs/32671091120/attempts/1).
+For that same index digest, an anonymous, empty-credential registry read at
+`2026-08-29T10:42:42Z` succeeded and resolved exact `linux/amd64` child
+`ghcr.io/nwarila/ubi9-base-micro@sha256:068513099e9d658f90822acac19b23edfdac93d1bc466d0787fb2e82e7e43c60`
+and `linux/arm64` child
+`ghcr.io/nwarila/ubi9-base-micro@sha256:a0785566b22f550532b3497b6de61464ac4d982488d03acc54a81bcd0cdb4358`.
+At that refresh, the index Cosign signature verified at the repository workflow
+identity with transparency-log inclusion. Each named child's SPDX, CycloneDX,
+OpenVEX, NIST SP 800-190, and STIG ARF attestations verified at that identity
+with transparency-log inclusion; both OpenVEX predicates bound the TD-12
+`CVE-2026-14456` disposition to the corresponding child digest. The index SLSA
+attestation and `slsa-verifier` result verified the named commit,
+`refs/heads/main`, and pinned generator. GitHub's attempt API and logs were
+observed successful on 2026-08-29; the logs show the TD-12 disposition passing
+for both digest-addressed children, all later evidence phases, and the SLSA and
+Rekor jobs succeeding.
+
+### Base-python publication mechanism
 
 On a production attempt, the Python publisher pushes an unaliased
 multi-architecture candidate by digest. It fetches the index bytes
@@ -155,7 +197,7 @@ SLSA provenance only to the index. The subject matrix is exact:
 
 The tag namespace for Python releases is `python/v*`; a top-level `v*` tag is
 reserved for the root-image publisher. On `main`, the final job applies the
-moving `base-python` alias and the create-once
+moving `base-python` alias and the policy-intended create-once
 `base-python-<first-12-lowercase-hex-of-publishing-sha>` alias. On a Python
 release tag, it applies that commit alias and the validated version alias, and
 does not move `base-python`.
@@ -175,9 +217,8 @@ credentials against the candidate digest and completes before aliases are
 applied. A successful credentialed leg establishes the production evidence on
 the candidate but does not by itself establish anonymous access. Public
 consumability requires the separate cache-cold verification to succeed without
-registry credentials. The current package is already public because it
-inherited visibility on its first push; the failed attempt did not reach either
-production verification leg.
+registry credentials. Any record of that result must name the immutable digest
+and observation date.
 
 From a repository checkout at the publishing commit, set `INDEX_DIGEST`,
 `AMD64_DIGEST`, `ARM64_DIGEST`, the publishing SHA, and its exact ref. Then

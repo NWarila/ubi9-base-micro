@@ -19,7 +19,7 @@ command. It also checks Renovate managers, deny-all ignore
 allowlists, documentation markers, Diataxis layout, ADR inventory, lint setup,
 helper self-tests, attribution-residue denial, and a separate
 internal-process-residue denial. The Python build-input self-test runs the
-unmodified positive control and demonstrates seven classes through sixty-seven
+unmodified positive control and demonstrates seven classes through sixty-eight
 non-no-op negative cases: BuildKit digest qualification, repro output policy,
 workflow-pin derivation, committed target protection and shape, five identity
 observations, two Renovate managers and their non-automerge rules, and the
@@ -31,7 +31,7 @@ outside this check.
 
 For a Python builder-pin or Bake-contract change, the normal verifier proves
 the static contract, including the checked identity-step shape, and runs
-the seven-class/sixty-seven-case mutation inventory, but does not create a live
+the seven-class/sixty-eight-case mutation inventory, but does not create a live
 Buildx builder. The live five-observation identity assertion runs in the Python
 workflow after setup and before either build. Require non-skipped `python build
 and gates` and `python reproducibility` results for both architectures; these

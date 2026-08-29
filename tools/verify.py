@@ -1381,6 +1381,54 @@ def check_image_contract_files() -> None:
         require(example == fips_expected_status(arch), f"contract FIPS status example for {arch} must match manifest")
 
 
+PYTHON_PUBLICATION_POINTERS = {
+    "README.md": (
+        "## Image Family",
+        "[canonical publication evidence contract]"
+        "(docs/reference/verification-contract.md#image-family-publication-evidence-contract)",
+    ),
+    "images/README.md": (
+        "# Image Family Trees",
+        "[canonical publication evidence contract]"
+        "(../docs/reference/verification-contract.md#image-family-publication-evidence-contract)",
+    ),
+    "SUPPORT.md": (
+        "## Not supported here",
+        "[canonical publication evidence contract]"
+        "(docs/reference/verification-contract.md#image-family-publication-evidence-contract)",
+    ),
+}
+
+
+def markdown_section_intro(text: str, heading: str) -> str | None:
+    match = re.search(rf"^{re.escape(heading)}[ \t]*$", text, re.MULTILINE)
+    if match is None:
+        return None
+    following_heading = re.search(r"^#{1,6} ", text[match.end() :], re.MULTILINE)
+    end = len(text) if following_heading is None else match.end() + following_heading.start()
+    return text[match.start() : end]
+
+
+def markdown_peer_section(text: str, heading: str) -> str | None:
+    match = re.search(rf"^(?P<marks>#+) {re.escape(heading.lstrip('# '))}[ \t]*$", text, re.MULTILINE)
+    if match is None or heading != match.group(0).rstrip():
+        return None
+    level = len(match.group("marks"))
+    following_peer = re.search(rf"^#{{{level}}}(?!#) ", text[match.end() :], re.MULTILINE)
+    end = len(text) if following_peer is None else match.end() + following_peer.start()
+    return text[match.start() : end]
+
+
+def community_profile_support_errors(support: str) -> list[str]:
+    heading, pointer = PYTHON_PUBLICATION_POINTERS["SUPPORT.md"]
+    section = markdown_section_intro(support, heading)
+    if section is None:
+        return [f"SUPPORT.md missing community-profile section: {heading}"]
+    if pointer not in section:
+        return [f"SUPPORT.md missing canonical publication pointer in {heading}"]
+    return []
+
+
 def check_community_profile() -> None:
     gitignore = read(".gitignore")
     for relative_path in COMMUNITY_PROFILE_FILES:
@@ -1437,10 +1485,20 @@ def check_community_profile() -> None:
         "GitHub Discussions are not enabled",
         "tools/run-test-gates.sh",
         "docs/reference/verify.md",
-        "Support for `base-python` before its first successful publication completes",
         "`base-node` and `base-java` remain planned",
     ]:
         require(marker in support, f"SUPPORT.md missing marker: {marker}")
+    support_errors = community_profile_support_errors(support)
+    require(not support_errors, support_errors[0] if support_errors else "SUPPORT.md community profile failed")
+    support_pointer = PYTHON_PUBLICATION_POINTERS["SUPPORT.md"][1]
+    mutated_support = support.replace(support_pointer, "Publication evidence unavailable", 1)
+    require(mutated_support != support, "SUPPORT.md community-profile mutation fixture did not change")
+    expected_support_error = "SUPPORT.md missing canonical publication pointer in ## Not supported here"
+    require(
+        expected_support_error in community_profile_support_errors(mutated_support),
+        "SUPPORT.md community-profile publication-pointer mutation unexpectedly passed",
+    )
+    print(f"Community profile mutation rejected [support publication pointer] diagnostic={expected_support_error}")
 
     changelog = read("CHANGELOG.md")
     for marker in [
@@ -1499,36 +1557,24 @@ def check_community_profile() -> None:
 def python_publication_docs_errors(readme: str, images_readme: str, support: str) -> list[str]:
     errors: list[str] = []
     required = {
-        "README.md": (
-            readme,
-            (
-                "Publisher merged; awaiting first successful publication",
-                "must not be treated as a successfully published consumer image",
-            ),
-        ),
-        "images/README.md": (
-            images_readme,
-            ("The `base-python` publisher is merged", "it is awaiting its first successful"),
-        ),
-        "SUPPORT.md": (
-            support,
-            (
-                "Support for `base-python` before its first successful publication completes",
-                "`base-node` and `base-java` remain planned",
-            ),
-        ),
+        "README.md": readme,
+        "images/README.md": images_readme,
+        "SUPPORT.md": support,
     }
-    for path, (text, markers) in required.items():
-        errors.extend(
-            f"{path} missing Python publication status marker: {marker}" for marker in markers if marker not in text
-        )
+    for path, text in required.items():
+        heading, pointer = PYTHON_PUBLICATION_POINTERS[path]
+        section = markdown_section_intro(text, heading)
+        if section is None:
+            errors.append(f"{path} missing Python publication section: {heading}")
+        elif pointer not in section:
+            errors.append(f"{path} missing canonical publication pointer in {heading}")
     stale = {
         "README.md": "Only `ubi9-base-micro` exists in this repository today",
         "images/README.md": "Planned base-image variants will live here",
         "SUPPORT.md": "Support for planned `base-python`, `base-node`, or `base-java` images",
     }
     for path, marker in stale.items():
-        text = required[path][0]
+        text = required[path]
         if marker in text:
             errors.append(f"{path} retains stale Python planned-status marker: {marker}")
     return errors
@@ -1541,20 +1587,21 @@ def check_python_publication_docs_self_test() -> None:
         (
             "README replacement removed",
             (
-                baseline[0].replace("Publisher merged; awaiting first successful publication", "Status unavailable", 1),
+                baseline[0].replace(PYTHON_PUBLICATION_POINTERS["README.md"][1], "Publication evidence unavailable", 1),
                 *baseline[1:],
             ),
-            "README.md missing Python publication status marker: "
-            "Publisher merged; awaiting first successful publication",
+            "README.md missing canonical publication pointer in ## Image Family",
         ),
         (
             "images replacement removed",
             (
                 baseline[0],
-                baseline[1].replace("The `base-python` publisher is merged", "`base-python` exists", 1),
+                baseline[1].replace(
+                    PYTHON_PUBLICATION_POINTERS["images/README.md"][1], "Publication evidence unavailable", 1
+                ),
                 baseline[2],
             ),
-            "images/README.md missing Python publication status marker: The `base-python` publisher is merged",
+            "images/README.md missing canonical publication pointer in # Image Family Trees",
         ),
         (
             "support replacement removed",
@@ -1562,13 +1609,10 @@ def check_python_publication_docs_self_test() -> None:
                 baseline[0],
                 baseline[1],
                 baseline[2].replace(
-                    "Support for `base-python` before its first successful publication completes",
-                    "Support unavailable",
-                    1,
+                    PYTHON_PUBLICATION_POINTERS["SUPPORT.md"][1], "Publication evidence unavailable", 1
                 ),
             ),
-            "SUPPORT.md missing Python publication status marker: "
-            "Support for `base-python` before its first successful publication completes",
+            "SUPPORT.md missing canonical publication pointer in ## Not supported here",
         ),
         (
             "README stale claim restored",
@@ -2972,7 +3016,7 @@ def check_python_build_input_contract_self_test() -> None:
         "assert-reproducible.py: error: unrecognized arguments: --source-date-epoch 1704067201",
     )
     require(rejected == 68, f"python build input mutation inventory mismatch: expected 68, got {rejected}")
-    print("python build input mutation probes: 7 classes, 67/67 rejected")
+    print("python build input mutation probes: 7 classes, 68/68 rejected")
 
 
 def check_renovate_config() -> None:
@@ -9320,7 +9364,7 @@ ACCEPT_AND_TRACK_DOCUMENTATION_MARKERS: tuple[tuple[str, str, tuple[str, ...]], 
         "images/python/vex/README.md",
         "TD-12 model",
         (
-            "one exact affected authorization implemented in `tools/assert-vex.py`:\n"
+            "The gate has one exact affected authorization implemented in `tools/assert-vex.py`:\n"
             "CVE-2026-14456 matched by `cve-2026-14456.openvex.json`.",
             "For an accepted finding on the two local CI products, the gate requires two\n"
             "keys: the exact in-tool disposition entry and the matching byte-canonical\n"
@@ -11785,6 +11829,145 @@ def check_verify_docs_child_loop_self_test() -> None:
             raise AssertionError(f"verify-doc child-loop self-test: mutant unexpectedly passed: {label}")
 
 
+ACCEPTANCE_PUBLICATION_POINTER = (
+    "[canonical publication evidence contract]"
+    "(../reference/verification-contract.md#image-family-publication-evidence-contract)"
+)
+REPRODUCIBILITY_PUBLICATION_POINTER = ACCEPTANCE_PUBLICATION_POINTER
+CANONICAL_PUBLICATION_HEADING = "## Image family publication evidence contract"
+
+
+def replace_last(text: str, old: str, new: str) -> str:
+    before, separator, after = text.rpartition(old)
+    return text if not separator else before + new + after
+
+
+def image_family_publication_contract_errors(
+    acceptance: str,
+    reproducibility: str,
+    readme: str,
+    verification_contract: str,
+) -> list[str]:
+    errors: list[str] = []
+
+    acceptance_section = markdown_peer_section(acceptance, "## Scope and enforcement boundaries")
+    if acceptance_section is None or ACCEPTANCE_PUBLICATION_POINTER not in acceptance_section:
+        errors.append("acceptance.md missing canonical publication pointer in scope boundary")
+
+    reproducibility_section = markdown_peer_section(reproducibility, "## Determinism Controls")
+    determinism_item = None
+    if reproducibility_section is not None:
+        item_start = reproducibility_section.find("- The base-micro local, CI, and publish exporter paths")
+        if item_start >= 0:
+            item_end = reproducibility_section.find("\n- ", item_start + 2)
+            determinism_item = reproducibility_section[item_start : item_end if item_end >= 0 else None]
+    if determinism_item is None or REPRODUCIBILITY_PUBLICATION_POINTER not in determinism_item:
+        errors.append("reproducibility.md missing canonical publication pointer in determinism control")
+
+    readme_section = markdown_peer_section(readme, "## Image Family")
+    readme_pointer = PYTHON_PUBLICATION_POINTERS["README.md"][1]
+    if readme_section is None or readme_pointer not in readme_section:
+        errors.append("README.md missing canonical publication pointer in Image Family")
+
+    canonical_section = markdown_peer_section(verification_contract, CANONICAL_PUBLICATION_HEADING)
+    if canonical_section is None:
+        errors.append("verification-contract.md missing canonical publication evidence section")
+        return errors
+    canonical_markers = [
+        "Only an `@sha256` image reference is immutable",
+        "subject matrix is exact",
+        "python-trust-contract/v1",
+        ".github/workflows/publish-python.yaml@${PUBLISH_REF}",
+        "--source-tag python/v<version>",
+        "--source-branch main",
+        "--print-provenance",
+        "not atomic",
+    ]
+    errors.extend(
+        f"verification-contract.md canonical section missing marker: {marker}"
+        for marker in canonical_markers
+        if marker not in canonical_section
+    )
+
+    python_evidence_record = markdown_peer_section(
+        canonical_section,
+        "### Verified base-python evidence record",
+    )
+    if python_evidence_record is None:
+        errors.append("verification-contract.md canonical section missing base-python evidence record")
+        return errors
+    if re.search(r"ghcr\.io/nwarila/ubi9-base-python@sha256:[0-9a-f]{64}", python_evidence_record) is None:
+        errors.append("verification-contract.md evidence record missing immutable Python digest")
+    if re.search(r"commit `[0-9a-f]{40}`", python_evidence_record) is None:
+        errors.append("verification-contract.md Python evidence record missing publishing commit")
+    if (
+        re.search(
+            r"https://github\.com/NWarila/ubi9-base-micro/actions/runs/\d+/(?:attempts/\d+|job/\d+)",
+            python_evidence_record,
+        )
+        is None
+    ):
+        errors.append("verification-contract.md Python evidence record missing immutable run-attempt or job URL")
+    verification_markers = ["For that same digest", "anonymous", "Cosign", "transparency-log", "SLSA", "slsa-verifier"]
+    errors.extend(
+        f"verification-contract.md Python evidence record missing digest-bound verification: {marker}"
+        for marker in verification_markers
+        if marker not in python_evidence_record
+    )
+    if (
+        "Alias snapshot" in python_evidence_record
+        and re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", python_evidence_record) is None
+    ):
+        errors.append("verification-contract.md Python alias snapshot missing observation timestamp")
+
+    micro_evidence_record = markdown_peer_section(
+        canonical_section,
+        "### Verified base-micro evidence record",
+    )
+    if micro_evidence_record is None:
+        errors.append("verification-contract.md canonical section missing base-micro evidence record")
+        return errors
+    micro_digest_pattern = r"ghcr\.io/nwarila/ubi9-base-micro@sha256:([0-9a-f]{64})"
+    micro_digests = set(re.findall(micro_digest_pattern, micro_evidence_record))
+    if not micro_digests:
+        errors.append("verification-contract.md evidence record missing immutable base-micro digest")
+    if len(micro_digests) < 3:
+        errors.append("verification-contract.md base-micro evidence record missing exact platform child digests")
+    if re.search(r"commit `[0-9a-f]{40}`", micro_evidence_record) is None:
+        errors.append("verification-contract.md base-micro evidence record missing publishing commit")
+    if (
+        re.search(
+            r"https://github\.com/NWarila/ubi9-base-micro/actions/runs/\d+/(?:attempts/\d+|job/\d+)",
+            micro_evidence_record,
+        )
+        is None
+    ):
+        errors.append("verification-contract.md base-micro evidence record missing immutable run-attempt or job URL")
+    micro_verification_markers = [
+        "For that same index digest",
+        "anonymous",
+        "Cosign",
+        "transparency-log",
+        "OpenVEX",
+        "CVE-2026-14456",
+        "SLSA",
+        "slsa-verifier",
+    ]
+    errors.extend(
+        f"verification-contract.md base-micro evidence record missing digest-bound verification: {marker}"
+        for marker in micro_verification_markers
+        if marker not in micro_evidence_record
+    )
+    if re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", micro_evidence_record) is None:
+        errors.append("verification-contract.md base-micro service observation missing timestamp")
+    if (
+        "Alias snapshot" in micro_evidence_record
+        and re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", micro_evidence_record) is None
+    ):
+        errors.append("verification-contract.md base-micro alias snapshot missing observation timestamp")
+    return errors
+
+
 def check_docs() -> None:
     for relative_path in [
         "docs/tutorials",
@@ -11871,7 +12054,7 @@ def check_docs() -> None:
         "The builder is also an image input",
         "images/python/docker-bake.json",
         "independently verified Linux-amd64 release-asset",
-        "built-and-gated, unpublished `base-python`",
+        "built-and-gated `base-python` path",
         "non-Python Buildx and BuildKit paths remain",
     ]:
         require(marker in adr_0001, f"ADR-0001 missing Python builder-toolchain decision marker: {marker}")
@@ -11889,16 +12072,100 @@ def check_docs() -> None:
         "no publisher",
         "does not pin the micro build path",
         "Pre-publication base-python build identity",
-        "public package serving unaliased, unsigned candidate digests",
     ]:
         require(marker in acceptance, f"acceptance.md missing pre-publication Python marker: {marker}")
     for marker in [
         "Micro's Buildx and BuildKit remain unpinned",
         "Base-python's `repro` target",
-        "Base-python has a failed publish result at this revision",
         "shared target owns the graph inputs",
     ]:
         require(marker in reproducibility_doc, f"reproducibility.md missing profile-specific marker: {marker}")
+    publication_contract_errors = image_family_publication_contract_errors(
+        acceptance,
+        reproducibility_doc,
+        readme,
+        verification_contract,
+    )
+    require(
+        not publication_contract_errors,
+        publication_contract_errors[0]
+        if publication_contract_errors
+        else "Image family publication docs contract failed",
+    )
+    python_record_gutted = re.sub(
+        r"(?ms)^### Verified base-python evidence record[ \t]*$.*?(?=^### Verified base-micro evidence record[ \t]*$)",
+        "### Verified base-python evidence record\n\n",
+        verification_contract,
+        count=1,
+    )
+    micro_record_gutted = re.sub(
+        r"(?ms)^### Verified base-micro evidence record[ \t]*$.*?(?=^### Base-python publication mechanism[ \t]*$)",
+        "### Verified base-micro evidence record\n\n",
+        verification_contract,
+        count=1,
+    )
+    publication_contract_fixtures = [
+        (
+            "acceptance pointer",
+            acceptance.replace(ACCEPTANCE_PUBLICATION_POINTER, "Publication evidence unavailable", 1),
+            reproducibility_doc,
+            readme,
+            verification_contract,
+            "acceptance.md missing canonical publication pointer in scope boundary",
+        ),
+        (
+            "reproducibility pointer",
+            acceptance,
+            replace_last(
+                reproducibility_doc,
+                REPRODUCIBILITY_PUBLICATION_POINTER,
+                "Publication evidence unavailable",
+            ),
+            readme,
+            verification_contract,
+            "reproducibility.md missing canonical publication pointer in determinism control",
+        ),
+        (
+            "README pointer",
+            acceptance,
+            reproducibility_doc,
+            readme.replace(PYTHON_PUBLICATION_POINTERS["README.md"][1], "Publication evidence unavailable", 1),
+            verification_contract,
+            "README.md missing canonical publication pointer in Image Family",
+        ),
+        (
+            "base-python evidence record",
+            acceptance,
+            reproducibility_doc,
+            readme,
+            python_record_gutted,
+            "verification-contract.md evidence record missing immutable Python digest",
+        ),
+        (
+            "base-micro evidence record",
+            acceptance,
+            reproducibility_doc,
+            readme,
+            micro_record_gutted,
+            "verification-contract.md evidence record missing immutable base-micro digest",
+        ),
+    ]
+    for (
+        label,
+        mutated_acceptance,
+        mutated_reproducibility,
+        mutated_readme,
+        mutated_contract,
+        expected,
+    ) in publication_contract_fixtures:
+        errors = image_family_publication_contract_errors(
+            mutated_acceptance,
+            mutated_reproducibility,
+            mutated_readme,
+            mutated_contract,
+        )
+        require(expected in errors, f"Image family publication docs contract mutation unexpectedly passed: {label}")
+        print(f"Image family publication docs contract mutation rejected [{label}] diagnostic={expected}")
     verify_lines = verify.splitlines()
     verify_summary_marker = "gates fixable MEDIUM, HIGH, and CRITICAL findings with both Trivy and Grype"
     require(
@@ -12126,8 +12393,6 @@ def check_docs() -> None:
 
     for marker in [
         "`ubi9-base-micro` is the root image",
-        "Publisher merged; awaiting first successful publication",
-        "must not be treated as a successfully published consumer image",
         "`base-python`",
         "`base-node`",
         "`base-java`",
@@ -12149,19 +12414,6 @@ def check_docs() -> None:
         "docs/decision-records/repo/",
     ]:
         require(marker in readme, f"README.md missing G1 marker: {marker}")
-
-    for marker in [
-        "## Base-python published evidence",
-        "ghcr.io/nwarila/ubi9-base-python",
-        "python-trust-contract/v1",
-        ".github/workflows/publish-python.yaml@${PUBLISH_REF}",
-        "--source-tag python/v<version>",
-        "--source-branch main",
-        "--print-provenance",
-        "not atomic",
-        "Only the existing candidate digests are publicly consumable by digest",
-    ]:
-        require(marker in verification_contract, f"verification-contract.md missing Python publish marker: {marker}")
     for marker in [
         "## Verify base-python",
         "base-python-<first-12-lowercase-hex-of-publishing-sha>",

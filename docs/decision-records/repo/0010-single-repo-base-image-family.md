@@ -7,8 +7,9 @@
 
 ## Context
 
-The base-image family has one published root image, one built-and-gated but
-unpublished Python variant, and other planned language variants. An earlier
+At this record's 2026-08-16 review, the base-image family had one published root
+image, one built-and-gated but unpublished Python variant, and other planned
+language variants. An earlier
 revision of this record split the family across repositories, one per variant,
 on three load-bearing assumptions: that signer identity requires a repository
 boundary, that the dependency-update cascade requires a cross-repository digest
@@ -30,8 +31,8 @@ exchange digests in-run are not a factory.
 
 The base-image family lives in this repository. `ubi9-base-micro` remains at
 the repository root; relocating it under a variant-style tree was rejected as
-cosmetic churn against a shipped, digest-locked v1.0.0 image. The built-and-gated,
-unpublished `base-python` variant lives under `images/python/`. Its pull-request
+cosmetic churn against a shipped, digest-locked v1.0.0 image. The built-and-gated
+`base-python` variant lives under `images/python/`. Its pull-request
 preflight writes an unsigned candidate and BuildKit provenance only to a
 loopback-bound ephemeral registry; this is neither an external or project
 publication nor a consumer-resolvable digest. Its production workflow is now

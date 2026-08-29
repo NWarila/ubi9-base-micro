@@ -10,10 +10,11 @@ Accepted statements must be OpenVEX JSON files with:
 - `status: "fixed"` or `status: "not_affected"` with one of the standard OpenVEX justifications, except for the exact accept-and-track path below.
 
 `affected` satisfies the gate only for the exact, expiring accept-and-track
-one exact affected authorization implemented in `tools/assert-vex.py`:
+exception. The gate has one exact affected authorization implemented in `tools/assert-vex.py`:
 CVE-2026-14456 matched by `cve-2026-14456.openvex.json`. Every other `affected` statement, and every
 `under_investigation` statement, remains documentary and does not satisfy the
-gate. Files under `vex/` require review through `.github/CODEOWNERS`. The
+gate. Files under `images/python/vex/` require review through
+`.github/CODEOWNERS`. The
 pull-request release preflight does not attest OpenVEX. The production publisher
 attests each JSON file, byte-unmodified, to both per-architecture image digests
 with `cosign attest --type openvex` after the same-child gate succeeds.
@@ -79,13 +80,8 @@ SLSA provenance, collision checks, and final aliases. This binds the dynamic
 authorization input to the index this run pushed and read back; it does not make
 the later resolve-then-apply alias operation atomic against an external writer.
 All three VEX-side descriptor-policy differences are tracked as TD-11. The
-2026-08-17 production attempt failed in `registry-served gates and evidence`
-while `Install publication gate tools` tried to install Syft without Cosign
-available. That prerequisite is now repaired and lock-enforced; production proof
-remains pending the next `main` push. The package exists publicly and serves only
-unaliased, unsigned candidate digests. Its two BuildKit `mode=max` provenance
-attestation manifests exist; no production gate evidence, Cosign signature or
-attestation, SLSA-generator provenance, Rekor record, or consumer alias exists.
+[canonical publication evidence contract](../../../docs/reference/verification-contract.md#image-family-publication-evidence-contract)
+records the current and historical production evidence.
 
 An authorization on one disposition or image surface cannot satisfy another.
 The authorization is refused if either scanner supplies valid fix evidence. The

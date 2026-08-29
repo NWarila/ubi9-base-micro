@@ -40,7 +40,8 @@ repository, it requires three: the same entry, this statement, and paired
 `--index-reference` plus `--index-manifest` evidence whose bytes verify the
 index digest and bind the child to the scanner-reported architecture. The
 micro publish workflow is configured to supply the index bytes it already
-reads from the registry. Production proof of this new published-child path
-remains pending the merge-triggered run. Valid fix evidence from either scanner
+reads from the registry. Production evidence for this path is in the
+[canonical publication evidence contract](../docs/reference/verification-contract.md#image-family-publication-evidence-contract).
+Valid fix evidence from either scanner
 refuses the disposition, and `tools/verify.py` expires the repository entry even
 when the finding is dormant.

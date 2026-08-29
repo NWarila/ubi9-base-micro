@@ -21,20 +21,14 @@ pinned SHA-256 values before local install.
 
 | Module or runtime | Family use | CMVP status | base-micro scope |
 | --- | --- | --- | --- |
-| RHEL 9 OpenSSL FIPS Provider, `fips.so` v3.0.7-395c1a240fbfffd8 | `base-micro` amd64, the production-attempted `base-python` amd64 candidate path, and future `base-node` when dynamically linked to system OpenSSL | #4857 ACTIVE | Shipped on amd64 inside the #4857 OE scope |
+| RHEL 9 OpenSSL FIPS Provider, `fips.so` v3.0.7-395c1a240fbfffd8 | `base-micro` amd64, the `base-python` amd64 path, and future `base-node` when dynamically linked to system OpenSSL | #4857 ACTIVE | Shipped on amd64 inside the #4857 OE scope |
 | RHEL 9 OpenSSL FIPS Provider, `fips.so` v3.0.7-395c1a240fbfffd8 | `base-micro` arm64 | Not CMVP validated for arm64 OE | Shipped on arm64 with the same module/version, approved-mode configured and self-test passing only |
 | Go Cryptographic Module v1.0.0 | Go-static leaves built with `GOFIPS140=v1.0.0` | #5247 ACTIVE | Not shipped here |
 | BC-FJA v2.0.0 | Future Java/Keycloak leaves configured for BCFIPS approved-only mode | #4743 ACTIVE | Not shipped here |
 | Node.js | Future `base-node` consumer of linked OpenSSL | No independent CMVP certificate; FIPS derives from OpenSSL #4857 when linkage gates pass | Not shipped here |
 
-Python-specific `hashlib` boundaries belong to `base-python`'s own gates. The
-2026-08-17 production attempt failed in `registry-served gates and evidence`
-while `Install publication gate tools` tried to install Syft without Cosign
-available. That prerequisite is now repaired and lock-enforced; production proof
-remains pending the next `main` push. The package exists publicly and serves only
-unaliased, unsigned candidate digests. Its two BuildKit `mode=max` provenance
-attestation manifests exist; no production gate evidence, Cosign signature or
-attestation, SLSA-generator provenance, Rekor record, or consumer alias exists.
+Python-specific `hashlib` boundaries belong to `base-python`'s own gates; see the
+[canonical publication evidence contract](../reference/verification-contract.md#image-family-publication-evidence-contract).
 The Python path requires approved mode, SHA-2 operation, and MD5 refusal without
 making a Python interpreter-wide validation claim. `base-micro` itself does not
 ship Python.
