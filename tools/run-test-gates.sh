@@ -25,6 +25,15 @@ run_bounded_gate() {
   local timed_out=0
   shift 2
 
+  # Scope: this is a process-group deadline, not a complete descendant or
+  # engine-operation bound. TERM then KILL reaches the gate and descendants
+  # only while they remain in this group. A descendant can escape with
+  # setsid/setpgid; pre-existing daemons (such as Docker) and daemonizing
+  # engine helpers (such as fuse-overlayfs or conmon) are outside it. SIGKILL
+  # also cannot complete while a process remains in uninterruptible kernel
+  # sleep. Whole-operation containment requires a cgroup/scope or equivalent
+  # engine-specific cleanup.
+
   case "${timeout_seconds}" in
     "" | *[!0-9]*)
       echo "invalid timeout for ${label}: ${timeout_seconds}" >&2
@@ -81,7 +90,7 @@ run_bounded_gate() {
       timed_out=1
     fi
 
-    # Always terminate the complete process group if the monitor fails. TERM is
+    # Always signal the isolated process group if the monitor fails. TERM is
     # followed by a full ten-second grace period before KILL escalation.
     if kill -TERM -- "-${pgid}" 2> /dev/null; then
       :
@@ -107,7 +116,7 @@ run_bounded_gate() {
   elapsed=$((SECONDS - started_at))
 
   if ((timed_out)); then
-    # Reaping the group leader above must leave no live descendant behind.
+    # Reaping the group leader above must leave no live member of this group.
     for ((drain_tick = 0; drain_tick < 100; drain_tick++)); do
       if ! kill -0 -- "-${pgid}" 2> /dev/null; then
         break
