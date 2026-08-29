@@ -51,8 +51,8 @@ bash tools/run-test-gates.sh
 
 That harness builds the runtime image, runs the hardening and FIPS probes,
 checks the footprint gate, runs the tailored STIG ARF scan, derives and checks
-SBOM output, runs Trivy and Grype fixable-vulnerability gates, applies the
-OpenVEX default-deny check, scans the exported rootfs for secrets, and validates
+SBOM output, runs Trivy and Grype fixable-vulnerability gates, scans the
+exported rootfs for secrets, and validates
 the NIST SP 800-190 image-control predicate.
 
 For any image-affecting change, also prove byte-for-byte rootfs

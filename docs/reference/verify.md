@@ -1,6 +1,6 @@
 # Published Digest Verification
 
-The publish workflow publishes `ghcr.io/nwarila/ubi9-base-micro` by digest from `.github/workflows/publish-image.yaml`. It signs the image digest with Cosign keyless from the repository workflow identity, attaches Syft rpmdb-derived SPDX and CycloneDX SBOM attestations to each platform child digest, gates fixable MEDIUM, HIGH, and CRITICAL findings with both Trivy and Grype, applies the OpenVEX default-deny policy to unfixed HIGH and CRITICAL findings, runs the tailored RHEL9 STIG ARF gate, generates and attests the NIST SP 800-190 section 4.1 image predicate and the STIG ARF summary predicate, then passes the index digest to the SLSA container generator reusable workflow. The final push-only roll-up verifies that the full attestation set is Rekor-logged.
+The publish workflow publishes `ghcr.io/nwarila/ubi9-base-micro` by digest from `.github/workflows/publish-image.yaml`. It signs the index and children with Cosign keyless, attaches rpmdb-derived SPDX and CycloneDX SBOMs, NIST SP 800-190 and tailored STIG ARF evidence to each child, gates fixable MEDIUM, HIGH, and CRITICAL findings with both Trivy and Grype, publishes complete JSON and SARIF vulnerability reports, and passes the index digest to the SLSA container generator. The final push-only roll-up verifies the signed attestation set is Rekor-logged.
 
 This page is the completed-publication contract for `base-micro`. For
 `base-python`, use the Python-specific commands in
@@ -21,7 +21,6 @@ and the subject matrix in
 | --- | --- |
 | Image signature | `https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@<ref>` |
 | SBOM SPDX and CycloneDX attestations | `https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@<ref>` |
-| OpenVEX attestations, when `vex/*.json` is present | `https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@<ref>` |
 | NIST SP 800-190 section 4.1 image attestation | `https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@<ref>` |
 | STIG ARF attestation | `https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@<ref>` |
 | SLSA provenance attestation | `https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0` |
@@ -92,17 +91,6 @@ for CHILD_REF in "${AMD64_REF}" "${ARM64_REF}"; do
 done
 ```
 
-When `vex/*.json` exists in the publishing commit, verify the OpenVEX attestation on each per-platform child digest:
-
-```sh
-set -euo pipefail
-for CHILD_REF in "${AMD64_REF}" "${ARM64_REF}"; do
-  cosign verify-attestation --type openvex "${CHILD_REF}" \
-    --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
-    --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
-done
-```
-
 Verify the NIST SP 800-190 section 4.1 image-control predicate on each per-platform child digest:
 
 ```sh
@@ -141,76 +129,24 @@ The publish workflow also parses the verified SLSA predicate with `tools/assert-
 
 ## Rekor Roll-Up
 
-The push-only `rekor-rollup` job verifies that the full attestation set is Rekor-logged: the Cosign signature, SLSA provenance, SPDX SBOM, CycloneDX SBOM, OpenVEX when `vex/*.json` exists, the NIST SP 800-190 section 4.1 predicate, and the tailored STIG ARF predicate. It uses `cosign verify` and `cosign verify-attestation` with exact identities and the default Rekor behavior; it does not use `--insecure-ignore-tlog`, `--tlog-upload=false`, or a custom Rekor URL. `tools/assert-cosign-rekor.py` checks the `cosign verify` signature JSON for the Rekor bundle fields that signature records carry. Attestation Rekor logging is proven by successful `cosign verify-attestation` with the transparency log enabled; cosign fails if the attestation has no accepted log entry, prints its tlog verification line, and writes DSSE envelopes with `payload` plus `signatures` rather than `optional.Bundle`.
+The push-only `rekor-rollup` job verifies that the full attestation set is Rekor-logged: the Cosign signature, SLSA provenance, SPDX SBOM, CycloneDX SBOM, the NIST SP 800-190 section 4.1 predicate, and the tailored STIG ARF predicate. It uses `cosign verify` and `cosign verify-attestation` with exact identities and the default Rekor behavior; it does not use `--insecure-ignore-tlog`, `--tlog-upload=false`, or a custom Rekor URL. `tools/assert-cosign-rekor.py` checks the `cosign verify` signature JSON for the Rekor bundle fields that signature records carry. Attestation Rekor logging is proven by successful `cosign verify-attestation` with the transparency log enabled; cosign fails if the attestation has no accepted log entry, prints its tlog verification line, and writes DSSE envelopes with `payload` plus `signatures` rather than `optional.Bundle`.
 
 `gh attestation verify` is not part of this contract. It verifies GitHub-native Artifact Attestations, not the cosign OCI attestation written by `generator_container_slsa3.yml` or the repository publish workflow.
 
-## CVE And OpenVEX Policy
+## Vulnerability Policy
 
-OpenSCAP builds ComplianceAsCode/content `0.1.81` from SHA512-pinned source, runs `stig/rhel9-base-micro-tailoring.xml`, and attests the `https://nwarila.dev/attestations/stig-arf/v1` predicate per platform digest. The STIG summary embedded in that predicate includes every per-rule `idref` result and the deterministic rootfs identity assertion report when OpenSCAP reports a selected must-verify identity or ownership rule as `notapplicable`. Trivy and Grype are installed as checksum-verified pinned binaries (`TRIVY_VERSION` and `GRYPE_VERSION`), not as scanner actions. Before scan results are accepted, `tools/assert-scanner-db-freshness.py` fails closed unless Trivy metadata and Grype DB status are fresh, parseable, and within the configured schema and age bounds. Both scanners fail the workflow on fixable MEDIUM, HIGH, and CRITICAL findings, subject only to the version-pinned TD-6 exception for `CVE-2026-31790` covering `openssl-fips-provider` and `openssl-fips-provider-so` at `3.0.7-8.el9`, expiring on `2026-10-10`: Trivy uses `--severity MEDIUM,HIGH,CRITICAL --ignore-unfixed --exit-code 1` with `security/cve-ignore.trivyignore.yaml`, and Grype uses `--only-fixed --fail-on medium` with `security/cve-ignore.grype.yaml`. A separate scanner pass without those fixable-only filters feeds `tools/assert-vex.py`, which fails closed unless every unfixed HIGH or CRITICAL finding has a matching reviewed OpenVEX statement under the CODEOWNERS-gated `vex/` path. If no unfixed HIGH or CRITICAL findings exist and no VEX JSON exists, there is no OpenVEX attestation to verify.
+OpenSCAP builds the pinned ComplianceAsCode content, runs the committed micro tailoring, and attests the STIG ARF predicate per platform digest. Trivy and Grype are installed as checksum-verified pinned binaries rather than scanner actions. Database freshness and the committed Log4Shell content canary must pass before image results are accepted.
 
-The gate has one exact accept-and-track entry. TD-12 covers the
-known-affected unfixed HIGH `CVE-2026-14456` on exactly `openssl-libs` at
-`1:3.5.5-5.el9_8` in base-python and base-micro. The entry and both surfaces expire after
-`review-by 2026-10-01`.
+The STIG validator requires every selected per-rule `idref` result and binds the
+ARF to the rootfs identity assertion report before attestation.
 
-The closed model has one entry and two statement surfaces: TD-12 Python and TD-12
-micro. Local products use a two-key authorization. The exact disposition
-surface and its byte-canonical reviewed `affected` statement must match for one
-of the two base-python CI products or the locally loaded
-`ghcr.io/nwarila/ubi9-base-micro:base-micro` product. Candidate selection must
-resolve to exactly one surface; a CVE, statement, product, repository, or policy
-IRI from one surface cannot authorize another.
+Both scanners fail on fixable MEDIUM, HIGH, and CRITICAL findings. Trivy uses `--ignore-unfixed --severity MEDIUM,HIGH,CRITICAL --exit-code 1` with `security/cve-ignore.trivyignore.yaml`; Grype uses `--only-fixed --fail-on medium` with `security/cve-ignore.grype.yaml`. The only exception is the native TD-6 rule for `CVE-2026-31790` on exactly `openssl-fips-provider` and `openssl-fips-provider-so` at `3.0.7-8.el9`, retained for the CMVP #4857 module lock.
 
-A digest-addressed published child uses a three-key authorization: the exact
-surface, its canonical statement, and paired `--index-reference` plus
-`--index-manifest` evidence under that surface's pinned Python or micro
-repository. The tool recomputes the digest of the exact supplied index bytes,
-enforces exactly one `linux/amd64` child and one `linux/arm64` child with
-distinct digests, locks the BuildKit attestation platform and annotations,
-requires descriptor-digest uniqueness across all roles, and binds the eligible
-digest to the architecture reported by both scanners. The index digest and
-attestation digests are never eligible, and child/attestation digest aliasing is
-rejected.
+A separate report-only pass records all findings. Trivy emits complete JSON once and converts it to SARIF; Grype emits JSON and SARIF from one scan. Each scanner/image/architecture SARIF file is uploaded under a distinct code-scanning category. JSON, SARIF, and their checksum manifest are uploaded as a fatal-on-missing artifact retained for 90 days. Unfixed findings do not fail the workflow, while scanner execution failure remains fatal.
 
-The VEX-side index policy does not constrain attestation count or per-child
-reference cardinality and does not close either descriptor kind's top-level key
-set or the runnable `platform` key set. The Python publisher's stricter resolver
-rejects those measured shapes before its VEX gate. The micro publisher uses the
-common VEX-side policy directly; TD-11 tracks that boundary.
-
-Each merged caller supplies index evidence from the index that run pushed. The
-Python publisher fetches the bytes once by the push-reported digest,
-corroborates their SHA-256, checksum-protects cross-job transfers, and gives the
-same digest to every consumer. The micro publisher supplies the pushed digest
-and exact `dist/image-index.json` bytes it already read from the registry to
-both child calls in the same job. As verified on 2026-08-29, GitHub reported
-[`Publish image` run 32671091120, attempt 1](https://github.com/NWarila/ubi9-base-micro/actions/runs/32671091120/attempts/1)
-completed successfully for `.github/workflows/publish-image.yaml` on push commit
-`07da8231817c232ffd1c99e067673fcad6049bad`; its registry-gate logs recorded the
-TD-12 `CVE-2026-14456` accept-and-track disposition and zero undispositioned
-findings for both digest-addressed micro children,
-`ghcr.io/nwarila/ubi9-base-micro@sha256:068513099e9d658f90822acac19b23edfdac93d1bc466d0787fb2e82e7e43c60`
-and
-`ghcr.io/nwarila/ubi9-base-micro@sha256:a0785566b22f550532b3497b6de61464ac4d982488d03acc54a81bcd0cdb4358`.
-GitHub likewise reported
-[`Publish Python image` run 33212723050, attempt 1](https://github.com/NWarila/ubi9-base-micro/actions/runs/33212723050/attempts/1)
-completed successfully for `.github/workflows/publish-python.yaml` on push
-commit `d83526192b83be0f45c4f9b90da213559c15a334`; its registry-gate logs recorded
-the same TD-12 result with zero undispositioned findings for both Python child
-digests,
-`ghcr.io/nwarila/ubi9-base-python@sha256:f054a09c2378ae46f1f8d7e302aeee22ea6ba73cf6cd070a753e87e0e1c5cbb0`
-and
-`ghcr.io/nwarila/ubi9-base-python@sha256:b56759303abc8c702abbc9f20289bc5f5af3029689ff963dfcd6c91c84bd44fc`.
-
-Valid fix evidence from either scanner and byte-noncanonical raw scanner
-identities refuse authorization. `tools/verify.py` independently expires the
-entry even if its scanner finding is absent. Its current summary locks 2 active canonical byte documents plus 1 fixed-history
-document, the exact 1-entry/2-surface model, 12 active document mutations, 6
-fixed-history mutations, 35 disposition documentation prose mutations across 6
-files, and 1/1 dormant expiry; five verifier mutations and five corresponding checker
-mutations must also fail. These paths do not make either image unaffected and
-are not TD-6 fixable-CVE scanner suppressions.
+`tools/assert-scanner-db-freshness.py` and `tools/assert-scanner-canary.py` remain
+fail-closed prerequisites, so report-only disposition never permits stale,
+empty, or nonfunctional scanner output.
 
 ## SBOM Source
 

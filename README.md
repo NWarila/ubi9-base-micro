@@ -77,15 +77,6 @@ cosign verify-attestation --type spdxjson "${CHILD_REF}" \
   | jq -r '.payload | @base64d | fromjson | .predicate.packages[].name' | grep -q glibc
 ```
 
-When a `vex/*.json` file exists in the publishing commit, verify the OpenVEX
-attestation on the selected platform child:
-
-```sh
-cosign verify-attestation --type openvex "${CHILD_REF}" \
-  --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
-```
-
 Verify the NIST SP 800-190 section 4.1 image-control predicate:
 
 ```sh
@@ -138,7 +129,7 @@ flowchart TB
   end
 
   subgraph publish["publish — push to main/tag only"]
-    BUILD["build + push by digest<br/>recursive cosign sign"] --> EVIDENCE["resolve children<br/>tailored STIG ARF + rpmdb SBOMs<br/>scanner freshness + Trivy + Grype + OpenVEX<br/>secret scan + NIST"]
+    BUILD["build + push by digest<br/>recursive cosign sign"] --> EVIDENCE["resolve children<br/>tailored STIG ARF + rpmdb SBOMs<br/>scanner freshness + fixable gates + JSON/SARIF reports<br/>secret scan + NIST"]
     EVIDENCE --> ATTEST["attest evidence per child"]
   end
 
@@ -184,14 +175,17 @@ The remaining language variants are planned as `images/<variant>/` trees.
 
 The common evidence floor is a cosign keyless signature, SLSA L3 provenance,
 rpmdb-derived SPDX and CycloneDX SBOMs, Trivy and Grype fixable-CVE gates,
-OpenVEX default-deny coverage for unfixed HIGH/CRITICAL findings, NIST SP
-800-190 section 4.1 image evidence, tailored RHEL9 STIG ARF, and byte-for-byte
-reproducibility. Published signatures and attestations are Rekor-logged. A
+complete report-only JSON and SARIF findings, NIST SP 800-190 section 4.1 image
+evidence, tailored RHEL9 STIG ARF, and byte-for-byte reproducibility. Published
+signatures and attestations are Rekor-logged. A
 variant also requires an index-only trust-contract predicate binding its digest,
 package, tree, workflow, and commit; the merged `base-python` publisher
 implements that requirement. Planned variants must carry the applicable full
 evidence set under their `images/<variant>/` trees before publication, each
 publishing through its own path-scoped workflow.
+
+`base-python` additionally publishes absence-proof OpenVEX for SQLite and
+libuuid; those documents do not authorize or suppress scanner findings.
 
 Responsibility boundary: the base family owns a standard hardened floor through
 RPM hygiene (`install_weak_deps=0`, `--nodocs`, locale/man stripping, shell
@@ -248,9 +242,9 @@ application FIPS validation claims. The platform host remains non-FIPS. See
 The authoritative SBOM evidence is Syft rpmdb-derived SPDX and CycloneDX,
 attested per published platform child digest. BuildKit SBOM output is disabled
 so the published SPDX evidence has a single source. Vulnerability scanners,
-OpenVEX default-deny, NIST SP 800-190 section 4.1 image evidence, and the
-tailored RHEL9 STIG ARF gate are gated in CI; publish attaches the STIG ARF
-summary predicate per platform digest. See
+fixable-CVE gates, complete report-only JSON/SARIF, NIST SP 800-190 section 4.1
+image evidence, and the tailored RHEL9 STIG ARF gate run in CI; publish attaches
+the STIG ARF summary predicate per platform digest. See
 [`docs/compliance/stig.md`](docs/compliance/stig.md),
 [`docs/compliance/nist-800-190.md`](docs/compliance/nist-800-190.md), and
 [`docs/compliance/vex.md`](docs/compliance/vex.md).
@@ -263,7 +257,7 @@ layer sum is 12,095,601 bytes / 11.5353 MiB. See
 
 Repository-specific decisions are recorded under `docs/decision-records/repo/`.
 They cover the byte-for-byte reproducibility gate, FIPS scope, SLSA generator
-identity model, runtime strip posture, RPM refresh loop, scanner/VEX policy,
+identity model, runtime strip posture, RPM refresh loop, scanner policy,
 STIG and NIST evidence, CI runner determinism, direct-CDN runtime RPM sourcing,
 and base-family topology.
 

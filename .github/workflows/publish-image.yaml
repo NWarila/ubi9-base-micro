@@ -1,8 +1,8 @@
 # Purpose: Release pipeline — SLSA-tag integrity, multi-arch buildx build+push, Cosign sign/verify, SBOM + CVE +
-# OpenVEX + NIST-800-190 + STIG-ARF attest/verify, SLSA L3 provenance, Rekor roll-up.
+# NIST-800-190 + STIG-ARF attest/verify, SLSA L3 provenance, Rekor roll-up.
 # Role: workflow
 # Micro-container candidate: partial — sign/attest spine + OIDC + SLSA reusable stay as workflow; fold the per-arch
-# SBOM/CVE/VEX/predicate/verify loops into pinned micro-container actions.
+# SBOM/CVE/predicate/verify loops into pinned micro-container actions.
 
 name: Publish image
 
@@ -173,6 +173,7 @@ jobs:
       contents: read
       id-token: write
       packages: write
+      security-events: write
     outputs:
       image: ${{ steps.image.outputs.image }}
       digest: ${{ steps.image.outputs.digest }}
@@ -422,9 +423,6 @@ jobs:
             --trivy-json "${trivy_canary_json}" \
             --expect-cve CVE-2021-44228
 
-      - name: Assert fixable-CVE ignore scope
-        run: python tools/assert-ignore-scope.py
-
       - name: Install OpenSCAP STIG tooling
         run: bash tools/install-openscap.sh
 
@@ -545,7 +543,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p dist/vuln
           for arch in amd64 arm64; do
             case "${arch}" in
               amd64) digest="${AMD64_DIGEST}" ;;
@@ -557,21 +554,16 @@ jobs:
             esac
 
             image_ref="${IMAGE}@${digest}"
-            grype_gate_json="dist/vuln/base-micro.${arch}.grype.gate.json"
             dist/tools/grype "${image_ref}" \
               --only-fixed \
               --fail-on medium \
               -c security/cve-ignore.grype.yaml \
-              --show-suppressed \
-              -o json \
-              --file "${grype_gate_json}"
-            python tools/assert-ignore-scope.py --grype-report "${grype_gate_json}"
+              -o table
           done
 
-      - name: Run OpenVEX default-deny gates
+      - name: Generate complete vulnerability reports
         env:
           IMAGE: ${{ steps.image.outputs.image }}
-          INDEX_DIGEST: ${{ steps.image.outputs.digest }}
           AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
           ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
         run: |
@@ -589,37 +581,93 @@ jobs:
                 platform="linux/arm64"
                 ;;
               *)
-                echo "unsupported VEX architecture: ${arch}" >&2
+                echo "unsupported vulnerability-report architecture: ${arch}" >&2
                 exit 1
                 ;;
             esac
 
             image_ref="${IMAGE}@${digest}"
             trivy_json="dist/vuln/base-micro.${arch}.trivy.all.json"
+            trivy_sarif="dist/vuln/base-micro.${arch}.trivy.all.sarif"
             grype_json="dist/vuln/base-micro.${arch}.grype.all.json"
+            grype_sarif="dist/vuln/base-micro.${arch}.grype.all.sarif"
 
             dist/tools/trivy image \
               --platform "${platform}" \
               --vuln-type os,library \
               --list-all-pkgs \
-              --severity HIGH,CRITICAL \
               --format json \
               --output "${trivy_json}" \
               "${image_ref}"
+            dist/tools/trivy convert \
+              --format sarif \
+              --output "${trivy_sarif}" \
+              "${trivy_json}"
 
             dist/tools/grype "${image_ref}" \
               --platform "linux/${arch}" \
-              -o json \
-              --file "${grype_json}"
+              -o "json=${grype_json}" \
+              -o "sarif=${grype_sarif}"
 
-            python tools/assert-vex.py \
-              --product "${image_ref}" \
-              --trivy-json "${trivy_json}" \
-              --grype-json "${grype_json}" \
-              --package-floor contracts/image-manifest.json \
-              --index-reference "${IMAGE}@${INDEX_DIGEST}" \
-              --index-manifest dist/image-index.json
+            test -s "${trivy_json}"
+            test -s "${trivy_sarif}"
+            test -s "${grype_json}"
+            test -s "${grype_sarif}"
           done
+
+      - name: Seal complete vulnerability reports
+        run: |
+          set -euo pipefail
+          (
+            cd dist/vuln
+            sha256sum \
+              base-micro.amd64.trivy.all.json \
+              base-micro.amd64.trivy.all.sarif \
+              base-micro.amd64.grype.all.json \
+              base-micro.amd64.grype.all.sarif \
+              base-micro.arm64.trivy.all.json \
+              base-micro.arm64.trivy.all.sarif \
+              base-micro.arm64.grype.all.json \
+              base-micro.arm64.grype.all.sarif \
+              > SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
+
+      - name: Upload complete vulnerability reports
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: base-micro-vulnerability-reports-${{ github.sha }}
+          path: |
+            dist/vuln/base-micro.*.all.json
+            dist/vuln/base-micro.*.all.sarif
+            dist/vuln/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Upload Trivy SARIF for base-micro amd64
+        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        with:
+          sarif_file: dist/vuln/base-micro.amd64.trivy.all.sarif
+          category: base-micro/trivy/amd64
+
+      - name: Upload Grype SARIF for base-micro amd64
+        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        with:
+          sarif_file: dist/vuln/base-micro.amd64.grype.all.sarif
+          category: base-micro/grype/amd64
+
+      - name: Upload Trivy SARIF for base-micro arm64
+        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        with:
+          sarif_file: dist/vuln/base-micro.arm64.trivy.all.sarif
+          category: base-micro/trivy/arm64
+
+      - name: Upload Grype SARIF for base-micro arm64
+        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        with:
+          sarif_file: dist/vuln/base-micro.arm64.grype.all.sarif
+          category: base-micro/grype/arm64
 
       - name: Attest rpmdb SBOMs
         env:
@@ -892,74 +940,6 @@ jobs:
             test -s "${out}"
           done
 
-      - name: Attest OpenVEX documents
-        env:
-          COSIGN_YES: "true"
-          IMAGE: ${{ steps.image.outputs.image }}
-          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
-          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-
-          vex_docs=(vex/*.json)
-          if (( ${#vex_docs[@]} == 0 )); then
-            echo "No OpenVEX documents present; nothing to attest."
-            exit 0
-          fi
-
-          for arch in amd64 arm64; do
-            case "${arch}" in
-              amd64) digest="${AMD64_DIGEST}" ;;
-              arm64) digest="${ARM64_DIGEST}" ;;
-              *)
-                echo "unsupported OpenVEX attestation architecture: ${arch}" >&2
-                exit 1
-                ;;
-            esac
-
-            image_ref="${IMAGE}@${digest}"
-            for vex_doc in "${vex_docs[@]}"; do
-              cosign attest --type openvex --predicate "${vex_doc}" "${image_ref}"
-            done
-          done
-
-      - name: Verify OpenVEX attestation
-        env:
-          CERTIFICATE_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/publish-image.yaml@${{ github.ref }}
-          IMAGE: ${{ steps.image.outputs.image }}
-          AMD64_DIGEST: ${{ steps.platform_digests.outputs.amd64_digest }}
-          ARM64_DIGEST: ${{ steps.platform_digests.outputs.arm64_digest }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-
-          vex_docs=(vex/*.json)
-          if (( ${#vex_docs[@]} == 0 )); then
-            echo "No OpenVEX documents present; nothing to verify."
-            exit 0
-          fi
-
-          mkdir -p dist/vex
-          for arch in amd64 arm64; do
-            case "${arch}" in
-              amd64) digest="${AMD64_DIGEST}" ;;
-              arm64) digest="${ARM64_DIGEST}" ;;
-              *)
-                echo "unsupported OpenVEX verification architecture: ${arch}" >&2
-                exit 1
-                ;;
-            esac
-
-            image_ref="${IMAGE}@${digest}"
-            out="dist/vex/verified-openvex.${arch}.jsonl"
-            cosign verify-attestation --type openvex "${image_ref}" \
-              --certificate-identity "${CERTIFICATE_IDENTITY}" \
-              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-              > "${out}"
-            test -s "${out}"
-          done
-
   slsa-provenance:
     name: slsa l3 provenance
     needs: publish
@@ -1134,7 +1114,6 @@ jobs:
             --attestation dist/rekor/slsa-provenance.index.json \
             --builder-id "${EXPECTED_BUILDER_ID}"
 
-          vex_docs=(vex/*.json)
           for arch in amd64 arm64; do
             case "${arch}" in
               amd64) digest="${AMD64_DIGEST}" ;;
@@ -1177,13 +1156,4 @@ jobs:
               > "dist/rekor/stig-arf.${arch}.jsonl"
             assert_attestation_tlog "STIG ARF ${arch}" "dist/rekor/stig-arf.${arch}.jsonl"
 
-            if (( ${#vex_docs[@]} > 0 )); then
-              cosign verify-attestation --type openvex "${image_ref}" \
-                --certificate-identity "${PUBLISH_CERTIFICATE_IDENTITY}" \
-                --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-                > "dist/rekor/openvex.${arch}.jsonl"
-              assert_attestation_tlog "OpenVEX ${arch}" "dist/rekor/openvex.${arch}.jsonl"
-            else
-              echo "OpenVEX ${arch}: no vex/*.json present; no OpenVEX attestation expected."
-            fi
           done

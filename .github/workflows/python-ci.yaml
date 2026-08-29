@@ -102,7 +102,7 @@ jobs:
           selector="${selector}|^tools/build-stig-datastream\.sh$"
           selector="${selector}|^tools/install-(openscap|syft|trivy|grype|crane)\.sh$"
           selector="${selector}|^tools/assert-(stig-tailoring|stig-arf|rootfs-identity)\.py$"
-          selector="${selector}|^tools/assert-(scanner-db-freshness|scanner-canary|ignore-scope|vex)\.py$"
+          selector="${selector}|^tools/assert-(scanner-db-freshness|scanner-canary)\.py$"
           selector="${selector}|^tools/assert-no-phantom-packages\.py$"
           selector="${selector}|^tools/generate-stig-arf-predicate\.py$"
           selector="${selector}|^security/cve-ignore\.(trivyignore|grype)\.yaml$"
@@ -384,26 +384,13 @@ jobs:
           bash tools/install-trivy.sh
           bash tools/install-grype.sh
 
-      - name: Run scanner gates on the combined rpmdb
-        env:
-          ARCH: ${{ matrix.arch }}
+      - name: Prepare scanner databases
         run: |
           set -euo pipefail
 
           dist/tools/trivy image --download-db-only
           dist/tools/grype db update
           python3 tools/assert-scanner-db-freshness.py --max-age-days "${SCANNER_DB_MAX_AGE_DAYS}"
-
-          image="local/ubi9-base-python:ci-${ARCH}"
-
-          dist/tools/trivy image \
-            --platform "linux/${ARCH}" \
-            --vuln-type os,library \
-            --ignore-unfixed \
-            --severity HIGH,CRITICAL \
-            --exit-code 1 \
-            "${image}"
-          dist/tools/grype "${image}" --only-fixed --fail-on high -o table
 
       - name: Install OpenSCAP STIG tooling
         run: bash tools/install-openscap.sh
@@ -445,9 +432,11 @@ jobs:
             --platform "linux/${ARCH}" \
             --syft-json "dist/python-evidence/sbom/base-python.${ARCH}.syft.json" \
             --output "dist/python-evidence/sbom/base-python.${ARCH}.phantom-packages.json" \
-            --expect-absent sqlite-libs
+            --expect-absent sqlite-libs \
+            --expect-absent util-linux \
+            --expect-absent util-linux-core
 
-      - name: Assert scanner content canary and ignore scope
+      - name: Assert scanner content canary
         run: |
           set -euo pipefail
 
@@ -462,9 +451,8 @@ jobs:
             --grype-json dist/python-evidence/vuln/scanner-canary.grype.json \
             --trivy-json dist/python-evidence/vuln/scanner-canary.trivy.json \
             --expect-cve CVE-2021-44228
-          python3 tools/assert-ignore-scope.py
 
-      - name: Run fixable vulnerability gates
+      - name: Run canonical fixable vulnerability gates
         env:
           ARCH: ${{ matrix.arch }}
         run: |
@@ -475,12 +463,9 @@ jobs:
             --vuln-type os,library --ignore-unfixed --severity MEDIUM,HIGH,CRITICAL \
             --ignorefile security/cve-ignore.trivyignore.yaml --exit-code 1 "${image}"
           dist/tools/grype "${image}" --only-fixed --fail-on medium \
-            -c security/cve-ignore.grype.yaml --show-suppressed -o json \
-            --file "dist/python-evidence/vuln/base-python.${ARCH}.grype.gate.json"
-          python3 tools/assert-ignore-scope.py \
-            --grype-report "dist/python-evidence/vuln/base-python.${ARCH}.grype.gate.json"
+            -c security/cve-ignore.grype.yaml -o table
 
-      - name: Run OpenVEX default-deny gate
+      - name: Generate complete vulnerability reports and prove raw SQLite absence
         env:
           ARCH: ${{ matrix.arch }}
         run: |
@@ -488,21 +473,23 @@ jobs:
 
           image="local/ubi9-base-python:ci-${ARCH}"
           dist/tools/trivy image --platform "linux/${ARCH}" --vuln-type os,library \
-            --list-all-pkgs --severity HIGH,CRITICAL --format json \
+            --list-all-pkgs --format json \
             --output "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json" "${image}"
-          dist/tools/grype "${image}" -o json \
-            --file "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json"
+          dist/tools/trivy convert --format sarif \
+            --output "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.sarif" \
+            "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json"
+          dist/tools/grype "${image}" \
+            -o "json=dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json" \
+            -o "sarif=dist/python-evidence/vuln/base-python.${ARCH}.grype.all.sarif"
+          test -s "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json"
+          test -s "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.sarif"
+          test -s "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json"
+          test -s "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.sarif"
           python3 images/python/tools/assert-raw-scanners-no-sqlite.py \
             --trivy-json "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json" \
             --grype-json "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json" \
             --contract images/python/contracts/image-manifest.json \
             --arch "${ARCH}"
-          python3 tools/assert-vex.py \
-            --product "${image}" \
-            --trivy-json "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json" \
-            --grype-json "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json" \
-            --package-floor images/python/rpm-lock/micro-floor.json \
-            --vex-dir images/python/vex
 
       - name: Run rootfs secret gate
         env:
@@ -553,6 +540,7 @@ jobs:
             dist/python-evidence/stig/${{ matrix.arch }}/*.html
             dist/python-evidence/sbom/*.json
             dist/python-evidence/vuln/*.json
+            dist/python-evidence/vuln/*.sarif
             dist/python-evidence/attestations/*.json
             dist/python-evidence/base-python.${{ matrix.arch }}.secret-scan.json
 

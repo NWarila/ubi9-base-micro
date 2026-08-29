@@ -8,7 +8,7 @@ Documentation for this repository follows the Diataxis framework.
 | How-to | [`how-to/`](how-to/) | Task guides for verification, reproduction, RPM-lock refreshes, local gates, and downstream consumption |
 | Reference | [`reference/`](reference/) | Published verification contract, image manifest, gate inventory, and contract summary |
 | Explanation | [`explanation/`](explanation/) | Reproducibility, footprint, and FIPS mechanism rationale |
-| Compliance | [`compliance/`](compliance/) | Acceptance, FIPS, NIST SP 800-190, STIG, and OpenVEX evidence notes |
+| Compliance | [`compliance/`](compliance/) | Acceptance, FIPS, NIST SP 800-190, STIG, and Python OpenVEX absence evidence notes |
 | Decisions | [`decision-records/`](decision-records/) | Repository-scope ADRs for the image contract, evidence model, workflow host determinism, and base-family topology |
 
 ## Tutorials
@@ -44,13 +44,11 @@ Documentation for this repository follows the Diataxis framework.
 - [`fips.md`](compliance/fips.md) - OpenSSL FIPS-provider ledger, family CMVP context, out-of-scope certificates, approved-mode mechanism, per-architecture validation scope, and non-FIPS-host scope.
 - [`nist-800-190.md`](compliance/nist-800-190.md) - section 4.1 image-control predicate URI, control mapping, and not-CIS-Docker scope.
 - [`stig.md`](compliance/stig.md) - image-scoped RHEL9 STIG tailoring, mass-N/A guard, ARF predicate type, and scan scope.
-- [`vex.md`](compliance/vex.md) - CODEOWNERS-gated VEX authoring flow for the
-  default-deny unfixed HIGH/CRITICAL gate, including the exact expiring TD-12
-  accept-and-track disposition.
+- [`vex.md`](compliance/vex.md) - retained Python OpenVEX absence proofs and their
+  independent enforcement wiring.
 
 ## Maintenance Ledgers
 
 - [`TECH-DEBT.md`](TECH-DEBT.md) - tracked repository debt and scoped exceptions,
-  including the Python identity-step static-analysis boundary, expiring
-  known-affected CVE dispositions, external-writer alias race, and measured
-  VEX-side descriptor-key-set and attestation-cardinality asymmetries.
+  including the Python identity-step static-analysis boundary, native TD-6 FIPS
+  exception, and external-writer alias race.

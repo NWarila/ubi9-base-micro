@@ -22,8 +22,8 @@ immutable digest rather than inferred from that declarative manifest.
 
 | Boundary | Runs on | Proves | Does not prove |
 | --- | --- | --- | --- |
-| Pull request | `pull_request` to `main` | Repository contract, lint, local build, hardening, FIPS artifact checks, SBOM and scanner gates, OpenVEX policy, NIST predicate validation, tailored STIG ARF, byte-for-byte rootfs reproducibility, and the Python release exporter exercised against a loopback-bound ephemeral registry. | Project or external publication, published signatures or attestations, SLSA provenance over a consumer-resolvable digest, Rekor roll-up, or anonymous GHCR pull. |
-| Publish | `push` to `main`, root-image `v*` tags, and Python `python/v*` tags | After a successful image-specific run: multi-arch publish, Cosign keyless signature, Syft rpmdb-derived SPDX and CycloneDX attestations, NIST SP 800-190 and STIG ARF predicates, OpenVEX attestations when needed, SLSA L3 provenance, and Rekor roll-up. Python additionally requires the index-only trust contract. | A tag's later resolution, later package visibility, later anonymous accessibility, or the continued presence of signatures and attestations. Those mutable service properties require a dated observation bound to an immutable digest. |
+| Pull request | `pull_request` to `main` | Repository contract, lint, local build, hardening, FIPS artifact checks, SBOM and native fixable scanner gates, complete report-only vulnerability evidence, NIST predicate validation, tailored STIG ARF, byte-for-byte rootfs reproducibility, and the Python release exporter exercised against a loopback-bound ephemeral registry. | Project or external publication, published signatures or attestations, SLSA provenance over a consumer-resolvable digest, Rekor roll-up, or anonymous GHCR pull. |
+| Publish | `push` to `main`, root-image `v*` tags, and Python `python/v*` tags | After a successful image-specific run: multi-arch publish, Cosign keyless signature, Syft rpmdb-derived SPDX and CycloneDX attestations, NIST SP 800-190 and STIG ARF predicates, sealed JSON/SARIF vulnerability evidence, SLSA L3 provenance, and Rekor roll-up. Python additionally requires its absence-proof OpenVEX documents and the index-only trust contract. | A tag's later resolution, later package visibility, later anonymous accessibility, or the continued presence of signatures and attestations. Those mutable service properties require a dated observation bound to an immutable digest. |
 | Post-publish audit | Clean unauthenticated verifier | Anonymous pull by digest and the full image-specific `cosign` plus `slsa-verifier` contract in [`verify.md`](verify.md) or [`../how-to/verify-a-published-image.md`](../how-to/verify-a-published-image.md#verify-base-python). | Future rebuild currency or downstream family-coherence status. |
 
 ## Micro publish scope
@@ -103,7 +103,7 @@ base-repository guards, fail-closed spellings, Cosign action/version/adjacency,
 SLSA generator caller, digest exporter, closed release argv, OCI label binding,
 attestation subject matrix, signing, trust contract, provenance, alias ordering,
 alias collisions, independent verification, contract identity, publish scope,
-gate battery, index dataflow, VEX production caller, SLSA execution-certificate
+gate battery, index dataflow, absence-proof publication, SLSA execution-certificate
 binding, pre-alias absence, and tag isolation. It also binds the complete file to
 an expected SHA-256 and byte length. That surface lock is a drift alarm, not a
 semantic replacement. The deleted secret-reference, registry-credential,
@@ -179,7 +179,7 @@ multi-architecture candidate by digest. It fetches the index bytes
 from the registry exactly once at the push-reported
 digest, requires SHA-256 over those bytes to corroborate that metadata, and
 checksums the artifact for every cross-job handoff. The same verified index
-digest selects every signing, attestation, VEX, provenance, collision-check, and
+digest selects every signing, attestation, provenance, collision-check, and
 alias consumer; no later consumer re-resolves a tag. It then reruns every image
 and evidence gate, signs the index and children, attaches all
 five image-evidence predicates to each child, and attaches the trust-contract and

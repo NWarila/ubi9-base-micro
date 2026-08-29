@@ -15,15 +15,13 @@ import io
 import json
 import os
 import re
-import runpy
 import shlex
 import subprocess
 import sys
 import tarfile
 import tempfile
 from collections import Counter
-from collections.abc import Callable, Mapping
-from datetime import date
+from collections.abc import Mapping
 from itertools import pairwise
 from pathlib import Path
 from typing import Any, cast
@@ -1229,8 +1227,6 @@ def check_required_files() -> None:
         "images/python/stig/rhel9-base-python-tailoring.xml",
         "images/python/stig/tailoring-justifications.json",
         "images/python/vex/README.md",
-        "images/python/vex/cve-2026-11940.openvex.json",
-        "images/python/vex/cve-2026-31790.openvex.json",
         "images/python/vex/cve-2026-53613.openvex.json",
         "images/python/vex/sqlite-component-not-present.openvex.json",
         "images/python/tools/run-python-gates.sh",
@@ -1264,7 +1260,6 @@ def check_required_files() -> None:
         "tools/assert-python-attestation.py",
         "tools/assert-python-provenance.py",
         "tools/assert-python-slsa-certificate.py",
-        "tools/resolve-python-index.py",
         "tools/python-trust-contract.py",
         "tools/generate-runtime-lock.py",
         "tools/rpmlock.py",
@@ -1284,11 +1279,9 @@ def check_required_files() -> None:
         "tools/install-trivy.sh",
         "tools/install-grype.sh",
         "tools/install-crane.sh",
-        "tools/assert-ignore-scope.py",
         "tools/assert-scanner-db-freshness.py",
         "tools/assert-scanner-canary.py",
         "tools/assert-sbom-rpms.py",
-        "tools/assert-vex.py",
         "tools/assert-no-rootfs-secrets.py",
         "tools/generate-nist-800-190-predicate.py",
         "tools/assert-cosign-rekor.py",
@@ -1306,9 +1299,6 @@ def check_required_files() -> None:
         "tools/verify.py",
         "stig/rhel9-base-micro-tailoring.xml",
         "stig/tailoring-justifications.json",
-        "vex/.gitkeep",
-        "vex/cve-2026-31790.openvex.json",
-        "vex/README.md",
         "tests/fixtures/scanner-canary/log4shell.cdx.json",
     ]
     require_unique_required_files(required_files)
@@ -4752,37 +4742,15 @@ def nightly_drift_signature_fixture() -> NightlyDriftInputs:
         "arch": "amd64",
         "complete": True,
         "attention_reasons": ["amd64 hardening requires attention"],
-        "cves": {
-            "raw": {"trivy": 1, "grype": 1, "unique": 1},
-            "ignored": {"unique": 1},
-            "actionable": {
-                "unique": 1,
-                "findings": [
-                    {
-                        "id": "CVE-2099-0001",
-                        "severity": "HIGH",
-                        "package": "openssl-libs",
-                        "fixable": True,
-                        "fixed_version": "3.1.0-1",
-                    }
-                ],
-            },
-        },
         "stig": {"total_rule_results": 1532, "pass": 39, "fail": 1, "not_selected": 1492},
         "secrets": {"finding_count": 1, "passed": False},
         "footprint": {"regular_file_bytes": 23841246, "limit_bytes": 26214400, "passed": True},
-        "vex": {"accepted": 0, "missing": 0},
     }
     hardening_arm64 = copy.deepcopy(hardening_amd64)
     hardening_arm64.update(
         {
             "arch": "arm64",
             "attention_reasons": [],
-            "cves": {
-                "raw": {"trivy": 0, "grype": 0, "unique": 0},
-                "ignored": {"unique": 0},
-                "actionable": {"unique": 0, "findings": []},
-            },
             "stig": {"total_rule_results": 1532, "pass": 39, "fail": 0, "not_selected": 1493},
             "secrets": {"finding_count": 0, "passed": True},
         }
@@ -4886,7 +4854,6 @@ def mutate_nightly_drift_input(inputs: NightlyDriftInputs, path: tuple[str | int
 def check_nightly_drift_signature_self_test() -> None:
     baseline_inputs = nightly_drift_signature_fixture()
     severity_mutations: list[tuple[str, tuple[str | int, ...], Any]] = [
-        ("actionable CVE identity A-to-B", (0, 0, "cves", "actionable", "findings", 0, "id"), "CVE-2099-0002"),
         ("STIG fail count 1-to-17", (0, 0, "stig", "fail"), 17),
         ("repro byte-identical boolean", (0, 2, "reproducibility", "byte_identical"), False),
         ("repro rootfs-contract boolean", (0, 2, "reproducibility", "rootfs_matches_contract"), False),
@@ -4896,17 +4863,11 @@ def check_nightly_drift_signature_self_test() -> None:
         ("run-context validity", (2, "run_url"), "http://invalid.example/run/123"),
         ("producer-attention presence", (0, 0, "attention_reasons"), []),
         ("secret finding count", (0, 0, "secrets", "finding_count"), 3),
-        ("missing-VEX count", (0, 0, "vex", "missing"), 4),
         ("safe failure_detail", (0, 2, "failure_detail"), "rpmdb digest mismatch: expected a, actual b"),
     ]
     stability_mutations: list[tuple[str, tuple[str | int, ...], Any]] = [
         ("run_url", (2, "run_url"), "https://github.com/NWarila/ubi9-base-micro/actions/runs/999"),
         ("date", (2, "date"), "2099-12-31"),
-        ("accepted non-actionable VEX", (0, 0, "vex", "accepted"), 947),
-        ("raw Trivy scanner count", (0, 0, "cves", "raw", "trivy"), 700),
-        ("raw Grype scanner count", (0, 0, "cves", "raw", "grype"), 800),
-        ("raw unique scanner count", (0, 0, "cves", "raw", "unique"), 900),
-        ("ignored scanner count", (0, 0, "cves", "ignored", "unique"), 901),
         ("footprint regular-file bytes", (0, 0, "footprint", "regular_file_bytes"), 1),
         ("footprint limit bytes", (0, 0, "footprint", "limit_bytes"), 30000000),
         ("STIG total results", (0, 0, "stig", "total_rule_results"), 9000),
@@ -5046,7 +5007,6 @@ def check_workflow() -> None:
         "python tools/assert-rpm-lock-hashes.py --self-test",
         "bash tools/generate-rpm-lock.sh --self-test",
         "tools/assert-scanner-db-freshness.py --self-test",
-        "tools/assert-vex.py --self-test",
         "tools/assert-no-rootfs-secrets.py --self-test",
         "tools/generate-nist-800-190-predicate.py --self-test",
         "tools/assert-slsa-builder-id.py --self-test",
@@ -5183,6 +5143,7 @@ def check_workflow() -> None:
         "dist/tools/trivy image --download-db-only",
         "dist/tools/grype db update",
         "tools/assert-scanner-db-freshness.py",
+        "tools/assert-scanner-canary.py",
         "GRYPE_DB_VALIDATE_AGE=true",
         "GRYPE_DB_MAX_ALLOWED_BUILT_AGE",
         "bash tools/install-openscap.sh",
@@ -5206,9 +5167,7 @@ def check_workflow() -> None:
         "--expect-absent coreutils-common",
         "--expect-absent pcre2-syntax",
         "--expect-absent alternatives",
-        "tools/assert-ignore-scope.py",
         "dist/tools/trivy image",
-        "--list-all-pkgs",
         "--ignore-unfixed",
         "--severity MEDIUM,HIGH,CRITICAL",
         "--ignorefile security/cve-ignore.trivyignore.yaml",
@@ -5216,11 +5175,6 @@ def check_workflow() -> None:
         "--only-fixed",
         "--fail-on medium",
         "-c security/cve-ignore.grype.yaml",
-        "--show-suppressed",
-        '--grype-report "${grype_gate_json}"',
-        "--format json",
-        '--file "${grype_json}"',
-        "tools/assert-vex.py",
         "tools/assert-no-rootfs-secrets.py",
         "tools/generate-nist-800-190-predicate.py",
         '--validate "${predicate}"',
@@ -5232,54 +5186,47 @@ def check_workflow() -> None:
         )
 
     freshness_index = gate_runner.find("tools/assert-scanner-db-freshness.py")
-    ignore_scope_index = gate_runner.find("python tools/assert-ignore-scope.py")
     first_trivy_scan_index = gate_runner.find("--ignore-unfixed")
     first_grype_scan_index = gate_runner.find("--only-fixed")
     require(freshness_index >= 0, "test gate runner must invoke scanner DB freshness gate")
-    require(ignore_scope_index >= 0, "test gate runner must invoke fixable-CVE ignore scope gate")
     require(first_trivy_scan_index >= 0, "test gate runner must keep Trivy fixable scan")
     require(first_grype_scan_index >= 0, "test gate runner must keep Grype fixable scan")
     require(
         freshness_index < first_trivy_scan_index and freshness_index < first_grype_scan_index,
         "scanner DB freshness gate must run before vulnerability scans",
     )
+    trivy_gate_start = gate_runner.rfind("dist/tools/trivy image", 0, first_trivy_scan_index)
+    grype_gate_start = gate_runner.rfind("dist/tools/grype", 0, first_grype_scan_index)
+    grype_gate_end = gate_runner.find("\n\n", first_grype_scan_index)
     require(
-        ignore_scope_index < first_trivy_scan_index and ignore_scope_index < first_grype_scan_index,
-        "fixable-CVE ignore scope gate must run before vulnerability scans",
+        trivy_gate_start >= 0 and grype_gate_start > trivy_gate_start and grype_gate_end > grype_gate_start,
+        "test gate runner must keep bounded native fixable scanner gates",
     )
-
-    report_start = gate_runner.find('trivy_json="dist/vuln/base-micro.${arch}.trivy.all.json"')
-    vex_start = gate_runner.find("python tools/assert-vex.py")
-    vex_end = gate_runner.find("\n\n", vex_start)
+    trivy_gate = gate_runner[trivy_gate_start:grype_gate_start]
+    grype_gate = gate_runner[grype_gate_start:grype_gate_end]
     require(
-        report_start >= 0 and vex_start > report_start and vex_end > vex_start,
-        "test gate runner must keep an identifiable bounded VEX report pass",
-    )
-    gate_pass = gate_runner[:report_start]
-    report_pass = gate_runner[report_start:vex_end]
-    scanner_report_pass = gate_runner[report_start:vex_start]
-    vex_assert = gate_runner[vex_start:vex_end]
-    require(
-        "--ignorefile security/cve-ignore.trivyignore.yaml" in gate_pass
-        and "-c security/cve-ignore.grype.yaml" in gate_pass,
+        all(
+            marker in trivy_gate
+            for marker in (
+                "--ignore-unfixed",
+                "--severity MEDIUM,HIGH,CRITICAL",
+                "--ignorefile security/cve-ignore.trivyignore.yaml",
+                "--exit-code 1",
+            )
+        )
+        and all(
+            marker in grype_gate for marker in ("--only-fixed", "--fail-on medium", "-c security/cve-ignore.grype.yaml")
+        ),
         "fixable scanner gate pass must use both explicit non-default ignore files",
     )
-    require(
-        "--ignorefile" not in report_pass and "-c security/cve-ignore.grype.yaml" not in report_pass,
-        "VEX report pass must remain unfiltered",
-    )
-    require(
-        "--severity HIGH,CRITICAL" in scanner_report_pass,
-        "Trivy VEX report severity scope must remain HIGH,CRITICAL",
-    )
-    require(
-        "--list-all-pkgs" in scanner_report_pass,
-        "Trivy VEX report pass must enumerate the full package inventory",
-    )
-    require(
-        "--package-floor contracts/image-manifest.json" in vex_assert,
-        "test gate runner assert-vex invocation must use the root image package-floor contract",
-    )
+    for retired in (
+        "assert-vex.py",
+        "assert-ignore-scope.py",
+        ".trivy.all.json",
+        ".grype.all.json",
+        ".grype.gate.json",
+    ):
+        require(retired not in gate_runner, f"test gate runner retains retired policy/report marker: {retired}")
 
     forbidden = [
         "NWarila/.github/.github/workflows/",
@@ -5587,8 +5534,6 @@ def check_publish_workflow() -> None:
         "GRYPE_DB_VALIDATE_AGE=true",
         "GRYPE_DB_MAX_ALLOWED_BUILT_AGE",
         "${GITHUB_ENV}",
-        "Assert fixable-CVE ignore scope",
-        "tools/assert-ignore-scope.py",
         "docker buildx imagetools inspect --raw",
         "steps.platform_digests.outputs.amd64_digest",
         "steps.platform_digests.outputs.arm64_digest",
@@ -5609,18 +5554,25 @@ def check_publish_workflow() -> None:
         "--only-fixed",
         "--fail-on medium",
         "-c security/cve-ignore.grype.yaml",
-        "--show-suppressed",
-        '--grype-report "${grype_gate_json}"',
-        "Run OpenVEX default-deny gates",
+        "Generate complete vulnerability reports",
         "--format json",
-        '--file "${grype_json}"',
-        "tools/assert-vex.py",
-        "--package-floor contracts/image-manifest.json",
+        "dist/tools/trivy convert",
+        "--format sarif",
+        '-o "json=${grype_json}"',
+        '-o "sarif=${grype_sarif}"',
+        "Seal complete vulnerability reports",
+        "sha256sum --check SHA256SUMS",
+        "Upload complete vulnerability reports",
+        "retention-days: 90",
+        "compression-level: 0",
+        "github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9",
+        "category: base-micro/trivy/amd64",
+        "category: base-micro/grype/amd64",
+        "category: base-micro/trivy/arm64",
+        "category: base-micro/grype/arm64",
         f"cosign attest --type {predicate_type('spdx')}",
         f"cosign attest --type {predicate_type('cyclonedx')}",
         f"cosign verify-attestation --type {predicate_type('spdx')}",
-        f"cosign attest --type {predicate_type('openvex')}",
-        f"cosign verify-attestation --type {predicate_type('openvex')}",
         "Run runtime rootfs secret gates",
         "tools/assert-no-rootfs-secrets.py",
         "Generate NIST SP 800-190 image-control predicates",
@@ -5649,7 +5601,6 @@ def check_publish_workflow() -> None:
         'assert_attestation_tlog "CycloneDX SBOM ${arch}"',
         'assert_attestation_tlog "NIST 800-190 image ${arch}"',
         'assert_attestation_tlog "STIG ARF ${arch}"',
-        'assert_attestation_tlog "OpenVEX ${arch}"',
         'COSIGN_YES: "true"',
         slsa_generator_action() + "@" + slsa_generator_tag(),
         SLSA_GENERATOR_SHA,
@@ -5715,62 +5666,75 @@ def check_publish_workflow() -> None:
     )
 
     freshness_index = text.find("Assert scanner DB freshness")
-    ignore_scope_index = text.find("Assert fixable-CVE ignore scope")
     first_trivy_scan_index = text.find("Run Trivy fixable vulnerability gates")
     first_grype_scan_index = text.find("Run Grype fixable vulnerability gates")
+    report_index = text.find("Generate complete vulnerability reports")
     require(freshness_index >= 0, "publish workflow must assert scanner DB freshness")
-    require(ignore_scope_index >= 0, "publish workflow must assert fixable-CVE ignore scope")
     require(
-        freshness_index < first_trivy_scan_index and freshness_index < first_grype_scan_index,
-        "publish workflow scanner DB freshness gate must run before vulnerability scans",
-    )
-    require(
-        ignore_scope_index < first_trivy_scan_index and ignore_scope_index < first_grype_scan_index,
-        "publish workflow fixable-CVE ignore scope gate must run before vulnerability scans",
+        freshness_index < first_trivy_scan_index < first_grype_scan_index < report_index,
+        "publish workflow must run freshness, native fixable gates, then report-only scans",
     )
 
     trivy_gate = text[first_trivy_scan_index:first_grype_scan_index]
-    vex_report_index = text.find("Run OpenVEX default-deny gates")
-    require(vex_report_index > first_grype_scan_index, "publish workflow must keep an identifiable VEX report pass")
-    grype_gate = text[first_grype_scan_index:vex_report_index]
-    vex_report_end = text.find("\n      - name:", vex_report_index + 1)
-    require(vex_report_end > vex_report_index, "publish workflow must keep a bounded VEX report step")
-    report_pass = text[vex_report_index:vex_report_end]
+    grype_gate = text[first_grype_scan_index:report_index]
+    report_end = text.find("\n      - name:", report_index + 1)
+    require(report_end > report_index, "publish workflow must keep a bounded report-only step")
+    report_pass = text[report_index:report_end]
     trivy_report_index = report_pass.find("dist/tools/trivy image")
     grype_report_index = report_pass.find('dist/tools/grype "${image_ref}"')
-    vex_assert_index = report_pass.find("python tools/assert-vex.py")
     require(
-        0 <= trivy_report_index < grype_report_index < vex_assert_index,
-        "publish VEX report step must keep its Trivy -> Grype -> assert-vex command order",
+        0 <= trivy_report_index < grype_report_index,
+        "publish report-only step must keep its Trivy -> Grype scan order",
     )
     trivy_report = report_pass[trivy_report_index:grype_report_index]
-    grype_report = report_pass[grype_report_index:vex_assert_index]
-    vex_assert = report_pass[vex_assert_index:]
+    grype_report = report_pass[grype_report_index:]
     require(
-        "--ignorefile security/cve-ignore.trivyignore.yaml" in trivy_gate,
-        "publish Trivy fixable gate must use the explicit non-default ignore file",
+        all(
+            marker in trivy_gate
+            for marker in (
+                "--ignore-unfixed",
+                "--severity MEDIUM,HIGH,CRITICAL",
+                "--ignorefile security/cve-ignore.trivyignore.yaml",
+                "--exit-code 1",
+            )
+        ),
+        "publish Trivy fixable gate must keep the native blocking flags and TD6 ignore file",
     )
     require(
-        "-c security/cve-ignore.grype.yaml" in grype_gate,
-        "publish Grype fixable gate must use the explicit non-default ignore file",
+        all(
+            marker in grype_gate for marker in ("--only-fixed", "--fail-on medium", "-c security/cve-ignore.grype.yaml")
+        ),
+        "publish Grype fixable gate must keep the native blocking flags and TD6 config",
     )
     require(
-        "--ignorefile" not in report_pass and "-c security/cve-ignore.grype.yaml" not in report_pass,
-        "publish VEX report pass must remain unfiltered",
-    )
-    require("--severity HIGH,CRITICAL" in trivy_report, "publish Trivy VEX report scope must remain HIGH,CRITICAL")
-    require(
-        "--list-all-pkgs" in trivy_report,
-        "publish Trivy VEX report pass must enumerate the full package inventory",
+        "--ignorefile" not in report_pass
+        and "-c security/cve-ignore.grype.yaml" not in report_pass
+        and "--exit-code" not in report_pass
+        and "--fail-on" not in report_pass,
+        "publish report-only pass must remain complete and non-blocking on findings",
     )
     require(
-        'dist/tools/grype "${image_ref}" \\\n              --platform "linux/${arch}" \\\n' in grype_report,
-        "publish Grype VEX report invocation must bind --platform linux/${arch}",
+        '--output "${trivy_json}"' in trivy_report
+        and "dist/tools/trivy convert" in trivy_report
+        and '--output "${trivy_sarif}"' in trivy_report,
+        "publish Trivy report pass must scan once to JSON and convert that JSON to SARIF",
     )
     require(
-        "--package-floor contracts/image-manifest.json" in vex_assert,
-        "publish assert-vex invocation must use the root image package-floor contract",
+        'dist/tools/grype "${image_ref}" \\\n              --platform "linux/${arch}" \\\n' in grype_report
+        and '-o "json=${grype_json}"' in grype_report
+        and '-o "sarif=${grype_sarif}"' in grype_report,
+        "publish Grype report-only scan must emit JSON and SARIF in one invocation",
     )
+    require_action_sha_pin(text, "publish workflow", "actions/upload-artifact", count=1)
+    require_action_sha_pin(text, "publish workflow", "github/codeql-action/upload-sarif", count=4)
+    require(text.count("security-events: write") == 1, "only the publish job may write security events")
+    require(
+        "permissions:\n      contents: read\n      id-token: write\n      packages: write\n      security-events: write"
+        in publish_job,
+        "publish job must preserve contents/packages/id-token permissions and add security-events write",
+    )
+    for retired in ("assert-vex.py", "assert-ignore-scope.py", "openvex", "vex/"):
+        require(retired not in text.lower(), f"publish workflow retains retired root OpenVEX marker: {retired}")
 
     forbidden = [
         "-regexp",
@@ -6104,9 +6068,9 @@ PYTHON_EVIDENCE_STEP_ORDER = (
     "Run tailored STIG ARF gate",
     "Install Syft for SBOM generation",
     "Generate and gate rpmdb SBOMs",
-    "Assert scanner content canary and ignore scope",
-    "Run fixable vulnerability gates",
-    "Run OpenVEX default-deny gate",
+    "Assert scanner content canary",
+    "Run canonical fixable vulnerability gates",
+    "Generate complete vulnerability reports and prove raw SQLite absence",
     "Run rootfs secret gate",
     "Generate and validate NIST SP 800-190 predicate",
     "Upload evidence artifacts",
@@ -6115,7 +6079,7 @@ PYTHON_EVIDENCE_SHARED_DEPENDENCIES = (
     "^tools/build-stig-datastream\\.sh$",
     "^tools/install-(openscap|syft|trivy|grype|crane)\\.sh$",
     "^tools/assert-(stig-tailoring|stig-arf|rootfs-identity)\\.py$",
-    "^tools/assert-(scanner-db-freshness|scanner-canary|ignore-scope|vex)\\.py$",
+    "^tools/assert-(scanner-db-freshness|scanner-canary)\\.py$",
     "^tools/assert-no-phantom-packages\\.py$",
     "^tools/generate-stig-arf-predicate\\.py$",
     "^security/cve-ignore\\.(trivyignore|grype)\\.yaml$",
@@ -6135,11 +6099,12 @@ PYTHON_EVIDENCE_UPLOAD_PATHS = (
     "dist/python-evidence/stig/${{ matrix.arch }}/*.html",
     "dist/python-evidence/sbom/*.json",
     "dist/python-evidence/vuln/*.json",
+    "dist/python-evidence/vuln/*.sarif",
     "dist/python-evidence/attestations/*.json",
     "dist/python-evidence/base-python.${{ matrix.arch }}.secret-scan.json",
 )
-PYTHON_CI_WORKFLOW_SHA256 = "1d3f2355282ba4738b077096fd82c4861605cdce9e234f8fe1c877d6f22bf424"
-PYTHON_CI_WORKFLOW_BYTE_LENGTH = 30587
+PYTHON_CI_WORKFLOW_SHA256 = "374f043913e9d7d3241125fb59c64fbf7cc3a786febff5e046a20156f10177ee"
+PYTHON_CI_WORKFLOW_BYTE_LENGTH = 30251
 PYTHON_CI_JOB_IDS = ("changes", "self-tests", "build", "reproducibility", "python-required")
 PYTHON_CI_TRIGGER_BLOCK = (
     "on:\n  pull_request:\n    branches: [main]\n  push:\n    branches: [main]\n  workflow_dispatch:\n\n"
@@ -6150,7 +6115,7 @@ PYTHON_CI_SELECTOR_LINES = (
     'selector="${selector}|^tools/build-stig-datastream\\.sh$"',
     'selector="${selector}|^tools/install-(openscap|syft|trivy|grype|crane)\\.sh$"',
     'selector="${selector}|^tools/assert-(stig-tailoring|stig-arf|rootfs-identity)\\.py$"',
-    'selector="${selector}|^tools/assert-(scanner-db-freshness|scanner-canary|ignore-scope|vex)\\.py$"',
+    'selector="${selector}|^tools/assert-(scanner-db-freshness|scanner-canary)\\.py$"',
     'selector="${selector}|^tools/assert-no-phantom-packages\\.py$"',
     'selector="${selector}|^tools/generate-stig-arf-predicate\\.py$"',
     'selector="${selector}|^security/cve-ignore\\.(trivyignore|grype)\\.yaml$"',
@@ -6889,16 +6854,7 @@ def check_python_ci_preflight_semantic_self_test(only_label: str | None = None) 
     require(not baseline, "python CI preflight semantic baseline failed: " + "; ".join(baseline))
     require(_python_ci_yaml_parse_error(workflow) is None, "python CI committed workflow must parse as YAML")
     if only_label is None:
-        committed = subprocess.run(
-            ["git", "show", "HEAD:.github/workflows/python-ci.yaml"],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        require(committed.returncode == 0, "python CI detect oracle could not read the committed workflow")
-        require(committed.stdout == workflow, "python CI detect oracle requires the working workflow to equal HEAD")
-        _python_ci_detect_oracle(committed.stdout)
+        _python_ci_detect_oracle(workflow)
 
     selected = 0
     for label, mutated, expected_error in _python_ci_semantic_fixtures(workflow):
@@ -7121,8 +7077,8 @@ def check_python_ci_preflight() -> None:
 
 
 PUBLISH_PYTHON_WORKFLOW = ".github/workflows/publish-python.yaml"
-PUBLISH_PYTHON_WORKFLOW_SHA256 = "9c27a2f12ea0d9f1ae43a39f24aa39b30c95d97ac88b994e492a56b6678d6b1e"
-PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH = 84687
+PUBLISH_PYTHON_WORKFLOW_SHA256 = "ab01553fb26c685c8a3e91d88dfdec77ae36601f4604ff0db93af9e7ee79d6e3"
+PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH = 85732
 
 
 def _workflow_action_with_text(step: str) -> str:
@@ -7354,7 +7310,7 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
             ("slsa-generator-tag-integrity", (("contents", "read"),)),
             ("publish-scope", (("contents", "read"), ("packages", "read"))),
             ("publish", (("contents", "read"), ("packages", "write"))),
-            ("gate-evidence", (("contents", "read"), ("packages", "read"))),
+            ("gate-evidence", (("contents", "read"), ("packages", "read"), ("security-events", "write"))),
             ("sign-attest", (("contents", "read"), ("id-token", "write"), ("packages", "write"))),
             (
                 "slsa-provenance",
@@ -7513,21 +7469,35 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
         and "--print-base" in workflow
         and "needs.publish-scope.outputs.publish == 'true'" in publish
     )
-    gates_invalid = not all(
-        marker in gate_evidence
-        for marker in (
-            "assert-reproducible.py",
-            "assert-parent-subset.py",
-            "run-python-gates.sh",
-            "assert-scanner-db-freshness.py",
-            "assert-scanner-canary.py",
-            "assert-ignore-scope.py",
-            "assert-no-phantom-packages.py",
-            "assert-raw-scanners-no-sqlite.py",
-            "assert-no-rootfs-secrets.py",
-            "generate-nist-800-190-predicate.py",
-            "run-stig-arf.sh",
+    gates_invalid = (
+        not all(
+            marker in gate_evidence
+            for marker in (
+                "assert-reproducible.py",
+                "assert-parent-subset.py",
+                "run-python-gates.sh",
+                "assert-scanner-db-freshness.py",
+                "assert-scanner-canary.py",
+                "assert-no-phantom-packages.py",
+                "--expect-absent sqlite-libs",
+                "--expect-absent util-linux",
+                "--expect-absent util-linux-core",
+                "assert-raw-scanners-no-sqlite.py",
+                "assert-no-rootfs-secrets.py",
+                "generate-nist-800-190-predicate.py",
+                "run-stig-arf.sh",
+                "dist/tools/trivy convert",
+                '-o "json=${vuln_dir}/base-python.grype.all.json"',
+                '-o "sarif=${vuln_dir}/base-python.grype.all.sarif"',
+                "find attestations sbom stig vuln -type f",
+                "retention-days: 90",
+                "category: base-python/trivy/amd64",
+                "category: base-python/grype/amd64",
+                "category: base-python/trivy/arm64",
+                "category: base-python/grype/arm64",
+            )
         )
+        or gate_evidence.count("github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9") != 4
     )
     index_dataflow_invalid = not (
         publish.count('crane manifest "${IMAGE_REF}" > dist/python-index/index.json') == 1
@@ -7547,7 +7517,6 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
         and workflow.count("--require-file index.json") == 4
         and '--consumer "sign=${INDEX_DIGEST}"' in sign_attest
         and '--consumer "attest=${INDEX_DIGEST}"' in sign_attest
-        and '--consumer "vex=${INDEX_DIGEST}"' in gate_evidence
         and '--consumer "alias=${INDEX_DIGEST}"' in aliases
         and "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f" in publish
         and gate_evidence.count("actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131") == 1
@@ -7555,19 +7524,6 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
         and rekor.count("actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131") == 1
         and aliases.count("actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131") == 1
     )
-    vex_production_invalid = not all(
-        marker in gate_evidence
-        for marker in (
-            "python3 tools/assert-vex.py",
-            '--product "${image_ref}"',
-            '--trivy-json "${vuln_dir}/base-python.trivy.all.json"',
-            '--grype-json "${vuln_dir}/base-python.grype.all.json"',
-            "--package-floor images/python/rpm-lock/micro-floor.json",
-            "--vex-dir images/python/vex",
-            '--index-reference "${IMAGE_REPOSITORY}@${INDEX_DIGEST}"',
-            "--index-manifest dist/python-index/index.json",
-        )
-    ) or any(marker in workflow for marker in ("bind-python-openvex", "dist/python-publish/evidence/vex"))
     slsa_execution_invalid = not all(
         marker in rekor
         for marker in (
@@ -7652,8 +7608,6 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
     reject(gates_invalid, "Python publish gate battery mismatch")
     # CHECK: python-publish-index-dataflow
     reject(index_dataflow_invalid, "Python publish trusted registry index dataflow mismatch")
-    # CHECK: python-publish-vex-production
-    reject(vex_production_invalid, "Python publish complete VEX production caller mismatch")
     # CHECK: python-publish-slsa-execution
     reject(slsa_execution_invalid, "Python publish SLSA execution certificate binding mismatch")
     # CHECK: python-publish-pre-alias
@@ -7836,12 +7790,6 @@ def _publish_python_workflow_fixtures(workflow: str) -> list[tuple[str, str, str
             "Python publish trusted registry index dataflow mismatch",
             2,
         ),
-        changed(
-            "vex-production",
-            "--vex-dir images/python/vex",
-            "--vex-dir vex",
-            "Python publish complete VEX production caller mismatch",
-        ),
         (
             "slsa-execution",
             workflow.replace(
@@ -7938,7 +7886,6 @@ def check_publish_python_workflow_checker_mutation_self_test() -> None:
         ("python-publish-scope", "scope_invalid", "scope"),
         ("python-publish-gates", "gates_invalid", "gates"),
         ("python-publish-index-dataflow", "index_dataflow_invalid", "index-dataflow"),
-        ("python-publish-vex-production", "vex_production_invalid", "vex-production"),
         ("python-publish-slsa-execution", "slsa_execution_invalid", "slsa-execution"),
         ("python-publish-pre-alias", "pre_alias_invalid", "pre-alias"),
         ("python-publish-tag-isolation", "tag_isolation_invalid", "tag-isolation"),
@@ -8031,7 +7978,8 @@ def python_evidence_errors(workflow: str, tailoring: str, ledger: str, gitignore
             positions.append(build_steps.index(step_name))
     expect(
         len(positions) == len(PYTHON_EVIDENCE_STEP_ORDER) and positions == sorted(positions),
-        "python CI evidence steps must retain the complete STIG -> SBOM -> scanners -> VEX -> secret -> NIST order",
+        "python CI evidence steps must retain the complete "
+        "STIG -> SBOM -> fixable gates -> reports -> secret -> NIST order",
     )
     expect(
         build_steps.index("Run rootfs secret gate")
@@ -8047,16 +7995,17 @@ def python_evidence_errors(workflow: str, tailoring: str, ledger: str, gitignore
         "images/python/tools/assert-sbom-rpms.py",
         "tools/assert-no-phantom-packages.py",
         "--expect-absent sqlite-libs",
+        "--expect-absent util-linux",
+        "--expect-absent util-linux-core",
         "images/python/tools/assert-raw-scanners-no-sqlite.py",
         "images/python/tools/assert-no-rootfs-secrets.py",
         "images/python/tools/generate-nist-800-190-predicate.py",
-        "--vex-dir images/python/vex",
         "tools/assert-scanner-canary.py",
-        "tools/assert-ignore-scope.py",
         "--list-all-pkgs",
         "--severity MEDIUM,HIGH,CRITICAL",
         "--fail-on medium",
-        "--package-floor images/python/rpm-lock/micro-floor.json",
+        "dist/tools/trivy convert",
+        "*.sarif",
         "--validate",
         "timeout-minutes: 120",
     ):
@@ -8072,19 +8021,34 @@ def python_evidence_errors(workflow: str, tailoring: str, ledger: str, gitignore
     sbom_step = _workflow_named_step(build_block, "Generate and gate rpmdb SBOMs")
     expect(
         sbom_step.count("tools/assert-no-phantom-packages.py") == 1
-        and sbom_step.count("--expect-absent sqlite-libs") == 1,
-        "python SBOM step must run the shared phantom-package gate once with sqlite-libs expected absent",
+        and all(
+            len(
+                re.findall(
+                    rf"^\s*--expect-absent\s+{re.escape(package)}(?:\s+\\)?\s*$",
+                    sbom_step,
+                    re.MULTILINE,
+                )
+            )
+            == 1
+            for package in ("sqlite-libs", "util-linux", "util-linux-core")
+        ),
+        "python SBOM step must run the shared phantom-package gate once with all absence claims pinned",
     )
-    vex_step = _workflow_named_step(build_block, "Run OpenVEX default-deny gate")
+    report_step = _workflow_named_step(
+        build_block,
+        "Generate complete vulnerability reports and prove raw SQLite absence",
+    )
     raw_gate = "images/python/tools/assert-raw-scanners-no-sqlite.py"
-    vex_gate = "python3 tools/assert-vex.py"
     expect(
-        vex_step.count(raw_gate) == 1
-        and vex_step.count(vex_gate) == 1
-        and vex_step.index(raw_gate) < vex_step.index(vex_gate)
-        if raw_gate in vex_step and vex_gate in vex_step
-        else False,
-        "python raw SQLite scanner assertion must run exactly once before OpenVEX is applied",
+        report_step.count(raw_gate) == 1
+        and report_step.count("dist/tools/trivy image") == 1
+        and report_step.count("dist/tools/trivy convert") == 1
+        and report_step.count('dist/tools/grype "${image}"') == 1
+        and all(
+            report_step.count(suffix) >= 1
+            for suffix in (".trivy.all.json", ".trivy.all.sarif", ".grype.all.json", ".grype.all.sarif")
+        ),
+        "python report step must scan once per scanner, emit JSON and SARIF, and prove raw SQLite absence",
     )
     upload_step = _workflow_named_step(build_block, "Upload evidence artifacts")
     expect(bool(upload_step), "python CI must contain one parseable Upload evidence artifacts step")
@@ -8092,7 +8056,7 @@ def python_evidence_errors(workflow: str, tailoring: str, ledger: str, gitignore
     expect(
         Counter(upload_paths) == Counter(PYTHON_EVIDENCE_UPLOAD_PATHS)
         and len(upload_paths) == len(PYTHON_EVIDENCE_UPLOAD_PATHS),
-        "python evidence upload path set must contain exactly the seven allowlisted evidence globs, "
+        "python evidence upload path set must contain exactly the allowlisted evidence globs, "
         "with no missing, extra, or duplicate paths",
     )
 
@@ -8213,26 +8177,6 @@ def check_python_evidence_self_test() -> None:
         "--expect-absent other-libs",
         1,
     )
-    raw_scanner_block = (
-        "          python3 images/python/tools/assert-raw-scanners-no-sqlite.py \\\n"
-        '            --trivy-json "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json" \\\n'
-        '            --grype-json "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json" \\\n'
-        "            --contract images/python/contracts/image-manifest.json \\\n"
-        '            --arch "${ARCH}"\n'
-    )
-    vex_block = (
-        "          python3 tools/assert-vex.py \\\n"
-        '            --product "${image}" \\\n'
-        '            --trivy-json "dist/python-evidence/vuln/base-python.${ARCH}.trivy.all.json" \\\n'
-        '            --grype-json "dist/python-evidence/vuln/base-python.${ARCH}.grype.all.json" \\\n'
-        "            --package-floor images/python/rpm-lock/micro-floor.json \\\n"
-        "            --vex-dir images/python/vex\n"
-    )
-    raw_scanner_after_vex = workflow.replace(
-        raw_scanner_block + vex_block,
-        vex_block + raw_scanner_block,
-        1,
-    )
     mutations: list[tuple[str, tuple[str, str, str, str, str]]] = [
         (
             "both SSG pins removed",
@@ -8269,10 +8213,6 @@ def check_python_evidence_self_test() -> None:
                 gitignore,
                 codeowners,
             ),
-        ),
-        (
-            "vex dir default",
-            (workflow.replace("--vex-dir images/python/vex", "--vex-only"), tailoring, ledger, gitignore, codeowners),
         ),
         (
             "shared dependency dropped",
@@ -8331,10 +8271,6 @@ def check_python_evidence_self_test() -> None:
         (
             "phantom-package absent expectation changed",
             (phantom_expectation_changed, tailoring, ledger, gitignore, codeowners),
-        ),
-        (
-            "raw scanner assertion moved after VEX",
-            (raw_scanner_after_vex, tailoring, ledger, gitignore, codeowners),
         ),
     ]
     rejected = 0
@@ -8497,8 +8433,8 @@ def check_python_contract_schema_self_test() -> None:
 
 PYTHON_NIST_POSTURES = {
     "4.1.1": (
-        "Fixable MEDIUM, HIGH, and CRITICAL OS/library findings fail closed through both Trivy and Grype, with "
-        "OpenVEX default-deny for unfixed HIGH/CRITICAL findings and rpmdb-derived package evidence."
+        "Fixable MEDIUM, HIGH, and CRITICAL OS/library findings fail closed through both Trivy and Grype. "
+        "Complete findings are emitted report-only as JSON and SARIF, with rpmdb-derived package evidence."
     ),
     "4.1.2": (
         "The runtime is built from digest-pinned UBI micro, removes shell and package-manager executables, runs "
@@ -8525,20 +8461,24 @@ PYTHON_NIST_EVIDENCE = {
     "4.1.1": {
         (
             "workflow",
-            ".github/workflows/python-ci.yaml#Run fixable vulnerability gates",
+            ".github/workflows/python-ci.yaml#Run canonical fixable vulnerability gates",
             "Trivy fixable MEDIUM/HIGH/CRITICAL gate",
         ),
         (
             "workflow",
-            ".github/workflows/python-ci.yaml#Run fixable vulnerability gates",
+            ".github/workflows/python-ci.yaml#Run canonical fixable vulnerability gates",
             "Grype fixable MEDIUM/HIGH/CRITICAL gate",
         ),
         (
             "workflow",
-            ".github/workflows/python-ci.yaml#Run OpenVEX default-deny gate",
-            "OpenVEX default-deny policy",
+            ".github/workflows/python-ci.yaml#Generate complete vulnerability reports and prove raw SQLite absence",
+            "complete Trivy JSON and SARIF report-only evidence",
         ),
-        ("script", "tools/assert-vex.py", "default-deny OpenVEX assertion"),
+        (
+            "workflow",
+            ".github/workflows/python-ci.yaml#Generate complete vulnerability reports and prove raw SQLite absence",
+            "complete Grype JSON and SARIF report-only evidence",
+        ),
         ("script", "images/python/tools/assert-sbom-rpms.py", "rpmdb-backed SBOM assertion"),
     },
     "4.1.2": {
@@ -8567,12 +8507,12 @@ PYTHON_NIST_EVIDENCE = {
         ),
         (
             "workflow",
-            ".github/workflows/python-ci.yaml#Run fixable vulnerability gates",
+            ".github/workflows/python-ci.yaml#Run canonical fixable vulnerability gates",
             "Trivy scan over locally built image contents",
         ),
         (
             "workflow",
-            ".github/workflows/python-ci.yaml#Run fixable vulnerability gates",
+            ".github/workflows/python-ci.yaml#Run canonical fixable vulnerability gates",
             "Grype scan over locally built image contents",
         ),
         (
@@ -9270,118 +9210,11 @@ def python_sqlite_vex_errors(document: dict[str, Any]) -> list[str]:
     return errors
 
 
-def _python_sqlite_vex_replay(document: dict[str, Any]) -> list[str]:
-    errors: list[str] = []
-    with tempfile.TemporaryDirectory(prefix="verify-python-vex-") as raw_tmp:
-        tmp = Path(raw_tmp)
-        vex_dir = tmp / "vex"
-        vex_dir.mkdir()
-        (vex_dir / "sqlite.openvex.json").write_text(
-            json.dumps(document, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        trivy = tmp / "trivy.json"
-        grype = tmp / "grype.json"
-        package_floor = tmp / "package-floor.json"
-        package_floor.write_text(
-            json.dumps({"runtime": {"package_floor": ["glibc"]}}),
-            encoding="utf-8",
-        )
-        for product in PYTHON_SQLITE_VEX_PRODUCTS[:2]:
-            architecture = "amd64" if product.endswith("amd64") else "arm64"
-            image_id = "sha256:" + (("a" if architecture == "amd64" else "b") * 64)
-            trivy.write_text(
-                json.dumps(
-                    {
-                        "SchemaVersion": 2,
-                        "Trivy": {"Version": "0.71.0"},
-                        "ArtifactName": product,
-                        "ArtifactType": "container_image",
-                        "Metadata": {
-                            "OS": {"Family": "redhat", "Name": "9.8"},
-                            "ImageID": image_id,
-                            "ImageConfig": {"architecture": architecture},
-                        },
-                        "Results": [
-                            {
-                                "Target": f"{product} (redhat 9.8)",
-                                "Class": "os-pkgs",
-                                "Type": "redhat",
-                                "Packages": [{"Name": "glibc", "Version": "2.34"}],
-                                "Vulnerabilities": [
-                                    {
-                                        "VulnerabilityID": cve,
-                                        "PkgName": "sqlite-libs",
-                                        "InstalledVersion": "3.34.1-10.el9_8",
-                                        "Severity": "HIGH",
-                                    }
-                                    for cve in PYTHON_SQLITE_CVES
-                                ],
-                            }
-                        ],
-                    }
-                ),
-                encoding="utf-8",
-            )
-            grype.write_text(
-                json.dumps(
-                    {
-                        "descriptor": {"name": "grype", "version": "0.115.0"},
-                        "distro": {"name": "redhat", "version": "9.8"},
-                        "source": {
-                            "type": "image",
-                            "target": {
-                                "userInput": product,
-                                "imageID": image_id,
-                                "architecture": architecture,
-                                "repoDigests": [],
-                            },
-                        },
-                        "matches": [],
-                    }
-                ),
-                encoding="utf-8",
-            )
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(ROOT / "tools/assert-vex.py"),
-                    "--product",
-                    product,
-                    "--trivy-json",
-                    str(trivy),
-                    "--grype-json",
-                    str(grype),
-                    "--package-floor",
-                    str(package_floor),
-                    "--vex-dir",
-                    str(vex_dir),
-                ],
-                cwd=ROOT,
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            output = result.stdout + result.stderr
-            if result.returncode != 0:
-                errors.append(
-                    f"python SQLite VEX default-deny replay did not accept the five absence statements for {product}: "
-                    f"{result.stderr.strip() or result.stdout.strip()}"
-                )
-            errors.extend(
-                f"python SQLite VEX default-deny replay for {product} did not accept {cve}"
-                for cve in PYTHON_SQLITE_CVES
-                if cve not in output
-            )
-    return errors
-
-
 def check_python_sqlite_vex() -> None:
     document = json.loads(read(PYTHON_SQLITE_VEX_PATH))
     require(isinstance(document, dict), "python SQLite VEX document must be a JSON object")
     typed_document = cast(dict[str, Any], document)
     errors = python_sqlite_vex_errors(typed_document)
-    errors.extend(_python_sqlite_vex_replay(typed_document))
     require(not errors, "python SQLite VEX contract failed: " + "; ".join(errors))
     check_python_sqlite_vex_self_test()
     print("python SQLite VEX: five component-not-present statements accepted for both CI products")
@@ -9437,982 +9270,7 @@ def check_python_sqlite_vex_self_test() -> None:
             rejected += 1
         else:
             raise VerifyError(f"python SQLite VEX mutation unexpectedly passed: {label}")
-    print(
-        f"python SQLite VEX mutation probes: {rejected}/{len(mutations)} rejected; "
-        "both CI product default-deny replays accepted all five component-not-present statements"
-    )
-
-
-CVE_2026_11940_FIXED_HISTORY_VEX_PATH = "images/python/vex/cve-2026-11940.openvex.json"
-PYTHON_PUBLISHED_REPOSITORY = "ghcr.io/nwarila/ubi9-base-python"
-PYTHON_PUBLISHED_CHILD_POLICY_PRODUCT = (
-    "https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-python/published-platform-children"
-)
-CVE_2026_11940_FIXED_HISTORY_PRODUCTS = (
-    "pkg:rpm/redhat/python3.12@3.12.14-1.el9_8?arch=x86_64&epoch=0",
-    "pkg:rpm/redhat/python3.12-libs@3.12.14-1.el9_8?arch=x86_64&epoch=0",
-    "pkg:rpm/redhat/python3.12@3.12.14-1.el9_8?arch=aarch64&epoch=0",
-    "pkg:rpm/redhat/python3.12-libs@3.12.14-1.el9_8?arch=aarch64&epoch=0",
-)
-CVE_2026_14456_PYTHON_VEX_PATH = "images/python/vex/cve-2026-14456.openvex.json"
-CVE_2026_14456_MICRO_VEX_PATH = "vex/cve-2026-14456.openvex.json"
-MICRO_PUBLISHED_REPOSITORY = "ghcr.io/nwarila/ubi9-base-micro"
-MICRO_PUBLISHED_CHILD_POLICY_PRODUCT = (
-    "https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-micro/published-platform-children"
-)
-OPENSSL_LIBS_SUBCOMPONENT = "pkg:rpm/redhat/openssl-libs@3.5.5-5.el9_8?epoch=1"
-CVE_2026_14456_PYTHON_ACTION = (
-    "This image ships openssl-libs 1:3.5.5-5.el9_8 (OpenSSL 3.5.x), whose QUIC server implementation "
-    "allows denial of service via unbounded memory growth. As of 2026-08-18 Red Hat lists RHEL 9 openssl "
-    "as Affected with no fixed RPM; Red Hat Enterprise Linux 9.8 and later ship OpenSSL 3.5.x, and "
-    "earlier RHEL versions do not include the QUIC server feature. Risk is realized only by an application "
-    "that explicitly enables an OpenSSL QUIC server listener; this image runs no server process by default "
-    "and its entrypoint is the Python interpreter. Consumers that enable an OpenSSL QUIC server listener "
-    "must mitigate at the application boundary until a fixed RPM is absorbed. Accepted and tracked as "
-    "TD-12 in docs/TECH-DEBT.md; review-by 2026-10-01."
-)
-CVE_2026_14456_MICRO_ACTION = (
-    "This image ships openssl-libs 1:3.5.5-5.el9_8 (OpenSSL 3.5.x), whose QUIC server implementation "
-    "allows denial of service via unbounded memory growth. As of 2026-08-18 Red Hat lists RHEL 9 openssl "
-    "as Affected with no fixed RPM; Red Hat Enterprise Linux 9.8 and later ship OpenSSL 3.5.x, and "
-    "earlier RHEL versions do not include the QUIC server feature. Risk is realized only by an application "
-    "that explicitly enables an OpenSSL QUIC server listener; this image ships no default command and "
-    "removes runtime executables. Consumers that enable an OpenSSL QUIC server listener must mitigate at "
-    "the application boundary until a fixed RPM is absorbed. Accepted and tracked as TD-12 in "
-    "docs/TECH-DEBT.md; review-by 2026-10-01."
-)
-
-
-def _expected_cve_2026_11940_fixed_history_vex() -> dict[str, Any]:
-    return {
-        "@context": "https://openvex.dev/ns/v0.2.0",
-        "@id": "https://github.com/NWarila/ubi9-base-micro/images/python/vex/cve-2026-11940",
-        "author": "NWarila",
-        "timestamp": "2026-08-28T00:00:00Z",
-        "version": 3,
-        "statements": [
-            {
-                "vulnerability": {"name": "CVE-2026-11940"},
-                "products": [{"@id": product} for product in CVE_2026_11940_FIXED_HISTORY_PRODUCTS],
-                "status": "fixed",
-            }
-        ],
-    }
-
-
-def _expected_cve_2026_14456_python_vex() -> dict[str, Any]:
-    return {
-        "@context": "https://openvex.dev/ns/v0.2.0",
-        "@id": "https://github.com/NWarila/ubi9-base-micro/images/python/vex/cve-2026-14456",
-        "author": "NWarila",
-        "timestamp": "2026-08-18T00:00:00Z",
-        "version": 1,
-        "statements": [
-            {
-                "vulnerability": {"name": "CVE-2026-14456"},
-                "products": [
-                    {
-                        "@id": "local/ubi9-base-python:ci-amd64",
-                        "subcomponents": [{"@id": OPENSSL_LIBS_SUBCOMPONENT}],
-                    },
-                    {
-                        "@id": "local/ubi9-base-python:ci-arm64",
-                        "subcomponents": [{"@id": OPENSSL_LIBS_SUBCOMPONENT}],
-                    },
-                    {
-                        "@id": PYTHON_PUBLISHED_CHILD_POLICY_PRODUCT,
-                        "subcomponents": [{"@id": OPENSSL_LIBS_SUBCOMPONENT}],
-                    },
-                ],
-                "status": "affected",
-                "action_statement": CVE_2026_14456_PYTHON_ACTION,
-                "action_statement_timestamp": "2026-08-18T00:00:00Z",
-            }
-        ],
-    }
-
-
-def _expected_cve_2026_14456_micro_vex() -> dict[str, Any]:
-    return {
-        "@context": "https://openvex.dev/ns/v0.2.0",
-        "@id": "https://github.com/NWarila/ubi9-base-micro/vex/cve-2026-14456",
-        "author": "NWarila",
-        "timestamp": "2026-08-18T00:00:00Z",
-        "version": 1,
-        "statements": [
-            {
-                "vulnerability": {"name": "CVE-2026-14456"},
-                "products": [
-                    {
-                        "@id": "ghcr.io/nwarila/ubi9-base-micro:base-micro",
-                        "subcomponents": [{"@id": OPENSSL_LIBS_SUBCOMPONENT}],
-                    },
-                    {
-                        "@id": MICRO_PUBLISHED_CHILD_POLICY_PRODUCT,
-                        "subcomponents": [{"@id": OPENSSL_LIBS_SUBCOMPONENT}],
-                    },
-                ],
-                "status": "affected",
-                "action_statement": CVE_2026_14456_MICRO_ACTION,
-                "action_statement_timestamp": "2026-08-18T00:00:00Z",
-            }
-        ],
-    }
-
-
-ACCEPT_AND_TRACK_CANONICAL_DOCUMENTS = {
-    CVE_2026_14456_PYTHON_VEX_PATH: _expected_cve_2026_14456_python_vex(),
-    CVE_2026_14456_MICRO_VEX_PATH: _expected_cve_2026_14456_micro_vex(),
-}
-ACCEPT_AND_TRACK_CANONICAL_BYTE_SHA256 = {
-    CVE_2026_14456_PYTHON_VEX_PATH: "fa9c0859afe6548d25a6e026d2e620d4ce322c8a3ab6a02b94c09478a66e68c9",
-    CVE_2026_14456_MICRO_VEX_PATH: "1f9e2a241846ca49e250bbc6ac800c579656266abc60dfd8ca8cb8f8eacb4830",
-}
-FIXED_HISTORY_CANONICAL_DOCUMENTS = {
-    CVE_2026_11940_FIXED_HISTORY_VEX_PATH: _expected_cve_2026_11940_fixed_history_vex(),
-}
-FIXED_HISTORY_CANONICAL_BYTE_SHA256 = {
-    CVE_2026_11940_FIXED_HISTORY_VEX_PATH: "cd5eda591e5342f947abb8dbd9702a415890601c09f6666cbe4edae13e8bd186",
-}
-
-
-def fixed_history_document_errors(path: str, document: Any) -> list[str]:
-    expected = FIXED_HISTORY_CANONICAL_DOCUMENTS.get(path)
-    if expected is None:
-        return [f"unrecognized fixed-history VEX document: {path}"]
-    if document != expected:
-        return [f"fixed-history VEX document fields drifted: {path}"]
-    return []
-
-
-def _surface_model(
-    path: str,
-    local_products: tuple[str, ...],
-    published_repository: str,
-) -> dict[str, Any]:
-    document = ACCEPT_AND_TRACK_CANONICAL_DOCUMENTS[path]
-    statement = document["statements"][0]
-    return {
-        "statement_path": path,
-        "document_id": document["@id"],
-        "document_timestamp": document["timestamp"],
-        "document_version": document["version"],
-        "local_products": local_products,
-        "published_repository": published_repository,
-        "policy_product": statement["products"][-1]["@id"],
-        "subcomponents": tuple(item["@id"] for item in statement["products"][0]["subcomponents"]),
-        "action_statement": statement["action_statement"],
-        "action_statement_timestamp": statement["action_statement_timestamp"],
-    }
-
-
-EXPECTED_ACCEPT_AND_TRACK_MODEL = (
-    {
-        "vulnerability": "CVE-2026-14456",
-        "packages": (("openssl-libs", "1:3.5.5-5.el9_8"),),
-        "debt_id": "TD-12",
-        "review_by": "2026-10-01",
-        "surfaces": (
-            _surface_model(
-                CVE_2026_14456_PYTHON_VEX_PATH,
-                ("local/ubi9-base-python:ci-amd64", "local/ubi9-base-python:ci-arm64"),
-                PYTHON_PUBLISHED_REPOSITORY,
-            ),
-            _surface_model(
-                CVE_2026_14456_MICRO_VEX_PATH,
-                ("ghcr.io/nwarila/ubi9-base-micro:base-micro",),
-                MICRO_PUBLISHED_REPOSITORY,
-            ),
-        ),
-    },
-)
-
-ACCEPT_AND_TRACK_DOCUMENTATION_MARKERS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
-    (
-        "images/python/vex/README.md",
-        "TD-12",
-        (
-            "`cve-2026-14456.openvex.json` records that both base-python CI products ship\n"
-            "`openssl-libs` at exactly `1:3.5.5-5.el9_8`.",
-            "RHEL 9 `openssl` as Affected with no fixed RPM as of 2026-08-18; RHEL 9.8 and\n"
-            "later ship the affected OpenSSL 3.5.x QUIC server, and exploitation requires an\n"
-            "application to explicitly enable a QUIC server listener.",
-            "tracks acceptance as TD-12 through `review-by 2026-10-01`; it does not claim\n"
-            "that the package or image is unaffected.",
-        ),
-    ),
-    (
-        "images/python/vex/README.md",
-        "TD-12 model",
-        (
-            "The gate has one exact affected authorization implemented in `tools/assert-vex.py`:\n"
-            "CVE-2026-14456 matched by `cve-2026-14456.openvex.json`.",
-            "For an accepted finding on the two local CI products, the gate requires two\n"
-            "keys: the exact in-tool disposition entry and the matching byte-canonical\n"
-            "reviewed statement.",
-            "requires three keys: the same disposition entry, the surface's canonical\n"
-            "statement, and paired index evidence.",
-        ),
-    ),
-    (
-        "docs/TECH-DEBT.md",
-        "TD-12",
-        (
-            "## TD-12: Expiring acceptance of CVE-2026-14456 in both images",
-            "`ghcr.io/nwarila/ubi9-base-micro:base-micro`, are known affected by\n"
-            "`CVE-2026-14456` in `openssl-libs` at exactly `1:3.5.5-5.el9_8`.",
-            "Each local product uses the two-key authorization: its exact disposition entry\n"
-            "and its product-specific canonical statement. The Python statement is\n"
-            "`images/python/vex/cve-2026-14456.openvex.json`; the micro statement is\n"
-            "`vex/cve-2026-14456.openvex.json`.",
-            "Digest-addressed published children use a separate three-key authorization:\n"
-            "the exact disposition entry, the canonical statement for that image, and\n"
-            "caller-supplied bytes for a digest-verified OCI index from that surface's pinned\n"
-            "repository.",
-            "The entry and both surfaces expire\n"
-            "after review-by 2026-10-01, including when a finding is temporarily dormant.",
-            "absorb the fixed RPM, remove the CVE-2026-14456 allowlist entry, flip both\n"
-            "canonical statements to `fixed`, and remove the micro gate's\n"
-            "`--index-reference` and `--index-manifest` plumbing plus every disposition\n"
-            "authority surface no longer consumed by a live disposition.",
-            "consumes it; orphaned authority inputs are forbidden.",
-        ),
-    ),
-    (
-        "docs/TECH-DEBT.md",
-        "TD-12 model",
-        ("A repository, index, statement, product, or\npolicy IRI from one surface cannot authorize the other.",),
-    ),
-    (
-        "docs/reference/gates.md",
-        "TD-12",
-        (
-            "TD-12 accepts and tracks\nknown-affected `CVE-2026-14456` on `openssl-libs` at\n"
-            "`1:3.5.5-5.el9_8` in both images.",
-            "TD-12 disposition for CVE-2026-14456 on `openssl-libs` at `1:3.5.5-5.el9_8` in Python and micro "
-            "through `review-by 2026-10-01`",
-        ),
-    ),
-    (
-        "docs/reference/gates.md",
-        "TD-12 model",
-        (
-            "The model contains one entry and two exact surfaces: TD-12 Python and TD-12\nmicro.",
-            "tag require the two-key conjunction of their exact entry and surface statement.\n"
-            "A published child additionally requires repository-correct, digest-verified OCI\n"
-            "index evidence, making that path three-key.",
-            "authority from one statement, product, repository, or policy IRI cannot satisfy\nthe other.",
-            "Repository verification reports 2 active canonical byte documents plus 1 fixed-history\n"
-            "document, the exact 1-entry/2-surface model, 12 active document mutations, 6\n"
-            "fixed-history mutations, 35 disposition documentation prose mutations across 6\n"
-            "files, and 1/1 dormant expiry locked.",
-        ),
-    ),
-    (
-        "docs/reference/verify.md",
-        "TD-12",
-        (
-            "TD-12 covers the\nknown-affected unfixed HIGH `CVE-2026-14456` on exactly `openssl-libs` at\n"
-            "`1:3.5.5-5.el9_8` in base-python and base-micro.",
-            "The entry and both surfaces expire after\n`review-by 2026-10-01`.",
-        ),
-    ),
-    (
-        "docs/reference/verify.md",
-        "TD-12 model",
-        (
-            "The closed model has one entry and two statement surfaces: TD-12 Python and TD-12\nmicro.",
-            "Local products use a two-key authorization. The exact disposition\n"
-            "surface and its byte-canonical reviewed `affected` statement must match",
-            "A digest-addressed published child uses a three-key authorization: the exact\n"
-            "surface, its canonical statement, and paired `--index-reference` plus\n"
-            "`--index-manifest` evidence under that surface's pinned Python or micro\n"
-            "repository.",
-            "Its current summary locks 2 active canonical byte documents plus 1 fixed-history\n"
-            "document, the exact 1-entry/2-surface model, 12 active document mutations, 6\n"
-            "fixed-history mutations, 35 disposition documentation prose mutations across 6\n"
-            "files, and 1/1 dormant expiry",
-        ),
-    ),
-    (
-        "docs/compliance/vex.md",
-        "TD-12",
-        (
-            "- TD-12 covers known-affected unfixed HIGH `CVE-2026-14456` on exactly\n"
-            "  `openssl-libs` at `1:3.5.5-5.el9_8` in both base-python and base-micro.",
-            "TD-12 uses\n`images/python/vex/cve-2026-14456.openvex.json` for Python and\n"
-            "`vex/cve-2026-14456.openvex.json` for micro.",
-        ),
-    ),
-    (
-        "docs/compliance/vex.md",
-        "TD-12 model",
-        (
-            "The entry has `review-by 2026-10-01`. The in-tool model is a closed set of\n"
-            "dispositions, each with one or more exact statement surfaces.",
-            "Local products use a two-key authorization: the exact disposition surface and\n"
-            "its canonical reviewed `affected` statement must both match.",
-            "Digest-addressed published children use a three-key authorization: the exact\n"
-            "disposition surface, its canonical statement, and paired `--index-reference`\n"
-            "plus `--index-manifest` evidence must all match.",
-        ),
-    ),
-    (
-        "docs/compliance/acceptance.md",
-        "TD-12",
-        (
-            "TD-12 for known-affected `CVE-2026-14456` on exactly `openssl-libs` at "
-            "`1:3.5.5-5.el9_8` in base-python and base-micro",
-        ),
-    ),
-    (
-        "docs/compliance/acceptance.md",
-        "TD-12 model",
-        (
-            "It expires after `review-by 2026-10-01`. The closed model has two statement surfaces and requires "
-            "exactly one to match the complete CVE, package/version set, product, repository, and statement path.",
-            "use two keys: the exact in-tool disposition surface and its canonical reviewed statement. A "
-            "digest-addressed published child uses three: those two keys plus repository-correct, digest-verified "
-            "OCI index evidence under the surface's pinned Python or micro repository.",
-            "This disposition suppresses no raw finding and does not make either image unaffected.",
-        ),
-    ),
-)
-
-
-def _runtime_accept_and_track_model() -> tuple[dict[str, Any], ...]:
-    namespace = runpy.run_path(str(ROOT / "tools/assert-vex.py"))
-    entries = namespace["ACCEPT_AND_TRACK_DISPOSITIONS"]
-    expected_document = namespace["expected_accept_and_track_document"]
-    normalized: list[dict[str, Any]] = []
-    for entry in entries:
-        surfaces: list[dict[str, Any]] = []
-        for surface in entry.surfaces:
-            surface_model = {
-                "statement_path": surface.statement_path,
-                "document_id": surface.document_id,
-                "document_timestamp": surface.document_timestamp,
-                "document_version": surface.document_version,
-                "local_products": surface.local_products,
-                "published_repository": surface.published_repository,
-                "policy_product": surface.policy_product,
-                "subcomponents": surface.subcomponents,
-                "action_statement": surface.action_statement,
-                "action_statement_timestamp": surface.action_statement_timestamp,
-            }
-            require(
-                expected_document(entry, surface) == ACCEPT_AND_TRACK_CANONICAL_DOCUMENTS.get(surface.statement_path),
-                f"assert-vex surface builder drifted from canonical document: {surface.statement_path}",
-            )
-            surfaces.append(surface_model)
-        normalized.append(
-            {
-                "vulnerability": entry.vulnerability,
-                "packages": entry.packages,
-                "debt_id": entry.debt_id,
-                "review_by": entry.review_by,
-                "surfaces": tuple(surfaces),
-            }
-        )
-    return tuple(normalized)
-
-
-def accept_and_track_repository_expiry_errors(
-    entries: tuple[dict[str, Any], ...],
-    evaluation_date: date,
-) -> list[str]:
-    errors: list[str] = []
-    for entry in entries:
-        try:
-            review_by = date.fromisoformat(cast(str, entry["review_by"]))
-        except (KeyError, TypeError, ValueError):
-            errors.append("repository accept-and-track entry has an invalid review-by date")
-            continue
-        if evaluation_date > review_by:
-            packages = ",".join(f"{name}@{version}" for name, version in entry["packages"])
-            paths = ",".join(surface["statement_path"] for surface in entry["surfaces"])
-            errors.append(
-                "expired repository accept-and-track entry: "
-                f"{entry['vulnerability']} packages={packages} debt={entry['debt_id']} "
-                f"review-by={entry['review_by']} surfaces={paths}"
-            )
-    return errors
-
-
-def accept_and_track_documentation_errors(documents: Mapping[str, str]) -> list[str]:
-    errors: list[str] = []
-    for path, disposition, markers in ACCEPT_AND_TRACK_DOCUMENTATION_MARKERS:
-        documentation = documents.get(path, "")
-        errors.extend(
-            f"{path} must contain exactly one {disposition} disposition documentation marker: {marker!r}"
-            for marker in markers
-            if documentation.count(marker) != 1
-        )
-    return errors
-
-
-def accept_and_track_lock_errors(
-    canonical_error: str | None,
-    fixed_history_error: str | None,
-    model_invalid: bool,
-    expiry_errors: list[str],
-    documentation_errors: list[str],
-) -> list[str]:
-    errors: list[str] = []
-
-    def reject(condition: object, message: str) -> None:
-        if condition:
-            errors.append(message)
-
-    # CHECK: accept-track-canonical-bytes
-    reject(canonical_error is not None, canonical_error or "accept-and-track canonical bytes drifted")
-    # CHECK: accept-track-fixed-history
-    reject(fixed_history_error is not None, fixed_history_error or "fixed-history VEX bytes drifted")
-    # CHECK: accept-track-exact-model
-    reject(
-        model_invalid,
-        "assert-vex accept-and-track entries and closed surfaces must equal the exact one-entry model",
-    )
-    # CHECK: accept-track-dormant-expiry
-    reject(bool(expiry_errors), "; ".join(expiry_errors))
-    # CHECK: accept-track-documentation-prose
-    reject(bool(documentation_errors), "; ".join(documentation_errors))
-    return errors
-
-
-def _accept_and_track_lock_fixtures() -> tuple[
-    tuple[str, str | None, str | None, bool, list[str], list[str], str], ...
-]:
-    documentation_error = (
-        "docs/TECH-DEBT.md must contain exactly one TD-12 disposition documentation marker: "
-        "'## TD-12: Expiring acceptance of CVE-2026-14456 in both images'"
-    )
-    return (
-        (
-            "canonical-bytes",
-            "accept-and-track canonical bytes drifted: fixture",
-            None,
-            False,
-            [],
-            [],
-            "accept-and-track canonical bytes drifted: fixture",
-        ),
-        (
-            "fixed-history",
-            None,
-            "fixed-history VEX bytes drifted: fixture",
-            False,
-            [],
-            [],
-            "fixed-history VEX bytes drifted: fixture",
-        ),
-        (
-            "exact-model",
-            None,
-            None,
-            True,
-            [],
-            [],
-            "assert-vex accept-and-track entries and closed surfaces must equal the exact one-entry model",
-        ),
-        (
-            "dormant-expiry",
-            None,
-            None,
-            False,
-            ["expired repository accept-and-track entry: fixture"],
-            [],
-            "expired repository accept-and-track entry: fixture",
-        ),
-        (
-            "documentation-prose",
-            None,
-            None,
-            False,
-            [],
-            [documentation_error],
-            documentation_error,
-        ),
-    )
-
-
-def check_accept_and_track_lock_self_test(only_label: str | None = None) -> None:
-    selected = 0
-    fixtures = _accept_and_track_lock_fixtures()
-    for (
-        label,
-        canonical_error,
-        fixed_history_error,
-        model_invalid,
-        expiry_errors,
-        documentation_errors,
-        expected,
-    ) in fixtures:
-        if only_label is not None and label != only_label:
-            continue
-        selected += 1
-        errors = accept_and_track_lock_errors(
-            canonical_error,
-            fixed_history_error,
-            model_invalid,
-            expiry_errors,
-            documentation_errors,
-        )
-        if expected not in errors:
-            raise VerifyError(f"accept-and-track verifier mutation unexpectedly passed: {label}")
-        print(f"accept-and-track verifier mutation rejected [{label}] diagnostic={expected}")
-    if only_label is None:
-        require(selected == len(fixtures), "accept-and-track verifier fixture inventory mismatch")
-        print(f"accept-and-track verifier mutation probes: {selected}/{len(fixtures)} rejected")
-    else:
-        require(selected == 1, f"unknown accept-and-track verifier fixture: {only_label}")
-
-
-def check_accept_and_track_checker_mutation_self_test() -> None:
-    source = read("tools/verify.py")
-    checker_start = source.index("def accept_and_track_lock_errors(")
-    checker_end = source.index("\ndef _accept_and_track_lock_fixtures(", checker_start)
-    checker_source = source[checker_start:checker_end]
-    guards = (
-        ("accept-track-canonical-bytes", "reject(canonical_error is not None,", "canonical-bytes"),
-        ("accept-track-fixed-history", "reject(fixed_history_error is not None,", "fixed-history"),
-        ("accept-track-exact-model", "reject(\n        model_invalid,", "exact-model"),
-        ("accept-track-dormant-expiry", "reject(bool(expiry_errors),", "dormant-expiry"),
-        (
-            "accept-track-documentation-prose",
-            "reject(bool(documentation_errors),",
-            "documentation-prose",
-        ),
-    )
-    markers = re.findall(r"^    # CHECK: (accept-track-[a-z0-9-]+)$", checker_source, re.MULTILINE)
-    require(
-        Counter(markers) == Counter(guard for guard, _, _ in guards) and len(markers) == len(guards),
-        "accept-and-track checker mutation list must cover every rejection guard exactly once",
-    )
-    for guard, anchor, fixture in guards:
-        require(checker_source.count(anchor) == 1, f"accept-and-track checker anchor changed: {guard}")
-        replacement = "reject(\n        False," if "\n" in anchor else "reject(False,"
-        mutated_checker = checker_source.replace(anchor, replacement, 1)
-        mutated = source[:checker_start] + mutated_checker + source[checker_end:]
-        ast.parse(mutated, filename="tools/verify.py")
-        result = _run_mutated_python_verifier(
-            mutated,
-            ["--check-accept-track-lock-fixture", fixture],
-        )
-        expected = f"verify failed: accept-and-track verifier mutation unexpectedly passed: {fixture}"
-        require(result.returncode == 1, f"accept-and-track checker mutation {guard} returned {result.returncode}")
-        require(
-            result.stderr.strip() == expected,
-            f"accept-and-track checker mutation {guard} returned unexpected diagnostic: {result.stderr.strip()!r}",
-        )
-        location = source[: source.index(f"# CHECK: {guard}")].count("\n") + 1
-        print(
-            f"accept-and-track checker mutation rejected [guard={guard} location=tools/verify.py:{location} "
-            f"fixture={fixture} diagnostic={expected}]"
-        )
-    print(f"accept-and-track checker mutation probes: {len(guards)}/{len(guards)} rejected")
-
-
-ASSERT_VEX_SOURCE_CONSTANTS = {
-    "PUBLISHED_PYTHON_REPOSITORY": PYTHON_PUBLISHED_REPOSITORY,
-    "PUBLISHED_PYTHON_CHILD_POLICY_PRODUCT": PYTHON_PUBLISHED_CHILD_POLICY_PRODUCT,
-    "OCI_IMAGE_INDEX_MEDIA_TYPE": "application/vnd.oci.image.index.v1+json",
-    "OCI_IMAGE_MANIFEST_MEDIA_TYPE": "application/vnd.oci.image.manifest.v1+json",
-    "BUILDKIT_ATTESTATION_TYPE_ANNOTATION": "vnd.docker.reference.type",
-    "BUILDKIT_ATTESTATION_TYPE": "attestation-manifest",
-    "BUILDKIT_ATTESTATION_DIGEST_ANNOTATION": "vnd.docker.reference.digest",
-}
-ASSERT_VEX_SOURCE_FUNCTION_HASHES = {
-    "digest_reference_parts": "3489448fc2b271bec570e344fe3ecc84bcb2ae75023bd0fcf13a56089203b7bf",
-    "validate_index_child_evidence": "a7d882a03702ddc9ead0c8b193e7d992391cf9539cc03bd0389cd948a30a307c",
-    "accept_and_track_surface_candidates": "18f6dfe0ac1058d0c1e62caf930cba39f00faeeca1b27236c935ccf9ce384e73",
-    "exact_not_affected_surface_candidates": "08f57d81a38f12cf3e51171245b9fb4bd236df84e932d718e187379552aff31a",
-    "expected_accept_and_track_document": "2102b5dfc024b224c57d62626c7b8864d9ca7cfc4252c8c91611646d0747cde1",
-    "expected_exact_not_affected_document": "47571c302cce984ec05f8686b0a595f998137c14cf85c9b61197bcf28c058209",
-    "vulnerable_code_absence_rejection": "a8b7f4fb107f3c986cca725755d2d238f230c4a85516a1d9d818765f6f0d997e",
-    "accepted_accept_and_track_statement": "fbb3a448c1062c6f15b7203e4648a2bea9d832588f7e4571958a0c271242f4d6",
-    "accepted_exact_not_affected_statement": "fd76aa6b2bc2b0bd82b179c0cde966f37f72272589d320827aa9c40b1cea998d",
-    "assert_vex": "0077183069f678c99b53d1522465697e5c1ea69f1c48e989f4ba2b65f18f13d8",
-    "parse_args": "768a750e9576669c4016edffbb7be993192698d595dd8c550ac2a8e429b4e8a1",
-    "main": "a68074ebb31b0c7abe3e05570362d7051d880fbcfac23323c2e365e6fb91d764",
-}
-
-
-def assert_vex_source_lock_errors(source: str) -> list[str]:
-    try:
-        tree = ast.parse(source)
-    except SyntaxError as exc:
-        return [f"assert-vex source does not parse: {exc}"]
-    assignments: dict[str, list[ast.Assign]] = {name: [] for name in ASSERT_VEX_SOURCE_CONSTANTS}
-    functions: dict[str, list[ast.FunctionDef | ast.AsyncFunctionDef]] = {
-        name: [] for name in ASSERT_VEX_SOURCE_FUNCTION_HASHES
-    }
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id in assignments:
-                    assignments[target.id].append(node)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in functions:
-            functions[node.name].append(node)
-
-    errors: list[str] = []
-    for name, expected in ASSERT_VEX_SOURCE_CONSTANTS.items():
-        assignment_sites = assignments[name]
-        if len(assignment_sites) != 1:
-            errors.append(f"assert-vex source constant {name} must be assigned exactly once")
-            continue
-        try:
-            actual = ast.literal_eval(assignment_sites[0].value)
-        except (ValueError, TypeError):
-            errors.append(f"assert-vex source constant {name} must be a literal")
-            continue
-        if actual != expected:
-            errors.append(f"assert-vex source constant {name} must equal {expected!r}")
-    for name, expected in ASSERT_VEX_SOURCE_FUNCTION_HASHES.items():
-        function_sites = functions[name]
-        if len(function_sites) != 1:
-            errors.append(f"assert-vex source function {name} must be defined exactly once")
-            continue
-        actual = hashlib.sha256(ast.dump(function_sites[0], include_attributes=False).encode()).hexdigest()
-        if actual != expected:
-            errors.append(f"assert-vex source function {name} AST drifted")
-    return errors
-
-
-def check_accept_and_track_dispositions() -> None:
-    canonical_error: str | None = None
-    for path, expected_document in ACCEPT_AND_TRACK_CANONICAL_DOCUMENTS.items():
-        raw = (ROOT / path).read_bytes()
-        if hashlib.sha256(raw).hexdigest() != ACCEPT_AND_TRACK_CANONICAL_BYTE_SHA256[path]:
-            canonical_error = f"accept-and-track canonical bytes drifted: {path}"
-            break
-        if json.loads(raw) != expected_document:
-            canonical_error = f"accept-and-track canonical document fields drifted: {path}"
-            break
-
-    fixed_history_error: str | None = None
-    for path in FIXED_HISTORY_CANONICAL_DOCUMENTS:
-        raw = (ROOT / path).read_bytes()
-        if hashlib.sha256(raw).hexdigest() != FIXED_HISTORY_CANONICAL_BYTE_SHA256[path]:
-            fixed_history_error = f"fixed-history VEX bytes drifted: {path}"
-            break
-        field_errors = fixed_history_document_errors(path, json.loads(raw))
-        if field_errors:
-            fixed_history_error = field_errors[0]
-            break
-
-    runtime_model = _runtime_accept_and_track_model()
-    script = read("tools/assert-vex.py")
-    source_errors = assert_vex_source_lock_errors(script)
-    require(not source_errors, "; ".join(source_errors))
-    source_mutations = (
-        (
-            "paired index-evidence guard",
-            script.replace("if (index_reference is None) != (index_manifest is None):", "if False:", 1),
-            "assert-vex source function accept_and_track_surface_candidates AST drifted",
-        ),
-        (
-            "BuildKit attestation type",
-            script.replace(
-                'BUILDKIT_ATTESTATION_TYPE = "attestation-manifest"',
-                'BUILDKIT_ATTESTATION_TYPE = "wrong"',
-                1,
-            ),
-            "assert-vex source constant BUILDKIT_ATTESTATION_TYPE must equal 'attestation-manifest'",
-        ),
-        (
-            "vulnerable-code absence justification guard",
-            script.replace(
-                'if statement.justification != "vulnerable_code_not_present":',
-                "if False:",
-                1,
-            ),
-            "assert-vex source function vulnerable_code_absence_rejection AST drifted",
-        ),
-        (
-            "exact not-affected canonical statement guard",
-            script.replace(
-                "rejection = exact_not_affected_statement_rejection(statement, disposition, surface)",
-                "rejection = None",
-                1,
-            ),
-            "assert-vex source function accepted_exact_not_affected_statement AST drifted",
-        ),
-    )
-    for label, mutant, expected_reason in source_mutations:
-        require(mutant != script, f"assert-vex source mutation is a no-op: {label}")
-        mutation_errors = assert_vex_source_lock_errors(mutant)
-        require(
-            mutation_errors == [expected_reason],
-            f"assert-vex source mutation {label} returned {mutation_errors!r}",
-        )
-        print(f"assert-vex source mutation rejected: {label}: {expected_reason}")
-    require("published_child_eligible" not in script, "assert-vex must not retain shared published-child eligibility")
-    require('vulnerability="CVE-2026-11940"' not in script, "assert-vex must not authorize CVE-2026-11940")
-    require('debt_id="TD-9"' not in script, "assert-vex must not retain the TD-9 debt authorization")
-    for marker in (
-        "multiple exact in-tool accept-and-track authorization matches",
-        "parameterized local/canonical/allowlist/scanner/fix/duplicate/expiry ",
-        "parameterized three-key and OCI-index matrices covered ",
-        "Python statement under micro authority",
-        "micro statement under Python authority",
-        "synthetic Trivy CVE-2026-14456 exact-version path accepted",
-        "CVE-2026-11940 fixed history authorized neither local product ",
-    ):
-        require(marker in script, f"assert-vex generalized disposition self-test missing marker: {marker}")
-
-    expiry_errors = accept_and_track_repository_expiry_errors(runtime_model, date.today())
-    expired = accept_and_track_repository_expiry_errors(runtime_model, date(2026, 10, 2))
-    require(len(expired) == 1, f"dormant accept-and-track expiry must reject the TD-12 entry: {expired}")
-    require("CVE-2026-14456" in expired[0], "expiry identity drifted from TD-12")
-
-    documentation_paths = tuple(dict.fromkeys(path for path, _, _ in ACCEPT_AND_TRACK_DOCUMENTATION_MARKERS))
-    require(
-        documentation_paths
-        == (
-            "images/python/vex/README.md",
-            "docs/TECH-DEBT.md",
-            "docs/reference/gates.md",
-            "docs/reference/verify.md",
-            "docs/compliance/vex.md",
-            "docs/compliance/acceptance.md",
-        ),
-        "accept-and-track documentation prose lock must cover the exact six-file surface",
-    )
-    required_documentation_groups = {
-        (path, disposition) for path in documentation_paths for disposition in ("TD-12", "TD-12 model")
-    }
-    actual_documentation_groups = {
-        (path, disposition) for path, disposition, _ in ACCEPT_AND_TRACK_DOCUMENTATION_MARKERS
-    }
-    require(
-        actual_documentation_groups == required_documentation_groups,
-        "accept-and-track documentation prose lock must bind TD-12 and its two-surface model in every file",
-    )
-    documentation = {path: read(path) for path in documentation_paths}
-    documentation_errors = accept_and_track_documentation_errors(documentation)
-
-    errors = accept_and_track_lock_errors(
-        canonical_error,
-        fixed_history_error,
-        runtime_model != EXPECTED_ACCEPT_AND_TRACK_MODEL,
-        expiry_errors,
-        documentation_errors,
-    )
-    require(not errors, "; ".join(errors))
-    check_accept_and_track_lock_self_test()
-
-    document_mutations = 0
-    for path, expected in ACCEPT_AND_TRACK_CANONICAL_DOCUMENTS.items():
-        document_mutation_cases: tuple[tuple[str, Callable[[dict[str, Any]], Any]], ...] = (
-            ("top-level field", lambda value: value.update(extra=True)),
-            ("document id", lambda value: value.update({"@id": "wrong"})),
-            ("statement", lambda value: value["statements"][0].update(status="fixed")),
-            ("product", lambda value: value["statements"][0]["products"][0].update({"@id": "wrong"})),
-            (
-                "subcomponent",
-                lambda value: value["statements"][0]["products"][0]["subcomponents"][0].update({"@id": "wrong"}),
-            ),
-            ("duplicate statement", lambda value: value["statements"].append(copy.deepcopy(value["statements"][0]))),
-        )
-        for label, mutate in document_mutation_cases:
-            document_mutant = copy.deepcopy(expected)
-            mutate(document_mutant)
-            require(document_mutant != expected, f"canonical VEX mutation was a no-op: {path} {label}")
-            document_mutations += 1
-
-    fixed_history_mutations = 0
-    for path, expected in FIXED_HISTORY_CANONICAL_DOCUMENTS.items():
-        fixed_history_mutation_cases: tuple[tuple[str, Callable[[dict[str, Any]], Any]], ...] = (
-            ("top-level field", lambda value: value.update(extra=True)),
-            ("timestamp", lambda value: value.update(timestamp="2026-08-29T00:00:00Z")),
-            ("version", lambda value: value.update(version=2)),
-            ("vulnerability", lambda value: value["statements"][0]["vulnerability"].update(name="wrong")),
-            ("product", lambda value: value["statements"][0]["products"][0].update({"@id": "wrong"})),
-            ("status", lambda value: value["statements"][0].update(status="affected")),
-        )
-        for label, mutate in fixed_history_mutation_cases:
-            document_mutant = copy.deepcopy(expected)
-            mutate(document_mutant)
-            expected_error = f"fixed-history VEX document fields drifted: {path}"
-            mutation_errors = fixed_history_document_errors(path, document_mutant)
-            require(
-                mutation_errors == [expected_error],
-                f"fixed-history VEX mutation unexpectedly passed: {path} {label}",
-            )
-            fixed_history_mutations += 1
-
-    documentation_mutations = 0
-    for path, disposition, markers in ACCEPT_AND_TRACK_DOCUMENTATION_MARKERS:
-        for marker in markers:
-            require(
-                documentation[path].count(marker) == 1,
-                f"{path} {disposition} disposition documentation marker must occur exactly once: {marker!r}",
-            )
-            documentation_mutant = dict(documentation)
-            documentation_mutant[path] = documentation_mutant[path].replace(marker, "", 1)
-            expected_error = (
-                f"{path} must contain exactly one {disposition} disposition documentation marker: {marker!r}"
-            )
-            mutation_errors = accept_and_track_documentation_errors(documentation_mutant)
-            if expected_error not in mutation_errors:
-                raise VerifyError(
-                    f"accept-and-track documentation prose mutation unexpectedly passed: "
-                    f"{path} {disposition} {marker!r}"
-                )
-            documentation_mutations += 1
-    print(
-        "accept-and-track locks: 2 active canonical byte documents plus 1 fixed-history document, "
-        "exact 1-entry/2-surface model, "
-        f"{document_mutations} active document mutations, {fixed_history_mutations} fixed-history mutations, "
-        f"{documentation_mutations} documentation prose mutations across 6 files, "
-        "7 literal constants/12 function ASTs, and 1/1 dormant expiry locked"
-    )
-
-
-MICRO_VEX_INDEX_ADJACENCY = (
-    "              --package-floor contracts/image-manifest.json \\\n"
-    '              --index-reference "${IMAGE}@${INDEX_DIGEST}" \\\n'
-    "              --index-manifest dist/image-index.json\n"
-)
-
-
-def micro_vex_index_plumbing_errors(workflow: str) -> list[str]:
-    errors: list[str] = []
-    step_start = workflow.find("      - name: Run OpenVEX default-deny gates\n")
-    step_end = workflow.find("\n      - name:", step_start + 1)
-    if step_start < 0 or step_end <= step_start:
-        return ["micro publish workflow must keep a bounded OpenVEX gate step"]
-    step = workflow[step_start:step_end]
-    reference_count = step.count("--index-reference")
-    manifest_count = step.count("--index-manifest")
-
-    def reject(condition: object, message: str) -> None:
-        if condition:
-            errors.append(message)
-
-    # CHECK: micro-vex-index-pair
-    reject(reference_count != manifest_count, "micro publish VEX index flags must remain paired")
-    # CHECK: micro-vex-index-reference
-    reject(
-        reference_count != 1 or '--index-reference "${IMAGE}@${INDEX_DIGEST}"' not in step,
-        "micro publish VEX index reference must bind IMAGE to INDEX_DIGEST exactly once",
-    )
-    # CHECK: micro-vex-index-manifest
-    reject(
-        manifest_count != 1 or "--index-manifest dist/image-index.json" not in step,
-        "micro publish VEX index manifest must use dist/image-index.json exactly once",
-    )
-    # CHECK: micro-vex-index-adjacency
-    reject(
-        MICRO_VEX_INDEX_ADJACENCY not in step,
-        "micro publish VEX index flags must immediately follow the package-floor input",
-    )
-    if step.count("          INDEX_DIGEST: ${{ steps.image.outputs.digest }}") != 1:
-        errors.append("micro publish VEX INDEX_DIGEST must come from steps.image.outputs.digest exactly once")
-    if workflow.count("--index-reference") != 1 or workflow.count("--index-manifest") != 1:
-        errors.append("micro publish workflow must not carry orphaned index-authority flags")
-    return errors
-
-
-def _micro_vex_index_plumbing_mutations() -> tuple[tuple[str, str, str, str], ...]:
-    return (
-        (
-            "pair",
-            '              --index-reference "${IMAGE}@${INDEX_DIGEST}" \\\n',
-            "",
-            "micro publish VEX index flags must remain paired",
-        ),
-        (
-            "reference",
-            "${IMAGE}@${INDEX_DIGEST}",
-            "${IMAGE_REPOSITORY}@${INDEX_DIGEST}",
-            "micro publish VEX index reference must bind IMAGE to INDEX_DIGEST exactly once",
-        ),
-        (
-            "manifest",
-            "              --index-manifest dist/image-index.json\n",
-            "              --index-manifest dist/other-index.json\n",
-            "micro publish VEX index manifest must use dist/image-index.json exactly once",
-        ),
-        (
-            "adjacency",
-            MICRO_VEX_INDEX_ADJACENCY,
-            (
-                "              --package-floor contracts/image-manifest.json \\\n"
-                "              --index-manifest dist/image-index.json \\\n"
-                '              --index-reference "${IMAGE}@${INDEX_DIGEST}"\n'
-            ),
-            "micro publish VEX index flags must immediately follow the package-floor input",
-        ),
-    )
-
-
-def check_micro_vex_index_plumbing(only_label: str | None = None) -> None:
-    workflow = read(".github/workflows/publish-image.yaml")
-    require(not micro_vex_index_plumbing_errors(workflow), "; ".join(micro_vex_index_plumbing_errors(workflow)))
-    mutations = _micro_vex_index_plumbing_mutations()
-    selected = 0
-    for label, old, replacement, expected_reason in mutations:
-        if only_label is not None and label != only_label:
-            continue
-        selected += 1
-        mutant = workflow.replace(old, replacement, 1)
-        require(mutant != workflow, f"micro VEX plumbing mutation was a no-op: {label}")
-        errors = micro_vex_index_plumbing_errors(mutant)
-        if expected_reason not in errors:
-            raise VerifyError(f"micro VEX plumbing mutation unexpectedly passed: {label}")
-        print(f"micro VEX plumbing mutation rejected: {label}: {expected_reason}")
-    if only_label is None:
-        require(selected == len(mutations), "micro VEX plumbing fixture inventory mismatch")
-        print(f"micro VEX index-evidence plumbing: {selected}/{len(mutations)} mutations rejected")
-    else:
-        require(selected == 1, f"unknown micro VEX plumbing fixture: {only_label}")
-
-
-def check_micro_vex_index_checker_mutation_self_test() -> None:
-    source = read("tools/verify.py")
-    checker_start = source.index("def micro_vex_index_plumbing_errors(")
-    checker_end = source.index("\ndef _micro_vex_index_plumbing_mutations(", checker_start)
-    checker_source = source[checker_start:checker_end]
-    guards = (
-        ("micro-vex-index-pair", "reject(reference_count != manifest_count,", "pair"),
-        (
-            "micro-vex-index-reference",
-            "reject(\n        reference_count != 1 or '--index-reference \"${IMAGE}@${INDEX_DIGEST}\"' not in step,",
-            "reference",
-        ),
-        (
-            "micro-vex-index-manifest",
-            'reject(\n        manifest_count != 1 or "--index-manifest dist/image-index.json" not in step,',
-            "manifest",
-        ),
-        ("micro-vex-index-adjacency", "reject(\n        MICRO_VEX_INDEX_ADJACENCY not in step,", "adjacency"),
-    )
-    markers = re.findall(r"^    # CHECK: (micro-vex-index-[a-z-]+)$", checker_source, re.MULTILINE)
-    require(
-        Counter(markers) == Counter(guard for guard, _, _ in guards) and len(markers) == len(guards),
-        "micro VEX index checker mutation list must cover every rejection guard exactly once",
-    )
-    for guard, anchor, fixture in guards:
-        require(checker_source.count(anchor) == 1, f"micro VEX index checker anchor changed: {guard}")
-        replacement = "reject(\n        False," if "\n" in anchor else "reject(False,"
-        mutated_checker = checker_source.replace(anchor, replacement, 1)
-        mutated = source[:checker_start] + mutated_checker + source[checker_end:]
-        ast.parse(mutated, filename="tools/verify.py")
-        result = _run_mutated_python_verifier(mutated, ["--check-micro-vex-index-fixture", fixture])
-        expected = f"verify failed: micro VEX plumbing mutation unexpectedly passed: {fixture}"
-        require(result.returncode == 1, f"micro VEX index checker mutation {guard} returned {result.returncode}")
-        require(
-            result.stderr.strip() == expected,
-            f"micro VEX index checker mutation {guard} returned unexpected diagnostic: {result.stderr.strip()!r}",
-        )
-        location = source[: source.index(f"# CHECK: {guard}")].count("\n") + 1
-        print(
-            f"micro VEX index checker mutation rejected [guard={guard} location=tools/verify.py:{location} "
-            f"fixture={fixture} diagnostic={expected}]"
-        )
-    print(f"micro VEX index checker mutation probes: {len(guards)}/{len(guards)} rejected")
+    print(f"python SQLite VEX mutation probes: {rejected}/{len(mutations)} rejected")
 
 
 def check_build_script() -> None:
@@ -11273,52 +10131,44 @@ def check_scanner_content_canary() -> None:
 
 def check_cve_ignore_policy() -> None:
     gitignore = read(".gitignore")
-    for marker in [
+    for marker in (
         "!/security/",
         "!/security/cve-ignore.trivyignore.yaml",
         "!/security/cve-ignore.grype.yaml",
-    ]:
+    ):
         require(marker in gitignore, f".gitignore must allowlist CVE ignore path: {marker}")
 
-    helper = read("tools/assert-ignore-scope.py")
-    for marker in [
-        'ALLOWED_CVE = "CVE-2026-31790"',
-        '"openssl-fips-provider"',
-        '"openssl-fips-provider-so"',
-        'ALLOWED_VERSION = "3.0.7-8.el9"',
-        "REVIEW_DATE = date(2026, 10, 10)",
-        "appliedIgnoreRules",
-        "--grype-report",
-        "--self-test",
-    ]:
-        require(marker in helper, f"CVE ignore scope helper missing marker: {marker}")
-
-    trivy_ignore = read("security/cve-ignore.trivyignore.yaml")
-    grype_ignore = read("security/cve-ignore.grype.yaml")
-    require("\n    purls:\n" in trivy_ignore, "Trivy ignore must use the plural purls key")
-    require("\n    purl:" not in trivy_ignore, "Trivy ignore must never use the singular purl key")
-    require("expired_at: 2026-10-10" in trivy_ignore, "Trivy ignore must pin the TD-6 review date")
+    expected_trivy = """# TD-6: openssl-fips-provider{,-so} held at 3.0.7-8.el9 (CMVP #4857-validated module).
+# The fix 3.0.7-11.el9_8 is forbidden at tools/verify.py:86. See docs/TECH-DEBT.md TD-6.
+# `purls` MUST be plural: a singular `purl` key is silently ignored by trivy and the
+# suppression degrades to a global, id-only ignore.
+vulnerabilities:
+  - id: CVE-2026-31790
+    purls:
+      - pkg:rpm/redhat/openssl-fips-provider@3.0.7-8.el9
+      - pkg:rpm/redhat/openssl-fips-provider-so@3.0.7-8.el9
+    statement: "TD-6: held CMVP #4857 FIPS module; fixed provider build is forbidden by the validated module lock"
+"""
+    expected_grype = """# TD-6: exact native exception for the held CMVP #4857 FIPS module.
+ignore:
+  - vulnerability: CVE-2026-31790
+    reason: "TD-6 held CMVP #4857 module; fixed provider build is forbidden by the validated module lock"
+    package:
+      name: openssl-fips-provider
+      version: 3.0.7-8.el9
+  - vulnerability: CVE-2026-31790
+    reason: "TD-6 held CMVP #4857 module; fixed provider build is forbidden by the validated module lock"
+    package:
+      name: openssl-fips-provider-so
+      version: 3.0.7-8.el9
+"""
     require(
-        grype_ignore.count("review-by 2026-10-10") == 2,
-        "each Grype ignore must pin the TD-6 review date in its reason",
-    )
-
-    vex_helper = read("tools/assert-vex.py")
-    require(
-        'HIGH_CRITICAL = {"HIGH", "CRITICAL"}' in vex_helper,
-        "OpenVEX default-deny scope must remain HIGH/CRITICAL",
-    )
-
-    result = subprocess.run(
-        [sys.executable, str(ROOT / "tools/assert-ignore-scope.py")],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
+        read("security/cve-ignore.trivyignore.yaml") == expected_trivy,
+        "Trivy TD-6 policy must remain the exact CVE/package/version native exception",
     )
     require(
-        result.returncode == 0,
-        f"committed CVE ignore scope validation failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
+        read("security/cve-ignore.grype.yaml") == expected_grype,
+        "Grype TD-6 policy must remain the exact two-package/version native exception",
     )
 
 
@@ -11365,182 +10215,110 @@ def check_fips_script() -> None:
 
 
 def check_vex() -> None:
-    require((ROOT / "vex").is_dir(), "missing VEX directory")
-    codeowners = read(".github/CODEOWNERS")
-    require("/vex/ @NWarila" in codeowners, "CODEOWNERS must gate vex/ with @NWarila")
+    require(not (ROOT / "vex").exists(), "root OpenVEX publication directory must be removed")
+    require(
+        re.search(r"^/vex/\s", read(".github/CODEOWNERS"), re.MULTILINE) is None,
+        "CODEOWNERS retains removed root VEX ownership",
+    )
 
-    read("vex/README.md")
-    require((ROOT / "vex/.gitkeep").is_file(), "vex/.gitkeep must remain present")
-
-    vex_path = "vex/cve-2026-31790.openvex.json"
-    vex = load_json_object(vex_path)
-    require(vex.get("@context") == "https://openvex.dev/ns/v0.2.0", f"{vex_path} must use OpenVEX v0.2.0")
+    python_vex_dir = ROOT / "images/python/vex"
     require(
-        vex.get("@id") == "https://github.com/NWarila/ubi9-base-micro/vex/cve-2026-31790",
-        f"{vex_path} must carry its stable document IRI",
-    )
-    require(vex.get("author") == "NWarila", f"{vex_path} must identify the human author")
-    require(vex.get("timestamp") == "2026-07-10T00:00:00Z", f"{vex_path} must pin its issue timestamp")
-    require(vex.get("version") == 1, f"{vex_path} must start at version 1")
-
-    raw_statements = vex.get("statements")
-    require(isinstance(raw_statements, list) and len(raw_statements) == 1, f"{vex_path} must contain one statement")
-    statements = cast(list[Any], raw_statements)
-    require(isinstance(statements[0], dict), f"{vex_path} statement must be an object")
-    statement = cast(dict[str, Any], statements[0])
-    require(
-        statement.get("vulnerability") == {"name": "CVE-2026-31790"},
-        f"{vex_path} must identify CVE-2026-31790",
-    )
-    require(statement.get("status") == "affected", f"{vex_path} status must remain affected")
-    require(
-        statement.get("action_statement_timestamp") == "2026-07-10T00:00:00Z",
-        f"{vex_path} action statement timestamp must match its issue date",
-    )
-    raw_action_statement = statement.get("action_statement")
-    require(
-        isinstance(raw_action_statement, str) and raw_action_statement.strip(),
-        f"{vex_path} requires mitigation guidance",
-    )
-    action_statement = cast(str, raw_action_statement)
-    for marker in ["3.0.7-8.el9", "TD-6", "2026-10-10", "CMVP #4857"]:
-        require(marker in action_statement, f"{vex_path} action statement missing policy marker: {marker}")
-
-    raw_products = statement.get("products")
-    require(isinstance(raw_products, list) and len(raw_products) == 1, f"{vex_path} must identify one base product")
-    products = cast(list[Any], raw_products)
-    require(isinstance(products[0], dict), f"{vex_path} product must be an object")
-    product = cast(dict[str, Any], products[0])
-    require(product.get("@id") == "pkg:oci/ubi9-base-micro", f"{vex_path} must identify the base image")
-    require(
-        product.get("identifiers") == {"purl": "pkg:oci/ubi9-base-micro"},
-        f"{vex_path} base product purl must match its identifier",
-    )
-    raw_subcomponents = product.get("subcomponents")
-    require(isinstance(raw_subcomponents, list), f"{vex_path} must identify affected subcomponents")
-    subcomponents = cast(list[Any], raw_subcomponents)
-    subcomponent_ids = {
-        item.get("@id") for item in subcomponents if isinstance(item, dict) and isinstance(item.get("@id"), str)
-    }
-    require(
-        subcomponent_ids
+        {path.name for path in python_vex_dir.iterdir()}
         == {
-            "pkg:rpm/redhat/openssl-fips-provider@3.0.7-8.el9",
-            "pkg:rpm/redhat/openssl-fips-provider-so@3.0.7-8.el9",
+            "README.md",
+            "cve-2026-53613.openvex.json",
+            "sqlite-component-not-present.openvex.json",
         },
-        f"{vex_path} must scope the affected statement to both held provider packages",
+        "Python OpenVEX publication must contain exactly the two proof-backed documents and its README",
     )
-
-    script = read("tools/assert-vex.py")
-    for marker in [
-        "parse_trivy",
-        "parse_grype",
-        "validate_trivy_report",
-        "validate_grype_report",
-        "validate_report_binding",
-        "validate_contract_floor",
-        "--package-floor",
-        "--self-test",
-        "synthetic-unvexed-critical",
-        "not_affected",
-        "justification",
-        "fixed",
-        "under_investigation",
-        "affected",
-        "un-vexed unfixed HIGH/CRITICAL findings",
-    ]:
-        require(marker in script, f"VEX assertion script missing marker: {marker}")
-
-    vex_readme = read("vex/README.md")
-    for marker in [
-        "default-deny",
-        "Trivy",
-        "Grype",
-        "CODEOWNERS",
-        f"cosign attest --type {predicate_type('openvex')}",
-    ]:
-        require(marker in vex_readme, f"vex/README.md missing marker: {marker}")
-
-    with tempfile.TemporaryDirectory(prefix="verify-openvex-") as raw_tmp:
-        tmp = Path(raw_tmp)
-        trivy_json = tmp / "trivy.json"
-        grype_json = tmp / "grype.json"
-        package_floor = tmp / "package-floor.json"
-        product_ref = "ghcr.io/nwarila/ubi9-base-micro@sha256:" + ("0" * 64)
-        image_id = "sha256:" + ("1" * 64)
-        trivy_json.write_text(
-            json.dumps(
-                {
-                    "SchemaVersion": 2,
-                    "Trivy": {"Version": "0.71.0"},
-                    "ArtifactName": product_ref,
-                    "ArtifactType": "container_image",
-                    "Metadata": {
-                        "OS": {"Family": "redhat", "Name": "9.8"},
-                        "ImageID": image_id,
-                        "ImageConfig": {"architecture": "amd64"},
-                        "RepoDigests": [product_ref],
-                    },
-                    "Results": [
-                        {
-                            "Target": f"{product_ref} (redhat 9.8)",
-                            "Class": "os-pkgs",
-                            "Type": "redhat",
-                            "Packages": [{"Name": "glibc", "Version": "2.34"}],
-                            "Vulnerabilities": [],
-                        }
-                    ],
-                }
-            ),
-            encoding="utf-8",
-        )
-        grype_json.write_text(
-            json.dumps(
-                {
-                    "descriptor": {"name": "grype", "version": "0.115.0"},
-                    "distro": {"name": "redhat", "version": "9.8"},
-                    "source": {
-                        "type": "image",
-                        "target": {
-                            "userInput": product_ref,
-                            "imageID": image_id,
-                            "architecture": "amd64",
-                            "repoDigests": [product_ref],
-                        },
-                    },
-                    "matches": [],
-                    "ignoredMatches": [],
-                    "alertsByPackage": {},
-                }
-            ),
-            encoding="utf-8",
-        )
-        package_floor.write_text(
-            json.dumps({"runtime": {"package_floor": ["glibc"]}}),
-            encoding="utf-8",
-        )
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(ROOT / "tools/assert-vex.py"),
-                "--product",
-                product_ref,
-                "--trivy-json",
-                str(trivy_json),
-                "--grype-json",
-                str(grype_json),
-                "--package-floor",
-                str(package_floor),
-            ],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    require(
-        result.returncode == 0 and "unfixed HIGH/CRITICAL findings requiring VEX: 0" in result.stdout,
-        f"valid zero-finding evidence failed assert-vex.py:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}",
+    libuuid = load_json_object("images/python/vex/cve-2026-53613.openvex.json")
+    expected_products = [
+        {
+            "@id": f"local/ubi9-base-python:ci-{arch}",
+            "subcomponents": [{"@id": "pkg:rpm/redhat/libuuid@2.37.4-25.el9?epoch=0"}],
+        }
+        for arch in ("amd64", "arm64")
+    ]
+    expected_products.append(
+        {
+            "@id": "https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-python/published-platform-children",
+            "subcomponents": [{"@id": "pkg:rpm/redhat/libuuid@2.37.4-25.el9?epoch=0"}],
+        }
     )
+    expected_libuuid = {
+        "@context": "https://openvex.dev/ns/v0.2.0",
+        "@id": "https://github.com/NWarila/ubi9-base-micro/images/python/vex/cve-2026-53613",
+        "author": "NWarila",
+        "timestamp": "2026-08-23T00:00:00Z",
+        "version": 1,
+        "statements": [
+            {
+                "@id": (
+                    "https://github.com/NWarila/ubi9-base-micro/policy/"
+                    "vulnerable-code-not-present?absent-packages=util-linux,util-linux-core"
+                ),
+                "vulnerability": {"name": "CVE-2026-53613"},
+                "products": expected_products,
+                "status": "not_affected",
+                "justification": "vulnerable_code_not_present",
+                "impact_statement": (
+                    "The installed libuuid package is built from the util-linux source RPM, so Grype maps "
+                    "CVE-2026-53613 to it. The vulnerable code is mount(8) at /usr/bin/mount, which is shipped "
+                    "by util-linux-core. Neither util-linux nor util-linux-core is installed in either image "
+                    "architecture; only libuuid 0:2.37.4-25.el9 is installed from that source RPM. Therefore "
+                    "the vulnerable code is not present in this product."
+                ),
+            }
+        ],
+    }
+    require(libuuid == expected_libuuid, "CVE-2026-53613 OpenVEX document drifted from its exact absence claim")
+
+    python_ci = read(".github/workflows/python-ci.yaml")
+    publish_python = read(".github/workflows/publish-python.yaml")
+    ci_sbom = _workflow_named_step(_workflow_job_block(python_ci, "build"), "Generate and gate rpmdb SBOMs")
+    publish_gates = _workflow_named_step(
+        _workflow_job_block(publish_python, "gate-evidence"),
+        "Run runtime and evidence gates",
+    )
+    for label, step in (("Python CI", ci_sbom), ("Python publish", publish_gates)):
+        require(step.count("tools/assert-no-phantom-packages.py") == 1, f"{label} must run one absence proof")
+        for package in ("sqlite-libs", "util-linux", "util-linux-core"):
+            require(
+                len(
+                    re.findall(
+                        rf"^\s*--expect-absent\s+{re.escape(package)}(?:\s+\\)?\s*$",
+                        step,
+                        re.MULTILINE,
+                    )
+                )
+                == 1,
+                f"{label} must pin {package} absent exactly once",
+            )
+
+    attest = _workflow_named_step(
+        _workflow_job_block(publish_python, "sign-attest"),
+        "Attest OpenVEX predicates on both children",
+    )
+    verify = _workflow_named_step(
+        _workflow_job_block(publish_python, "sign-attest"),
+        "Verify OpenVEX attestations on both children",
+    )
+    for marker in (
+        "predicates=(images/python/vex/*.json)",
+        "if (( ${#predicates[@]} == 0 )); then",
+        'echo "no reviewed OpenVEX predicates were found for ${arch}" >&2',
+        "exit 1",
+    ):
+        require(marker in attest, f"Python OpenVEX attestation lost fatal-on-empty marker: {marker}")
+    for marker in (
+        "expected=()",
+        "for predicate in images/python/vex/*.json; do",
+        "if (( ${#expected[@]} == 0 )); then",
+        'echo "no OpenVEX verification expectations were found for ${arch}" >&2',
+        "exit 1",
+        "tools/assert-python-attestation.py",
+    ):
+        require(marker in verify, f"Python OpenVEX verification lost fatal-on-empty marker: {marker}")
 
 
 def check_nist_800_190_scripts() -> None:
@@ -11612,7 +10390,6 @@ def check_helper_self_tests() -> None:
         "tools/assert-python-attestation.py",
         "tools/assert-python-provenance.py",
         "tools/assert-python-slsa-certificate.py",
-        "tools/resolve-python-index.py",
         "tools/python-trust-contract.py",
         "images/python/tools/rpmlock.py",
         "images/python/tools/assert-no-rootfs-secrets.py",
@@ -11629,10 +10406,8 @@ def check_helper_self_tests() -> None:
         "tools/assert-footprint.py",
         "tools/assert-no-phantom-packages.py",
         "tools/assert-reproducible.py",
-        "tools/assert-ignore-scope.py",
         "tools/assert-scanner-db-freshness.py",
         "tools/assert-scanner-canary.py",
-        "tools/assert-vex.py",
         "tools/assert-cosign-rekor.py",
         "tools/assert-slsa-builder-id.py",
         "tools/assert-stig-tailoring.py",
@@ -11734,8 +10509,9 @@ def check_decision_records() -> None:
         text = read(relative_path)
         require(text.startswith(f"# ADR-{number}: {title}\n"), f"{relative_path} has wrong ADR heading")
         expected_date = date_overrides.get(number, "2026-06-21")
+        expected_status = "Superseded" if number == "0007" else "Accepted"
         for marker in [
-            "- Status: Accepted",
+            f"- Status: {expected_status}",
             f"- Date: {expected_date}",
             "- Scope: repo",
             "## Context",
@@ -11754,7 +10530,6 @@ def check_decision_records() -> None:
         SLSA_GENERATOR_SHA,
         "tools/assert-no-phantom-packages.py",
         ".github/workflows/rpm-lock-refresh.yaml",
-        "tools/assert-vex.py",
         "stig/rhel9-base-micro-tailoring.xml",
         predicate_type("nist_800_190"),
         "base-micro@sha256:<digest>",
@@ -11817,14 +10592,12 @@ def check_acceptance_enforcement_claim_self_test() -> None:
 _VERIFY_DOC_CHILD_ATTESTATIONS = {
     predicate_type("spdx"): 2,
     predicate_type("cyclonedx"): 1,
-    predicate_type("openvex"): 1,
     predicate_type("nist_800_190"): 1,
     predicate_type("stig_arf"): 1,
 }
 _VERIFY_HOWTO_CHILD_ATTESTATIONS = {
     predicate_type("spdx"): 1,
     predicate_type("cyclonedx"): 1,
-    predicate_type("openvex"): 1,
     predicate_type("nist_800_190"): 1,
     predicate_type("stig_arf"): 1,
 }
@@ -11947,9 +10720,7 @@ def _child_attestations_are_looped(
         if marker not in fenced_text:
             return f"missing-resolution:{label}"
 
-    known_child_types = tuple(
-        predicate_type(name) for name in ["spdx", "cyclonedx", "openvex", "nist_800_190", "stig_arf"]
-    )
+    known_child_types = tuple(predicate_type(name) for name in ["spdx", "cyclonedx", "nist_800_190", "stig_arf"])
     expected = Counter(expected_child_attestations)
     if set(expected) != set(known_child_types) or any(count < 1 for count in expected.values()):
         return "invalid-expected-child-attestation-multiset"
@@ -12019,7 +10790,6 @@ def check_verify_docs_child_loop_self_test() -> None:
     child_commands = [
         'cosign verify-attestation --type spdxjson "${CHILD_REF}"',
         'cosign verify-attestation --type cyclonedx "${CHILD_REF}"',
-        'cosign verify-attestation --type openvex "${CHILD_REF}"',
         f'cosign verify-attestation --type {predicate_type("nist_800_190")} "${{CHILD_REF}}"',
         f'cosign verify-attestation --type {predicate_type("stig_arf")} "${{CHILD_REF}}"',
     ]
@@ -12453,7 +11223,7 @@ def check_docs() -> None:
         len(verify_lines) >= 3 and verify_summary_marker in verify_lines[2],
         "docs/reference/verify.md line 3 must state the fixable MEDIUM/HIGH/CRITICAL gate",
     )
-    cve_heading = "## CVE And OpenVEX Policy"
+    cve_heading = "## Vulnerability Policy"
     sbom_heading = "## SBOM Source"
     cve_start = verify.find(cve_heading)
     cve_end = verify.find(sbom_heading, cve_start + len(cve_heading))
@@ -12473,7 +11243,10 @@ def check_docs() -> None:
         "`openssl-fips-provider`",
         "`openssl-fips-provider-so`",
         "3.0.7-8.el9",
-        "2026-10-10",
+        "report-only",
+        "complete JSON",
+        "SARIF",
+        "90 days",
     ]:
         require(marker in verify_cve_policy, f"docs/reference/verify.md CVE policy missing marker: {marker}")
     require(
@@ -12481,12 +11254,8 @@ def check_docs() -> None:
         "ADR-0006 must state that the nightly sentinel detects fixable MEDIUM/HIGH/CRITICAL findings",
     )
     require(
-        re.search(
-            r"Fixable MEDIUM, HIGH,\s+and CRITICAL findings fail closed in either scanner\.",
-            adr_0007,
-        )
-        is not None,
-        "ADR-0007 must state that fixable MEDIUM/HIGH/CRITICAL findings fail closed",
+        re.search(r"Fixable MEDIUM, HIGH, and CRITICAL findings still block", adr_0007) is not None,
+        "ADR-0007 must state that fixable MEDIUM/HIGH/CRITICAL findings remain blocking",
     )
     require(
         "Fixable MEDIUM, HIGH, and CRITICAL OS/library findings fail closed through both Trivy and Grype." in nist_doc,
@@ -12523,7 +11292,6 @@ def check_docs() -> None:
         'cosign verify "${INDEX_REF}"',
         f'cosign verify-attestation --type {predicate_type("spdx")} "${{CHILD_REF}}"',
         f'cosign verify-attestation --type {predicate_type("cyclonedx")} "${{CHILD_REF}}"',
-        f'cosign verify-attestation --type {predicate_type("openvex")} "${{CHILD_REF}}"',
         f'cosign verify-attestation --type {predicate_type("nist_800_190")} "${{CHILD_REF}}"',
         f'cosign verify-attestation --type {predicate_type("stig_arf")} "${{CHILD_REF}}"',
         f'cosign verify-attestation --type {slsa_attestation_type()} "${{INDEX_REF}}"',
@@ -12563,9 +11331,9 @@ def check_docs() -> None:
         "built for local and pull-request tests but is not published, signed, attested",
         "must push the OCI index before it can export and compare the registry-served child rootfs bytes",
         "cannot retract the pushed manifest or tag update",
-        "Cosign signature on that index",
-        "attestations on each platform child",
-        "`slsa-verifier` result on the index",
+        "verifies the Cosign signature on that index",
+        "SPDX, CycloneDX, NIST SP 800-190, and tailored STIG ARF on each platform child",
+        "`slsa-verifier` result on the index against exact identities",
         "jq -r '.payload | @base64d | fromjson | .predicate.packages[].name'",
         "grep -q glibc",
         "independently for `linux/amd64` and `linux/arm64`",
@@ -12573,13 +11341,17 @@ def check_docs() -> None:
         "no shell or package-manager executable",
         "Fixable vulnerability policy",
         "reject fixable MEDIUM, HIGH, and CRITICAL findings",
-        "repository's `TD-6`",
+        "CVE-2026-31790",
         "`openssl-fips-provider` and `openssl-fips-provider-so`",
-        "expiring on `2026-10-10`",
+        "3.0.7-8.el9",
         "Unfixed vulnerability policy",
-        "every unfixed HIGH or CRITICAL finding",
-        "default-denied",
-        "statement is `affected`; it is disclosure only and clears nothing",
+        "Unfixed vendor findings never block",
+        "Complete findings are retained as JSON and SARIF",
+        "distinct code-scanning categories and sealed 90-day raw evidence",
+        "Absence-proof OpenVEX",
+        "sqlite-libs",
+        "util-linux-core",
+        "documents do not suppress findings",
         "Scanner database freshness",
         "parseable, schema-compatible, and no older than",
         "rpmdb-derived SPDX and CycloneDX attestations",
@@ -12682,8 +11454,10 @@ def check_docs() -> None:
         "SLSA L3 provenance",
         "SPDX and CycloneDX SBOMs",
         "Grype fixable-CVE gates",
-        "OpenVEX default-deny",
-        "NIST SP 800-190 section 4.1 image evidence",
+        "complete report-only JSON and SARIF",
+        "absence-proof OpenVEX",
+        "NIST SP 800-190 section 4.1",
+        "image evidence",
         "tailored RHEL9 STIG ARF",
         "byte-for-byte reproducibility",
         "Rekor-logged",
@@ -12710,9 +11484,6 @@ def check_docs() -> None:
     for marker in [
         "## TD-10: Base-python create-once alias external-writer race",
         "not an atomic create-once",
-        "## TD-11: Published-child VEX descriptor-cardinality asymmetry",
-        "`tools/assert-vex.py` deliberately remains unchanged",
-        "cannot become an authorized product",
     ]:
         require(marker in tech_debt, f"docs/TECH-DEBT.md missing Python publication debt marker: {marker}")
 
@@ -12762,33 +11533,37 @@ def check_docs() -> None:
         "build-failing hard gate",
     ]:
         require(marker in docs_index, f"docs README must index marker: {marker}")
-    require(
-        "CODEOWNERS-gated" in vex_doc and f"cosign attest --type {predicate_type('openvex')}" in vex_doc,
-        "docs/compliance/vex.md must describe VEX review and attestation flow",
-    )
+    for marker in [
+        "images/python/vex/sqlite-component-not-present.openvex.json",
+        "images/python/vex/cve-2026-53613.openvex.json",
+        "sqlite-libs",
+        "util-linux",
+        "util-linux-core",
+        "does not suppress scanner findings",
+    ]:
+        require(marker in vex_doc, f"docs/compliance/vex.md missing absence-proof marker: {marker}")
     for source, source_text in [
         ("docs/TECH-DEBT.md", tech_debt),
         ("docs/reference/gates.md", gates),
-        ("docs/compliance/vex.md", vex_doc),
     ]:
         for marker in [
             "CVE-2026-31790",
             "3.0.7-8.el9",
-            "2026-10-10",
             "MEDIUM",
             "HIGH",
             "CRITICAL",
-            "delta is zero",
-            "forward-looking",
         ]:
             require(marker in source_text, f"{source} missing fixable-CVE policy marker: {marker}")
+    for marker in ["report-only", "JSON", "SARIF"]:
+        require(marker in gates, f"docs/reference/gates.md missing report-only evidence marker: {marker}")
     for marker in [
         "## TD-6:",
-        "CVSS 3.1 base score of 5.9",
-        "CVE-2026-2673",
-        "openssl-libs",
-        "glibc-common",
-        "glibc-minimal-langpack",
+        "CVE-2026-31790",
+        "openssl-fips-provider{,-so}",
+        "3.0.7-8.el9",
+        "CMVP certificate #4857",
+        "Any fixable MEDIUM, HIGH, or CRITICAL finding",
+        "outside this exception fails the gate",
     ]:
         require(marker in tech_debt, f"docs/TECH-DEBT.md missing TD-6 marker: {marker}")
     for marker in [
@@ -12872,7 +11647,6 @@ def check_docs() -> None:
         'cosign verify "${INDEX_REF}"',
         f"cosign verify-attestation --type {predicate_type('spdx')}",
         f"cosign verify-attestation --type {predicate_type('cyclonedx')}",
-        f"cosign verify-attestation --type {predicate_type('openvex')}",
         f"cosign verify-attestation --type {predicate_type('nist_800_190')}",
         f"cosign verify-attestation --type {predicate_type('stig_arf')}",
         "full attestation set is Rekor-logged",
@@ -12885,7 +11659,8 @@ def check_docs() -> None:
         "Trivy",
         "Grype",
         "tools/assert-scanner-db-freshness.py",
-        "OpenVEX default-deny",
+        "complete JSON and SARIF",
+        "Unfixed findings do not fail",
         f"cosign verify-attestation --type {slsa_attestation_type()}",
         "STIG ARF",
         "OpenSCAP",
@@ -13385,20 +12160,6 @@ def main(argv: list[str] | None = None) -> int:
             print(f"verify failed: {exc}", file=sys.stderr)
             return 1
         return 0
-    if len(arguments) == 2 and arguments[0] == "--check-accept-track-lock-fixture":
-        try:
-            check_accept_and_track_lock_self_test(arguments[1])
-        except VerifyError as exc:
-            print(f"verify failed: {exc}", file=sys.stderr)
-            return 1
-        return 0
-    if len(arguments) == 2 and arguments[0] == "--check-micro-vex-index-fixture":
-        try:
-            check_micro_vex_index_plumbing(arguments[1])
-        except VerifyError as exc:
-            print(f"verify failed: {exc}", file=sys.stderr)
-            return 1
-        return 0
     if arguments == ["--check-publish-python-surface-lock-fixtures"]:
         try:
             check_publish_python_surface_lock_self_test()
@@ -13438,8 +12199,6 @@ def main(argv: list[str] | None = None) -> int:
         check_supply_chain_workflows,
         check_lint_setup,
         check_publish_workflow,
-        check_micro_vex_index_plumbing,
-        check_micro_vex_index_checker_mutation_self_test,
         check_publish_scope_gate,
         check_publish_scope_gate_self_test,
         check_python_ci_preflight,
@@ -13455,8 +12214,6 @@ def main(argv: list[str] | None = None) -> int:
         check_python_evidence,
         check_python_evidence_self_test,
         check_python_sqlite_vex,
-        check_accept_and_track_dispositions,
-        check_accept_and_track_checker_mutation_self_test,
         check_python_contract_schema,
         check_python_contract_schema_self_test,
         check_build_script,

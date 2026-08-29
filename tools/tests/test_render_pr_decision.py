@@ -37,15 +37,9 @@ def _hardening(arch: str) -> dict[str, Any]:
         "arch": arch,
         "complete": True,
         "attention_reasons": [],
-        "cves": {
-            "raw": {"trivy": 1, "grype": 1, "unique": 1},
-            "ignored": {"unique": 1},
-            "actionable": {"unique": 0},
-        },
         "stig": {"total_rule_results": 1532, "pass": 39, "fail": 0, "not_selected": 1491},
         "secrets": {"finding_count": 0, "passed": True},
         "footprint": {"regular_file_bytes": 23841246, "limit_bytes": 26214400, "passed": True},
-        "vex": {"accepted": 0, "missing": 0},
     }
 
 
@@ -105,7 +99,7 @@ def test_clean_pr_is_safe_and_explicit(
     assert markdown.startswith("## ✅ SAFE TO APPROVE\n")
     assert "digest-neutral ✓" in markdown
     assert "pass 39 · fail 0 · not-selected 1491 (1532 rule results)" in markdown
-    assert "Raw HIGH/CRITICAL CVEs" in markdown
+    assert "Secret findings" in markdown
     assert "Current posture" in markdown
     assert markdown.count(RENDERER.MARKER) == 1
 
@@ -119,12 +113,6 @@ def test_additive_envelope_schema_keeps_g1_renderer_safe(
     markdown = _render(clean_inputs)
 
     assert markdown.startswith("## ✅ SAFE TO APPROVE\n")
-
-
-def test_actionable_cve_is_attention(clean_inputs: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]) -> None:
-    clean_inputs[0][0]["cves"]["actionable"] = {"unique": 1}
-
-    _assert_attention(_render(clean_inputs))
 
 
 def test_unexplained_envelope_attention_reason_cannot_be_safe(
@@ -168,7 +156,7 @@ def test_missing_malformed_or_incomplete_envelope_is_attention(
             clean_inputs[0][3]["complete"] = False
             clean_inputs[0][3]["attention_reasons"] = ["missing reproducibility report"]
         else:
-            del clean_inputs[0][0]["cves"]["raw"]["trivy"]
+            del clean_inputs[0][0]["stig"]["fail"]
 
     _assert_attention(_render(clean_inputs))
 
