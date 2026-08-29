@@ -184,7 +184,24 @@ Python publisher fetches the bytes once by the push-reported digest,
 corroborates their SHA-256, checksum-protects cross-job transfers, and gives the
 same digest to every consumer. The micro publisher supplies the pushed digest
 and exact `dist/image-index.json` bytes it already read from the registry to
-both child calls in the same job.
+both child calls in the same job. As verified on 2026-08-29, GitHub reported
+[`Publish image` run 32671091120, attempt 1](https://github.com/NWarila/ubi9-base-micro/actions/runs/32671091120/attempts/1)
+completed successfully for `.github/workflows/publish-image.yaml` on push commit
+`07da8231817c232ffd1c99e067673fcad6049bad`; its registry-gate logs recorded the
+TD-12 `CVE-2026-14456` accept-and-track disposition and zero undispositioned
+findings for both digest-addressed micro children,
+`ghcr.io/nwarila/ubi9-base-micro@sha256:068513099e9d658f90822acac19b23edfdac93d1bc466d0787fb2e82e7e43c60`
+and
+`ghcr.io/nwarila/ubi9-base-micro@sha256:a0785566b22f550532b3497b6de61464ac4d982488d03acc54a81bcd0cdb4358`.
+GitHub likewise reported
+[`Publish Python image` run 33212723050, attempt 1](https://github.com/NWarila/ubi9-base-micro/actions/runs/33212723050/attempts/1)
+completed successfully for `.github/workflows/publish-python.yaml` on push
+commit `d83526192b83be0f45c4f9b90da213559c15a334`; its registry-gate logs recorded
+the same TD-12 result with zero undispositioned findings for both Python child
+digests,
+`ghcr.io/nwarila/ubi9-base-python@sha256:f054a09c2378ae46f1f8d7e302aeee22ea6ba73cf6cd070a753e87e0e1c5cbb0`
+and
+`ghcr.io/nwarila/ubi9-base-python@sha256:b56759303abc8c702abbc9f20289bc5f5af3029689ff963dfcd6c91c84bd44fc`.
 
 Valid fix evidence from either scanner and byte-noncanonical raw scanner
 identities refuse authorization. `tools/verify.py` independently expires the
