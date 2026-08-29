@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-06-21
-- Last reviewed: 2026-08-18
+- Last reviewed: 2026-08-28
 - Scope: repo
 
 ## Context
@@ -28,14 +28,18 @@ entries. Each entry binds one CVE, its complete package/version set, a debt ID,
 a review date, and one or more statement surfaces. Each surface binds its
 canonical statement path and contents, action text, local products,
 non-image-matchable policy IRI, and pinned published repository. The current
-entries are:
+entry is:
 
-- TD-9 for known-affected `CVE-2026-11940`, with the complete `python3.12` and
-  `python3.12-libs` set at `3.12.13-3.el9_8.1` on the base-python surface; and
 - TD-12 for known-affected `CVE-2026-14456`, with `openssl-libs` at exactly
   `1:3.5.5-5.el9_8` on separate base-python and base-micro surfaces.
 
-Both entries have `review-by 2026-10-01`. A local product uses a two-key
+The former TD-9 disposition for `CVE-2026-11940` was retired on 2026-08-28 after
+the fixed `python3.12` and `python3.12-libs` `3.12.14-1.el9_8` RPMs were
+absorbed. Its version-3 OpenVEX history statement names only the fixed,
+architecture-qualified RPM products and therefore cannot authorize an image
+finding.
+
+The entry has `review-by 2026-10-01`. A local product uses a two-key
 authorization: the exact in-tool disposition surface and its byte-canonical
 reviewed statement must both match. This covers the two base-python CI products
 and the locally loaded `ghcr.io/nwarila/ubi9-base-micro:base-micro` product.

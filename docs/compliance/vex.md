@@ -21,37 +21,33 @@ consumers away from the vulnerable call path through the TD-6 review date,
 package-, version-, CVE-, and date-scoped files under `security/` are the only
 scanner suppressors.
 
-The gate has two exact, expiring accept-and-track dispositions:
+The gate has one exact, expiring accept-and-track disposition:
 
-- TD-9 covers known-affected unfixed HIGH `CVE-2026-11940` on exactly
-  `python3.12` and `python3.12-libs` at `3.12.13-3.el9_8.1` in base-python. Red
-  Hat listed RHEL 9 `python3.12` as Affected with no fixed RPM as of 2026-08-13.
 - TD-12 covers known-affected unfixed HIGH `CVE-2026-14456` on exactly
   `openssl-libs` at `1:3.5.5-5.el9_8` in both base-python and base-micro. Red
   Hat listed RHEL 9 `openssl` as Affected with no fixed RPM as of 2026-08-18;
   RHEL 9.8 and later ship the affected OpenSSL 3.5.x QUIC server, and risk
   requires an application to explicitly enable a QUIC server listener.
 
-Both entries have `review-by 2026-10-01`. The in-tool model is a closed set of
+The entry has `review-by 2026-10-01`. The in-tool model is a closed set of
 dispositions, each with one or more exact statement surfaces. A surface binds
 its canonical statement path and contents, action text, local products,
 non-image-matchable policy IRI, and pinned published repository. Candidate
 selection must resolve to exactly one surface; zero matches confer no
-authorization, and multiple matches fail closed. Authority from one CVE,
+authorization, and multiple matches fail closed. Authority from one
 statement, product, repository, or policy IRI cannot satisfy another surface.
 
 Local products use a two-key authorization: the exact disposition surface and
 its canonical reviewed `affected` statement must both match. The local products
 are `local/ubi9-base-python:ci-amd64`,
 `local/ubi9-base-python:ci-arm64`, and
-`ghcr.io/nwarila/ubi9-base-micro:base-micro`. TD-9 uses
-`images/python/vex/cve-2026-11940.openvex.json`; TD-12 uses
+`ghcr.io/nwarila/ubi9-base-micro:base-micro`. TD-12 uses
 `images/python/vex/cve-2026-14456.openvex.json` for Python and
 `vex/cve-2026-14456.openvex.json` for micro.
 
 Digest-addressed published children use a three-key authorization: the exact
 disposition surface, its canonical statement, and paired `--index-reference`
-plus `--index-manifest` evidence must all match. The Python surfaces pin
+plus `--index-manifest` evidence must all match. The Python surface pins
 `ghcr.io/nwarila/ubi9-base-python`; the micro surface pins
 `ghcr.io/nwarila/ubi9-base-micro`. The tool verifies the supplied bytes against
 the reference digest, derives exactly one `linux/amd64` child and one
@@ -83,14 +79,12 @@ consumer alias.
 
 A mismatch, duplicate statement, byte-noncanonical scanner identity, or valid
 fix evidence from either scanner leaves the finding un-vexed. Candidate
-evaluations fail after the review date, and `tools/verify.py` expires both
-entries even when their findings are dormant. These exact paths are the only
-ones on which `affected` satisfies the gate; all other `affected` statements
+evaluations fail after the review date, and `tools/verify.py` expires the entry
+even when its finding is dormant. These exact paths are the only ones on which
+`affected` satisfies the gate; all other `affected` statements
 remain documentary. They suppress no scanner report, do not alter the
 HIGH/CRITICAL threshold, and do not claim that either image is unaffected.
-Consumers must not rely on `tarfile.extractall()` `data` or `tar` filters to
-contain untrusted archives until TD-9 is remediated. Consumers that enable an
-OpenSSL QUIC server listener must mitigate at the application boundary until
+Consumers that enable an OpenSSL QUIC server listener must mitigate at the application boundary until
 TD-12 is remediated.
 
 Base-python also has one permanent exact `not_affected` disposition:

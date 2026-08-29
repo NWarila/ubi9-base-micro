@@ -186,77 +186,6 @@ step. The workflow checks are therefore defence-in-depth against accidental
 regression, not an adversarial control over a hostile committer. Code review,
 CODEOWNERS, and required status checks are the controls for that threat.
 
-## TD-9: Expiring acceptance of CVE-2026-11940 in base-python
-
-The base-python CI products `local/ubi9-base-python:ci-amd64` and
-`local/ubi9-base-python:ci-arm64` are known affected by `CVE-2026-11940` in
-`python3.12` and `python3.12-libs` at exactly `3.12.13-3.el9_8.1`. As of
-2026-08-13, Red Hat lists RHEL 9 `python3.12` as Affected with no fixed RPM;
-RHEL 9 `python3.9` is fixed via RHSA-2026:54268, and the upstream CPython 3.12
-branch is fixed. Consumers must not rely on `tarfile.extractall()` `data` or
-`tar` filters to contain untrusted archives until a fixed RPM is absorbed.
-
-The legacy local-product path is a two-key authorization: the closed allowlist
-in `tools/assert-vex.py` and the reviewed disclosure in
-`images/python/vex/cve-2026-11940.openvex.json`. Both must match the CVE, the two
-CI products, the complete two-package set, the installed version, this debt id,
-and `review-by 2026-10-01`.
-
-The same tool contains a second product-eligibility path for
-a digest-addressed `ghcr.io/nwarila/ubi9-base-python` platform child. The
-canonical OpenVEX document was reissued as version 2 and names that policy scope
-with the non-image-matchable
-`https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-python/published-platform-children`
-IRI; it does not enumerate or prove the existence of a published image. For this
-path the authorization is the conjunction of fixed in-tool constraints (the
-pinned repository, CVE, package/version pair, and expiry), that canonical
-reviewed statement, and supplied index evidence. The tool requires paired
-`--index-reference` and `--index-manifest` inputs, recomputes the digest of the
-exact index bytes, accepts exactly one `linux/amd64` child and one
-`linux/arm64` child with distinct digests, locks the BuildKit attestation
-platform and annotation maps, requires every descriptor digest in `manifests`
-to be unique across all roles, and binds the gated product digest to the child
-for the architecture reported by both scanners. It does not constrain the
-number of attestation descriptors or their per-child reference cardinality, and
-it does not close the top-level key set of either descriptor kind or the key
-set of a runnable child's `platform` object.
-The duplicate-or-contradictory descriptor diagnostic names the first and
-repeated positions; the child/attestation digest-disjointness guard remains
-separate with its own diagnostic. The index digest is never eligible, and a
-distinct attestation-descriptor digest is rejected when submitted as the
-product. An extra or duplicate runnable platform, a nested index, a wrong
-repository, and an architecture swap are also rejected.
-
-Those checks prove that a digest is a child of the supplied, digest-verified
-index. The merged production caller supplies the previously missing origin
-binding on each run: it fetches the index bytes once from the registry by the
-push-reported digest, independently corroborates their SHA-256, protects
-cross-job transfers with a checksum manifest, and requires the same digest for
-signing, attestation, VEX, provenance, collision checks, and aliases. The
-published-child path is therefore wired to a production caller rather than
-dormant. The 2026-08-17 production attempt failed in `registry-served gates and
-evidence` while `Install publication gate tools` tried to install Syft without
-Cosign available. That prerequisite is now repaired and lock-enforced;
-production proof remains pending the next `main` push. The package exists
-publicly and serves only unaliased, unsigned candidate digests. Its two BuildKit
-`mode=max` provenance attestation manifests exist; no production gate evidence,
-Cosign signature or attestation, SLSA-generator provenance, Rekor record, or
-consumer alias exists. The binding is only to the index that a run pushed and
-read back. It does not close the external-writer alias race described in TD-10
-or the VEX-side descriptor-policy differences described in TD-11.
-
-On both product paths, valid fix evidence from either scanner refuses the
-disposition. Each raw scanner vulnerability ID, package name, and installed
-version must already be byte-canonical: leading or trailing whitespace is
-malformed evidence and is rejected rather than normalized into an exact match.
-The image is not unaffected, and no scanner input or raw finding is suppressed.
-
-Review this entry by 2026-10-01 and monitor Red Hat for a fixed RHEL 9
-`python3.12` RPM. When Red Hat ships a fixed `python3.12` RPM, the rpm-lock
-refresh absorbs it and the same pull request removes the in-tool allowlist entry
-and flips the OpenVEX statement to `fixed`; that change also removes the
-published-child authorization.
-
 ## TD-12: Expiring acceptance of CVE-2026-14456 in both images
 
 The base-python CI products `local/ubi9-base-python:ci-amd64` and
@@ -286,7 +215,7 @@ repository. The Python surface pins
 `ghcr.io/nwarila/ubi9-base-python`; the micro surface pins
 `ghcr.io/nwarila/ubi9-base-micro`. A repository, index, statement, product, or
 policy IRI from one surface cannot authorize the other. Valid fix evidence from
-either scanner refuses the disposition. Both entries and all surfaces expire
+either scanner refuses the disposition. The entry and both surfaces expire
 after review-by 2026-10-01, including when a finding is temporarily dormant.
 
 Review this entry by 2026-10-01 and monitor Red Hat for a fixed RHEL 9

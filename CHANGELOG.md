@@ -18,6 +18,13 @@ and this project adheres to
 
 ### Security
 
+- Retired the TD-9 accepted-risk disposition for `CVE-2026-11940` after #117
+  absorbed the `python3.12` and `python3.12-libs` `3.12.14-1.el9_8` fix from
+  RHSA-2026:59009. The version-3 OpenVEX history statement now names only the
+  fixed architecture-qualified RPM products, the runtime authorization is
+  removed, and a regression proves the document cannot authorize either local
+  product or a published child. TD-12 remains the sole expiring
+  accept-and-track entry.
 - Added the exact, expiring TD-12 accept-and-track disposition for
   `CVE-2026-14456` on `openssl-libs` at `1:3.5.5-5.el9_8` in both images. The
   disposition model now supports closed per-image surfaces: local Python and

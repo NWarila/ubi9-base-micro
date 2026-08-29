@@ -45,8 +45,8 @@ Documentation for this repository follows the Diataxis framework.
 - [`nist-800-190.md`](compliance/nist-800-190.md) - section 4.1 image-control predicate URI, control mapping, and not-CIS-Docker scope.
 - [`stig.md`](compliance/stig.md) - image-scoped RHEL9 STIG tailoring, mass-N/A guard, ARF predicate type, and scan scope.
 - [`vex.md`](compliance/vex.md) - CODEOWNERS-gated VEX authoring flow for the
-  default-deny unfixed HIGH/CRITICAL gate, including the exact expiring TD-9
-  and TD-12 accept-and-track dispositions.
+  default-deny unfixed HIGH/CRITICAL gate, including the exact expiring TD-12
+  accept-and-track disposition.
 
 ## Maintenance Ledgers
 

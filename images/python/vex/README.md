@@ -10,9 +10,8 @@ Accepted statements must be OpenVEX JSON files with:
 - `status: "fixed"` or `status: "not_affected"` with one of the standard OpenVEX justifications, except for the exact accept-and-track path below.
 
 `affected` satisfies the gate only for the exact, expiring accept-and-track
-authorizations implemented in `tools/assert-vex.py`: CVE-2026-11940 matched by
-`cve-2026-11940.openvex.json`, and CVE-2026-14456 matched by
-`cve-2026-14456.openvex.json`. Every other `affected` statement, and every
+one exact affected authorization implemented in `tools/assert-vex.py`:
+CVE-2026-14456 matched by `cve-2026-14456.openvex.json`. Every other `affected` statement, and every
 `under_investigation` statement, remains documentary and does not satisfy the
 gate. Files under `vex/` require review through `.github/CODEOWNERS`. The
 pull-request release preflight does not attest OpenVEX. The production publisher
@@ -28,16 +27,11 @@ statement is documentary: it does not suppress the finding or satisfy the
 default-deny gate. The exact, expiring scanner suppression is maintained
 separately under `security/` and tracked as TD-6 in `docs/TECH-DEBT.md`.
 
-`cve-2026-11940.openvex.json` version 2 discloses that both base-python CI
-products ship the affected `python3.12` and `python3.12-libs` packages at
-`3.12.13-3.el9_8.1`. It also names the potential
-`ghcr.io/nwarila/ubi9-base-python` platform-child scope with the
-non-image-matchable policy IRI
-`https://github.com/NWarila/ubi9-base-micro/policy/ubi9-base-python/published-platform-children`.
-The IRI documents policy scope without becoming a bare repository wildcard and
-does not assert that any such image or index has been published. The statement
-tracks acceptance as TD-9 through `review-by 2026-10-01`; it does not claim
-that the package or image is unaffected.
+`cve-2026-11940.openvex.json` version 3 records the fixed `python3.12` and
+`python3.12-libs` `3.12.14-1.el9_8` RPMs for x86_64 and aarch64. Its products
+are the architecture-qualified RPM purls containing the fix, not reusable image
+or policy identities, so the historical `fixed` statement authorizes no image
+finding.
 
 `cve-2026-14456.openvex.json` records that both base-python CI products ship
 `openssl-libs` at exactly `1:3.5.5-5.el9_8`. It names the same pinned published
@@ -49,7 +43,7 @@ server process by default and starts the Python interpreter. The statement
 tracks acceptance as TD-12 through `review-by 2026-10-01`; it does not claim
 that the package or image is unaffected.
 
-For either accepted finding on the two local CI products, the gate requires two
+For an accepted finding on the two local CI products, the gate requires two
 keys: the exact in-tool disposition entry and the matching byte-canonical
 reviewed statement. The complete CVE, package/version set, product surface,
 statement path, and action text must match. For a digest-addressed child under

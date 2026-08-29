@@ -154,15 +154,13 @@ The push-only `rekor-rollup` job verifies that the full attestation set is Rekor
 
 OpenSCAP builds ComplianceAsCode/content `0.1.81` from SHA512-pinned source, runs `stig/rhel9-base-micro-tailoring.xml`, and attests the `https://nwarila.dev/attestations/stig-arf/v1` predicate per platform digest. The STIG summary embedded in that predicate includes every per-rule `idref` result and the deterministic rootfs identity assertion report when OpenSCAP reports a selected must-verify identity or ownership rule as `notapplicable`. Trivy and Grype are installed as checksum-verified pinned binaries (`TRIVY_VERSION` and `GRYPE_VERSION`), not as scanner actions. Before scan results are accepted, `tools/assert-scanner-db-freshness.py` fails closed unless Trivy metadata and Grype DB status are fresh, parseable, and within the configured schema and age bounds. Both scanners fail the workflow on fixable MEDIUM, HIGH, and CRITICAL findings, subject only to the version-pinned TD-6 exception for `CVE-2026-31790` covering `openssl-fips-provider` and `openssl-fips-provider-so` at `3.0.7-8.el9`, expiring on `2026-10-10`: Trivy uses `--severity MEDIUM,HIGH,CRITICAL --ignore-unfixed --exit-code 1` with `security/cve-ignore.trivyignore.yaml`, and Grype uses `--only-fixed --fail-on medium` with `security/cve-ignore.grype.yaml`. A separate scanner pass without those fixable-only filters feeds `tools/assert-vex.py`, which fails closed unless every unfixed HIGH or CRITICAL finding has a matching reviewed OpenVEX statement under the CODEOWNERS-gated `vex/` path. If no unfixed HIGH or CRITICAL findings exist and no VEX JSON exists, there is no OpenVEX attestation to verify.
 
-The gate has two separate exact accept-and-track entries. TD-9 covers the
-known-affected unfixed HIGH `CVE-2026-11940` on exactly `python3.12` and
-`python3.12-libs` at `3.12.13-3.el9_8.1` in base-python. TD-12 covers the
+The gate has one exact accept-and-track entry. TD-12 covers the
 known-affected unfixed HIGH `CVE-2026-14456` on exactly `openssl-libs` at
-`1:3.5.5-5.el9_8` in base-python and base-micro. Both expire after
+`1:3.5.5-5.el9_8` in base-python and base-micro. The entry and both surfaces expire after
 `review-by 2026-10-01`.
 
-The closed model has three statement surfaces: TD-9 Python, TD-12 Python, and
-TD-12 micro. Local products use a two-key authorization. The exact disposition
+The closed model has one entry and two statement surfaces: TD-12 Python and TD-12
+micro. Local products use a two-key authorization. The exact disposition
 surface and its byte-canonical reviewed `affected` statement must match for one
 of the two base-python CI products or the locally loaded
 `ghcr.io/nwarila/ubi9-base-micro:base-micro` product. Candidate selection must
@@ -197,11 +195,11 @@ runs. The Python publication chain also remains unproven for the earlier reason
 described above.
 
 Valid fix evidence from either scanner and byte-noncanonical raw scanner
-identities refuse authorization. `tools/verify.py` independently expires both
-entries even if their scanner findings are absent. Its current summary locks 3
-canonical byte documents, the exact 2-entry/3-surface model, 18 document
-mutations, 50 disposition documentation prose mutations across 6 files, and 2/2
-dormant expiries; four verifier mutations and four corresponding checker
+identities refuse authorization. `tools/verify.py` independently expires the
+entry even if its scanner finding is absent. Its current summary locks 2 active canonical byte documents plus 1 fixed-history
+document, the exact 1-entry/2-surface model, 12 active document mutations, 6
+fixed-history mutations, 35 disposition documentation prose mutations across 6
+files, and 1/1 dormant expiry; five verifier mutations and five corresponding checker
 mutations must also fail. These paths do not make either image unaffected and
 are not TD-6 fixable-CVE scanner suppressions.
 
