@@ -80,7 +80,7 @@ SLSA provenance, collision checks, and final aliases. This binds the dynamic
 authorization input to the index this run pushed and read back; it does not make
 the later resolve-then-apply alias operation atomic against an external writer.
 All three VEX-side descriptor-policy differences are tracked as TD-11. The
-[canonical publication evidence contract](../../../docs/reference/verification-contract.md#base-python-publication-evidence-contract)
+[canonical publication evidence contract](../../../docs/reference/verification-contract.md#image-family-publication-evidence-contract)
 records the current and historical production evidence.
 
 An authorization on one disposition or image surface cannot satisfy another.

@@ -6,7 +6,7 @@ This page is the completed-publication contract for `base-micro`. For
 `base-python`, use the Python-specific commands in
 [`../how-to/verify-a-published-image.md`](../how-to/verify-a-published-image.md#verify-base-python)
 and the subject matrix in
-[`verification-contract.md`](verification-contract.md#base-python-publication-evidence-contract).
+[`verification-contract.md`](verification-contract.md#image-family-publication-evidence-contract).
 
 ## Prerequisites
 
@@ -184,10 +184,7 @@ Python publisher fetches the bytes once by the push-reported digest,
 corroborates their SHA-256, checksum-protects cross-job transfers, and gives the
 same digest to every consumer. The micro publisher supplies the pushed digest
 and exact `dist/image-index.json` bytes it already read from the registry to
-both child calls in the same job. Both workflows are configured, but production
-proof of the new TD-12 published-child paths remains pending the merge-triggered
-runs. The Python publication chain also remains unproven for the earlier reason
-described above.
+both child calls in the same job.
 
 Valid fix evidence from either scanner and byte-noncanonical raw scanner
 identities refuse authorization. `tools/verify.py` independently expires the
@@ -210,4 +207,4 @@ The `ghcr.io/nwarila/ubi9-base-micro` package is publicly readable. The complete
 pull and verification chain above works from a clean machine without registry
 authentication. Current and historical `base-python` service observations are
 bound to an immutable digest in the
-[canonical publication evidence contract](verification-contract.md#base-python-publication-evidence-contract).
+[canonical publication evidence contract](verification-contract.md#image-family-publication-evidence-contract).

@@ -53,7 +53,7 @@ attention reason while the upstream gate result remains authoritative.
 The Python production caller and its registry-origin binding are implemented,
 but their privileged jobs do not execute on pull requests. Current and
 historical production evidence is in the
-[canonical publication evidence contract](verification-contract.md#base-python-publication-evidence-contract).
+[canonical publication evidence contract](verification-contract.md#image-family-publication-evidence-contract).
 The binding described above is to the index that a run pushed and read back; it
 does not close the external-writer alias race.
 
@@ -89,7 +89,7 @@ corroborates and checksum-protects those bytes, and carries the same digest to
 every consumer. The micro caller passes its pushed digest and existing
 registry-read `dist/image-index.json` bytes to both child calls in the same job.
 Production evidence for those paths is in the
-[canonical publication evidence contract](verification-contract.md#base-python-publication-evidence-contract).
+[canonical publication evidence contract](verification-contract.md#image-family-publication-evidence-contract).
 
 `assert-vex.py` remains weaker on descriptor top-level closure, runnable-platform
 key-set closure, attestation count, and duplicate references. The Python

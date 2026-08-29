@@ -38,7 +38,7 @@ commit. It also binds the source SHA/ref and Python caller workflow through the
 source and build-config extensions. That closes this tag-movement ambiguity for
 the Python publication path at its implemented scope. Its production evidence is
 recorded in the
-[canonical publication evidence contract](reference/verification-contract.md#base-python-publication-evidence-contract);
+[canonical publication evidence contract](reference/verification-contract.md#image-family-publication-evidence-contract);
 the residual in this entry remains the micro publisher's weaker binding.
 
 ## TD-3: Per-architecture FIPS scope

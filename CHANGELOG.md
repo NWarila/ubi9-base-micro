@@ -15,7 +15,7 @@ and this project adheres to
   and immediate step ordering. This repaired and lock-enforced the gate job's
   prerequisite. The production chain had not yet rerun when this change was
   recorded; later evidence is in the
-  [canonical publication evidence contract](docs/reference/verification-contract.md#base-python-publication-evidence-contract).
+  [canonical publication evidence contract](docs/reference/verification-contract.md#image-family-publication-evidence-contract).
 
 ### Security
 
@@ -37,7 +37,7 @@ and this project adheres to
   entries expire after `review-by 2026-10-01`, refuse valid fix evidence, and
   suppress no raw finding. The merge-triggered publication checks had not run
   when this entry was recorded; later evidence is in the
-  [canonical publication evidence contract](docs/reference/verification-contract.md#base-python-publication-evidence-contract).
+  [canonical publication evidence contract](docs/reference/verification-contract.md#image-family-publication-evidence-contract).
 - Added an exact, expiring accept-and-track disposition for the known-affected
   base-python `CVE-2026-11940` finding on `python3.12` and
   `python3.12-libs` at `3.12.13-3.el9_8.1`. The legacy local-product path is a
@@ -118,7 +118,7 @@ and this project adheres to
   separate anonymous post-visibility leg. This change added publication
   capability only and did not itself claim a Python package, public artifact, or
   consumable image. Later publication evidence is in the
-  [canonical publication evidence contract](docs/reference/verification-contract.md#base-python-publication-evidence-contract).
+  [canonical publication evidence contract](docs/reference/verification-contract.md#image-family-publication-evidence-contract).
 - Added a fail-closed Python publish-scope policy. Python release tags always
   publish; a `main` push skips only when every changed path is in the closed
   unrelated allowlist, while Python-tree changes, consumed shared inputs,

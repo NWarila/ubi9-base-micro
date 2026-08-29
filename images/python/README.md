@@ -146,7 +146,7 @@ resolve-then-write window atomic against an external package writer; TD-10
 records that residual.
 
 Current and historical publication evidence is in the
-[canonical publication evidence contract](../../docs/reference/verification-contract.md#base-python-publication-evidence-contract).
+[canonical publication evidence contract](../../docs/reference/verification-contract.md#image-family-publication-evidence-contract).
 The evidence machinery is exercised by the CI-rootfs preflight on every push to `main` and
 manual dispatch, and for Python-tree or shared-gate changes selected on pull
 requests — a tailored RHEL9 STIG profile evaluated fail-closed, rpmdb-derived

@@ -4,7 +4,7 @@ Use this task after a publish run has produced a digest. The completed
 `base-micro` command contract lives in
 [`../reference/verify.md`](../reference/verify.md). The Python-specific contract
 is summarized in
-[`../reference/verification-contract.md`](../reference/verification-contract.md#base-python-publication-evidence-contract);
+[`../reference/verification-contract.md`](../reference/verification-contract.md#image-family-publication-evidence-contract);
 the Python steps below apply only to a digest reported by a successful
 production publish.
 
@@ -130,7 +130,7 @@ uses Cosign OCI attestations.
 ## Verify base-python
 
 Current and historical Python publication evidence is in the
-[canonical publication evidence contract](../reference/verification-contract.md#base-python-publication-evidence-contract).
+[canonical publication evidence contract](../reference/verification-contract.md#image-family-publication-evidence-contract).
 Use this procedure only after a successful Python publish run reports its
 immutable index digest and publishing SHA/ref.
 

@@ -84,7 +84,7 @@ gives the same digest to signing, attestation, VEX, provenance, collision, and
 alias consumers. The micro publisher passes the pushed digest and the exact
 `dist/image-index.json` bytes it already read from the registry to both child
 gate calls in the same job. Production evidence for those paths is in the
-[canonical publication evidence contract](../../reference/verification-contract.md#base-python-publication-evidence-contract).
+[canonical publication evidence contract](../../reference/verification-contract.md#image-family-publication-evidence-contract).
 These bindings are limited to
 the index each run pushed and read back, and the Python binding does not close
 the external-writer alias race. TD-11 tracks the remaining VEX-side descriptor,

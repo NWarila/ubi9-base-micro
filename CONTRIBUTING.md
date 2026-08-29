@@ -98,7 +98,7 @@ loopback-bound ephemeral registry; it does not create an external or project
 publication. The `python / required` reducer is evidence aggregation, not a
 required repository status context. The pull-request preflight is not a
 production run. Current and historical publication evidence is maintained in the
-[canonical publication evidence contract](docs/reference/verification-contract.md#base-python-publication-evidence-contract).
+[canonical publication evidence contract](docs/reference/verification-contract.md#image-family-publication-evidence-contract).
 
 Repository verification also requires each named builder-identity step to keep
 `set -euo pipefail` enabled, omit `continue-on-error`, and end with the

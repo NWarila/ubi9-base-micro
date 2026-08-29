@@ -62,7 +62,7 @@ At a high level, verification requires:
 
 The `base-python` publisher also requires its index-only trust-contract
 predicate; see the
-[canonical publication evidence contract](docs/reference/verification-contract.md#base-python-publication-evidence-contract).
+[canonical publication evidence contract](docs/reference/verification-contract.md#image-family-publication-evidence-contract).
 Use the image-specific commands in
 [`docs/how-to/verify-a-published-image.md`](docs/how-to/verify-a-published-image.md)
 for the immutable digest recorded there or another digest from a successful

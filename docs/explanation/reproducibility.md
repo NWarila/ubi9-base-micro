@@ -34,7 +34,7 @@ are the per-file content digests recorded in the contract, specifically
 `/usr/lib64/ossl-modules/fips.so`.
 
 Current and historical production evidence for that path is in the
-[canonical publication evidence contract](../reference/verification-contract.md#base-python-publication-evidence-contract).
+[canonical publication evidence contract](../reference/verification-contract.md#image-family-publication-evidence-contract).
 
 The Python reproducibility matrix runs the `repro` target twice with no cache
 for each architecture, compares both exported rootfs trees, and asserts the
@@ -150,7 +150,7 @@ scope.
   preflight remains confined to its loopback registry. The production workflow
   is capable of exporting an unaliased candidate to GHCR by digest.
   Current and historical production evidence is in the
-  [canonical publication evidence contract](../reference/verification-contract.md#base-python-publication-evidence-contract).
+  [canonical publication evidence contract](../reference/verification-contract.md#image-family-publication-evidence-contract).
 - `images/python/docker-bake.json` is the base-python build definition. Its
   shared target owns the graph inputs, while the `ci`, `release`, and `repro`
   targets own distinct exporter, cache, provenance, and SBOM policies.

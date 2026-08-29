@@ -2,7 +2,7 @@
 
 Base-image variants live here, one tree per variant under `images/<variant>/`.
 Current and historical `base-python` publication evidence is in the
-[canonical publication evidence contract](../docs/reference/verification-contract.md#base-python-publication-evidence-contract).
+[canonical publication evidence contract](../docs/reference/verification-contract.md#image-family-publication-evidence-contract).
 Node and Java variants remain planned. Each variant must publish through its own
 path-scoped workflow
 and carry the full evidence set — Cosign signature, SPDX and CycloneDX SBOMs,

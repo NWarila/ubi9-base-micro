@@ -48,7 +48,7 @@ already-published digest or revision-bound attestation.
 The Python publish boundary above describes repository capability and the
 requirements for a successful publication. Current and historical observations
 are maintained in the
-[canonical publication evidence contract](#base-python-publication-evidence-contract).
+[canonical publication evidence contract](#image-family-publication-evidence-contract).
 
 ## Python publish scope
 
@@ -122,7 +122,7 @@ https://github.com/slsa-framework/slsa-github-generator/.github/workflows/genera
 https://token.actions.githubusercontent.com
 ```
 
-## Base-python publication evidence contract
+## Image family publication evidence contract
 
 Only an `@sha256` image reference is immutable. Every tag or alias resolution,
 including a commit or version alias intended to be create-once, is a dated
@@ -130,9 +130,9 @@ registry observation. Package visibility, anonymous accessibility, evidence
 presence, and workflow conclusions are also dated service observations and do
 not become permanent properties of a digest.
 
-### Verified evidence record
+### Verified base-python evidence record
 
-Verified evidence record, refreshed 2026-08-29 UTC: the immutable subject
+Verified base-python evidence record, refreshed 2026-08-29 UTC: the immutable subject
 `ghcr.io/nwarila/ubi9-base-python@sha256:1fd3b3659c3fae216fb904ad482e675ba316b96db10637da427eb66b53defe56`
 was produced from commit `d83526192b83be0f45c4f9b90da213559c15a334` by
 [publishing run attempt 1](https://github.com/NWarila/ubi9-base-micro/actions/runs/33212723050/attempts/1).
@@ -149,7 +149,30 @@ resolved to
 `sha256:3bed3ce13460449ded0f4c9093603a8eed281eca6886462f173e2d03219e5e45`.
 That snapshot is historical; query GHCR for current alias resolution.
 
-### Publication mechanism
+### Verified base-micro evidence record
+
+Verified base-micro evidence record, refreshed 2026-08-29 UTC: the immutable
+subject
+`ghcr.io/nwarila/ubi9-base-micro@sha256:5c39a56672a72c5d13fd95fab4df0203cdb90aff256de114027e6987c5bcb9e2`
+was produced from commit `07da8231817c232ffd1c99e067673fcad6049bad` by
+[publishing run attempt 1](https://github.com/NWarila/ubi9-base-micro/actions/runs/32671091120/attempts/1).
+For that same index digest, an anonymous, empty-credential registry read at
+`2026-08-29T10:42:42Z` succeeded and resolved exact `linux/amd64` child
+`ghcr.io/nwarila/ubi9-base-micro@sha256:068513099e9d658f90822acac19b23edfdac93d1bc466d0787fb2e82e7e43c60`
+and `linux/arm64` child
+`ghcr.io/nwarila/ubi9-base-micro@sha256:a0785566b22f550532b3497b6de61464ac4d982488d03acc54a81bcd0cdb4358`.
+At that refresh, the index Cosign signature verified at the repository workflow
+identity with transparency-log inclusion. Each named child's SPDX, CycloneDX,
+OpenVEX, NIST SP 800-190, and STIG ARF attestations verified at that identity
+with transparency-log inclusion; both OpenVEX predicates bound the TD-12
+`CVE-2026-14456` disposition to the corresponding child digest. The index SLSA
+attestation and `slsa-verifier` result verified the named commit,
+`refs/heads/main`, and pinned generator. GitHub's attempt API and logs were
+observed successful on 2026-08-29; the logs show the TD-12 disposition passing
+for both digest-addressed children, all later evidence phases, and the SLSA and
+Rekor jobs succeeding.
+
+### Base-python publication mechanism
 
 On a production attempt, the Python publisher pushes an unaliased
 multi-architecture candidate by digest. It fetches the index bytes

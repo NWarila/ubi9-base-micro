@@ -172,7 +172,7 @@ RHEL9 STIG ARF attestation, and a fail-closed byte-for-byte digest gate.
 
 `ubi9-base-micro` is the root image. `base-python` has its own two-phase
 publication workflow. Its current and historical publication evidence is in the
-[canonical publication evidence contract](docs/reference/verification-contract.md#base-python-publication-evidence-contract).
+[canonical publication evidence contract](docs/reference/verification-contract.md#image-family-publication-evidence-contract).
 The remaining language variants are planned as `images/<variant>/` trees.
 
 | Image | Status | Base relationship | Runtime scope |
@@ -226,7 +226,7 @@ ghcr.io/nwarila/ubi9-base-micro
 ```
 
 The Python publisher targets `ghcr.io/nwarila/ubi9-base-python`; see the
-[canonical publication evidence contract](docs/reference/verification-contract.md#base-python-publication-evidence-contract).
+[canonical publication evidence contract](docs/reference/verification-contract.md#image-family-publication-evidence-contract).
 
 ## Security and Compliance Posture
 

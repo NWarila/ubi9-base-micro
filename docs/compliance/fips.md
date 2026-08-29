@@ -28,7 +28,7 @@ pinned SHA-256 values before local install.
 | Node.js | Future `base-node` consumer of linked OpenSSL | No independent CMVP certificate; FIPS derives from OpenSSL #4857 when linkage gates pass | Not shipped here |
 
 Python-specific `hashlib` boundaries belong to `base-python`'s own gates; see the
-[canonical publication evidence contract](../reference/verification-contract.md#base-python-publication-evidence-contract).
+[canonical publication evidence contract](../reference/verification-contract.md#image-family-publication-evidence-contract).
 The Python path requires approved mode, SHA-2 operation, and MD5 refusal without
 making a Python interpreter-wide validation claim. `base-micro` itself does not
 ship Python.

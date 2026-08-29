@@ -1385,17 +1385,17 @@ PYTHON_PUBLICATION_POINTERS = {
     "README.md": (
         "## Image Family",
         "[canonical publication evidence contract]"
-        "(docs/reference/verification-contract.md#base-python-publication-evidence-contract)",
+        "(docs/reference/verification-contract.md#image-family-publication-evidence-contract)",
     ),
     "images/README.md": (
         "# Image Family Trees",
         "[canonical publication evidence contract]"
-        "(../docs/reference/verification-contract.md#base-python-publication-evidence-contract)",
+        "(../docs/reference/verification-contract.md#image-family-publication-evidence-contract)",
     ),
     "SUPPORT.md": (
         "## Not supported here",
         "[canonical publication evidence contract]"
-        "(docs/reference/verification-contract.md#base-python-publication-evidence-contract)",
+        "(docs/reference/verification-contract.md#image-family-publication-evidence-contract)",
     ),
 }
 
@@ -11831,10 +11831,10 @@ def check_verify_docs_child_loop_self_test() -> None:
 
 ACCEPTANCE_PUBLICATION_POINTER = (
     "[canonical publication evidence contract]"
-    "(../reference/verification-contract.md#base-python-publication-evidence-contract)"
+    "(../reference/verification-contract.md#image-family-publication-evidence-contract)"
 )
 REPRODUCIBILITY_PUBLICATION_POINTER = ACCEPTANCE_PUBLICATION_POINTER
-CANONICAL_PUBLICATION_HEADING = "## Base-python publication evidence contract"
+CANONICAL_PUBLICATION_HEADING = "## Image family publication evidence contract"
 
 
 def replace_last(text: str, old: str, new: str) -> str:
@@ -11842,7 +11842,7 @@ def replace_last(text: str, old: str, new: str) -> str:
     return text if not separator else before + new + after
 
 
-def python_publication_contract_errors(
+def image_family_publication_contract_errors(
     acceptance: str,
     reproducibility: str,
     readme: str,
@@ -11889,33 +11889,82 @@ def python_publication_contract_errors(
         if marker not in canonical_section
     )
 
-    evidence_record = markdown_peer_section(canonical_section, "### Verified evidence record")
-    if evidence_record is None:
-        errors.append("verification-contract.md canonical section missing verified evidence record")
+    python_evidence_record = markdown_peer_section(
+        canonical_section,
+        "### Verified base-python evidence record",
+    )
+    if python_evidence_record is None:
+        errors.append("verification-contract.md canonical section missing base-python evidence record")
         return errors
-    if re.search(r"ghcr\.io/nwarila/ubi9-base-python@sha256:[0-9a-f]{64}", evidence_record) is None:
+    if re.search(r"ghcr\.io/nwarila/ubi9-base-python@sha256:[0-9a-f]{64}", python_evidence_record) is None:
         errors.append("verification-contract.md evidence record missing immutable Python digest")
-    if re.search(r"commit `[0-9a-f]{40}`", evidence_record) is None:
-        errors.append("verification-contract.md evidence record missing publishing commit")
+    if re.search(r"commit `[0-9a-f]{40}`", python_evidence_record) is None:
+        errors.append("verification-contract.md Python evidence record missing publishing commit")
     if (
         re.search(
             r"https://github\.com/NWarila/ubi9-base-micro/actions/runs/\d+/(?:attempts/\d+|job/\d+)",
-            evidence_record,
+            python_evidence_record,
         )
         is None
     ):
-        errors.append("verification-contract.md evidence record missing immutable run-attempt or job URL")
+        errors.append("verification-contract.md Python evidence record missing immutable run-attempt or job URL")
     verification_markers = ["For that same digest", "anonymous", "Cosign", "transparency-log", "SLSA", "slsa-verifier"]
     errors.extend(
-        f"verification-contract.md evidence record missing digest-bound verification: {marker}"
+        f"verification-contract.md Python evidence record missing digest-bound verification: {marker}"
         for marker in verification_markers
-        if marker not in evidence_record
+        if marker not in python_evidence_record
     )
     if (
-        "Alias snapshot" in evidence_record
-        and re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", evidence_record) is None
+        "Alias snapshot" in python_evidence_record
+        and re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", python_evidence_record) is None
     ):
-        errors.append("verification-contract.md alias snapshot missing observation timestamp")
+        errors.append("verification-contract.md Python alias snapshot missing observation timestamp")
+
+    micro_evidence_record = markdown_peer_section(
+        canonical_section,
+        "### Verified base-micro evidence record",
+    )
+    if micro_evidence_record is None:
+        errors.append("verification-contract.md canonical section missing base-micro evidence record")
+        return errors
+    micro_digest_pattern = r"ghcr\.io/nwarila/ubi9-base-micro@sha256:([0-9a-f]{64})"
+    micro_digests = set(re.findall(micro_digest_pattern, micro_evidence_record))
+    if not micro_digests:
+        errors.append("verification-contract.md evidence record missing immutable base-micro digest")
+    if len(micro_digests) < 3:
+        errors.append("verification-contract.md base-micro evidence record missing exact platform child digests")
+    if re.search(r"commit `[0-9a-f]{40}`", micro_evidence_record) is None:
+        errors.append("verification-contract.md base-micro evidence record missing publishing commit")
+    if (
+        re.search(
+            r"https://github\.com/NWarila/ubi9-base-micro/actions/runs/\d+/(?:attempts/\d+|job/\d+)",
+            micro_evidence_record,
+        )
+        is None
+    ):
+        errors.append("verification-contract.md base-micro evidence record missing immutable run-attempt or job URL")
+    micro_verification_markers = [
+        "For that same index digest",
+        "anonymous",
+        "Cosign",
+        "transparency-log",
+        "OpenVEX",
+        "CVE-2026-14456",
+        "SLSA",
+        "slsa-verifier",
+    ]
+    errors.extend(
+        f"verification-contract.md base-micro evidence record missing digest-bound verification: {marker}"
+        for marker in micro_verification_markers
+        if marker not in micro_evidence_record
+    )
+    if re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", micro_evidence_record) is None:
+        errors.append("verification-contract.md base-micro service observation missing timestamp")
+    if (
+        "Alias snapshot" in micro_evidence_record
+        and re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", micro_evidence_record) is None
+    ):
+        errors.append("verification-contract.md base-micro alias snapshot missing observation timestamp")
     return errors
 
 
@@ -12031,7 +12080,7 @@ def check_docs() -> None:
         "shared target owns the graph inputs",
     ]:
         require(marker in reproducibility_doc, f"reproducibility.md missing profile-specific marker: {marker}")
-    publication_contract_errors = python_publication_contract_errors(
+    publication_contract_errors = image_family_publication_contract_errors(
         acceptance,
         reproducibility_doc,
         readme,
@@ -12039,11 +12088,19 @@ def check_docs() -> None:
     )
     require(
         not publication_contract_errors,
-        publication_contract_errors[0] if publication_contract_errors else "Python publication docs contract failed",
+        publication_contract_errors[0]
+        if publication_contract_errors
+        else "Image family publication docs contract failed",
     )
-    canonical_gutted = re.sub(
-        r"(?ms)^### Verified evidence record[ \t]*$.*?(?=^### Publication mechanism[ \t]*$)",
-        "### Verified evidence record\n\n",
+    python_record_gutted = re.sub(
+        r"(?ms)^### Verified base-python evidence record[ \t]*$.*?(?=^### Verified base-micro evidence record[ \t]*$)",
+        "### Verified base-python evidence record\n\n",
+        verification_contract,
+        count=1,
+    )
+    micro_record_gutted = re.sub(
+        r"(?ms)^### Verified base-micro evidence record[ \t]*$.*?(?=^### Base-python publication mechanism[ \t]*$)",
+        "### Verified base-micro evidence record\n\n",
         verification_contract,
         count=1,
     )
@@ -12077,12 +12134,20 @@ def check_docs() -> None:
             "README.md missing canonical publication pointer in Image Family",
         ),
         (
-            "canonical evidence record",
+            "base-python evidence record",
             acceptance,
             reproducibility_doc,
             readme,
-            canonical_gutted,
+            python_record_gutted,
             "verification-contract.md evidence record missing immutable Python digest",
+        ),
+        (
+            "base-micro evidence record",
+            acceptance,
+            reproducibility_doc,
+            readme,
+            micro_record_gutted,
+            "verification-contract.md evidence record missing immutable base-micro digest",
         ),
     ]
     for (
@@ -12093,14 +12158,14 @@ def check_docs() -> None:
         mutated_contract,
         expected,
     ) in publication_contract_fixtures:
-        errors = python_publication_contract_errors(
+        errors = image_family_publication_contract_errors(
             mutated_acceptance,
             mutated_reproducibility,
             mutated_readme,
             mutated_contract,
         )
-        require(expected in errors, f"Python publication docs contract mutation unexpectedly passed: {label}")
-        print(f"Python publication docs contract mutation rejected [{label}] diagnostic={expected}")
+        require(expected in errors, f"Image family publication docs contract mutation unexpectedly passed: {label}")
+        print(f"Image family publication docs contract mutation rejected [{label}] diagnostic={expected}")
     verify_lines = verify.splitlines()
     verify_summary_marker = "gates fixable MEDIUM, HIGH, and CRITICAL findings with both Trivy and Grype"
     require(
