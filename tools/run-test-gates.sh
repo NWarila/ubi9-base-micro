@@ -11,6 +11,207 @@
 
 set -euo pipefail
 
+run_bounded_gate() {
+  local label="$1"
+  local timeout_seconds="$2"
+  local started_at
+  local drain_tick
+  local elapsed
+  local gate_pid
+  local grace_tick
+  local monitor_status
+  local pgid
+  local status
+  local timed_out=0
+  shift 2
+
+  # Scope: this is a process-group deadline, not a complete descendant or
+  # engine-operation bound. TERM then KILL reaches the gate and descendants
+  # only while they remain in this group. A descendant can escape with
+  # setsid/setpgid; pre-existing daemons (such as Docker) and daemonizing
+  # engine helpers (such as fuse-overlayfs or conmon) are outside it. SIGKILL
+  # also cannot complete while a process remains in uninterruptible kernel
+  # sleep. Whole-operation containment requires a cgroup/scope or equivalent
+  # engine-specific cleanup.
+
+  case "${timeout_seconds}" in
+    "" | *[!0-9]*)
+      echo "invalid timeout for ${label}: ${timeout_seconds}" >&2
+      return 2
+      ;;
+    *) ;;
+  esac
+  if ((timeout_seconds < 1)); then
+    echo "timeout for ${label} must be at least 1 second" >&2
+    return 2
+  fi
+  command -v timeout > /dev/null 2>&1 || {
+    echo "timeout is required to bound ${label}" >&2
+    return 2
+  }
+  command -v setsid > /dev/null 2>&1 || {
+    echo "setsid is required to isolate ${label}" >&2
+    return 2
+  }
+
+  started_at=${SECONDS}
+  printf 'GATE START: %s (timeout=%ss)\n' "${label}" "${timeout_seconds}"
+
+  setsid "$@" < /dev/null &
+  gate_pid=$!
+  pgid=${gate_pid}
+
+  # Wait until setsid establishes the gate's process group, or until a short-lived
+  # gate exits. The group ID is the setsid process ID because Bash job control is
+  # disabled in this non-interactive script.
+  while ! kill -0 -- "-${pgid}" 2> /dev/null; do
+    if ! kill -0 "${gate_pid}" 2> /dev/null; then
+      break
+    fi
+    sleep 0.01
+  done
+
+  # Timeout supervises group liveness rather than the group leader. If the leader
+  # exits while a descendant remains, the monitor still reaches the deadline.
+  # shellcheck disable=SC2016
+  if timeout --signal=TERM "${timeout_seconds}s" bash -c '
+    pgid=$1
+    while kill -0 -- "-${pgid}" 2> /dev/null; do
+      sleep 0.1
+    done
+  ' bash "${pgid}" < /dev/null; then
+    monitor_status=0
+  else
+    monitor_status=$?
+  fi
+
+  if ((monitor_status != 0)); then
+    if ((monitor_status == 124)); then
+      timed_out=1
+    fi
+
+    # Always signal the isolated process group if the monitor fails. TERM is
+    # followed by a full ten-second grace period before KILL escalation.
+    if kill -TERM -- "-${pgid}" 2> /dev/null; then
+      :
+    fi
+    for ((grace_tick = 0; grace_tick < 100; grace_tick++)); do
+      if ! kill -0 -- "-${pgid}" 2> /dev/null; then
+        break
+      fi
+      sleep 0.1
+    done
+    if kill -0 -- "-${pgid}" 2> /dev/null; then
+      if kill -KILL -- "-${pgid}" 2> /dev/null; then
+        :
+      fi
+    fi
+  fi
+
+  if wait "${gate_pid}"; then
+    status=0
+  else
+    status=$?
+  fi
+  elapsed=$((SECONDS - started_at))
+
+  if ((timed_out)); then
+    # Reaping the group leader above must leave no live member of this group.
+    for ((drain_tick = 0; drain_tick < 100; drain_tick++)); do
+      if ! kill -0 -- "-${pgid}" 2> /dev/null; then
+        break
+      fi
+      sleep 0.01
+    done
+    if kill -0 -- "-${pgid}" 2> /dev/null; then
+      printf 'GATE CLEANUP FAIL: %s process group %s survived KILL escalation\n' \
+        "${label}" "${pgid}" >&2
+      return 125
+    fi
+    printf 'GATE TIMEOUT: %s exceeded %ss (elapsed=%ss, status=%s)\n' \
+      "${label}" "${timeout_seconds}" "${elapsed}" 124 >&2
+    return 124
+  fi
+  if ((monitor_status != 0)); then
+    printf 'GATE FAIL: %s timeout monitor failed (elapsed=%ss, status=%s)\n' \
+      "${label}" "${elapsed}" "${monitor_status}" >&2
+    return "${monitor_status}"
+  fi
+  if ((status != 0)); then
+    printf 'GATE FAIL: %s (elapsed=%ss, status=%s)\n' "${label}" "${elapsed}" "${status}" >&2
+    return "${status}"
+  fi
+
+  printf 'GATE PASS: %s (elapsed=%ss)\n' "${label}" "${elapsed}"
+}
+
+run_timeout_self_test() {
+  local descendant_pid
+  local descendant_pid_file
+  local status
+
+  status=0
+  # The fixture must capture the production wrapper's nonzero timeout status.
+  # shellcheck disable=SC2310
+  run_bounded_gate "deliberate induced hang" 1 sleep 30 || status=$?
+  if ((status != 124)); then
+    echo "timeout self-test expected status 124, got ${status}" >&2
+    return 1
+  fi
+  echo "timeout self-test caught and named the deliberate induced hang"
+
+  descendant_pid_file=$(mktemp)
+  status=0
+  # The parent exits when TERM arrives, while its descendant ignores TERM and
+  # keeps running. Only process-group KILL escalation can finish this fixture.
+  # shellcheck disable=SC2016,SC2310
+  run_bounded_gate "TERM-ignoring descendant" 1 bash -c '
+    descendant_pid_file=$1
+    trap "exit 0" TERM
+    (
+      trap "" TERM
+      printf "%s\n" "${BASHPID}" > "${descendant_pid_file}"
+      while :; do
+        sleep 30
+      done
+    ) &
+    wait
+  ' bash "${descendant_pid_file}" || status=$?
+  if ! read -r descendant_pid < "${descendant_pid_file}"; then
+    rm -f "${descendant_pid_file}"
+    echo "descendant timeout self-test did not record its child PID" >&2
+    return 1
+  fi
+  rm -f "${descendant_pid_file}"
+  if ((status != 124)); then
+    if kill -KILL "${descendant_pid}" 2> /dev/null; then
+      :
+    fi
+    echo "descendant timeout self-test expected status 124, got ${status}" >&2
+    return 1
+  fi
+  if kill -0 "${descendant_pid}" 2> /dev/null; then
+    if kill -KILL "${descendant_pid}" 2> /dev/null; then
+      :
+    fi
+    echo "descendant timeout self-test left PID ${descendant_pid} alive" >&2
+    return 1
+  fi
+  echo "timeout self-test killed the TERM-ignoring descendant"
+}
+
+case "${1:-}" in
+  "") ;;
+  --self-test-timeout)
+    run_timeout_self_test
+    exit 0
+    ;;
+  *)
+    echo "unknown argument: $1" >&2
+    exit 2
+    ;;
+esac
+
 runtime_image="${RUNTIME_IMAGE:-ghcr.io/nwarila/ubi9-base-micro:base-micro}"
 platform="${PLATFORM:-linux/amd64}"
 arch="${platform#linux/}"
@@ -75,16 +276,17 @@ bash tools/build-stig-datastream.sh
 
 bash tools/build.sh
 
-bash tests/hardening.sh "${runtime_image}"
-bash tests/fips.sh "${runtime_image}"
+run_bounded_gate "runtime hardening assertions" 300 bash tests/hardening.sh "${runtime_image}"
+run_bounded_gate "FIPS artifact assertions" 300 bash tests/fips.sh "${runtime_image}"
 
 mkdir -p dist/footprint
-python tools/assert-footprint.py \
+run_bounded_gate "runtime footprint assertion" 300 python tools/assert-footprint.py \
   --image "${runtime_image}" \
   --platform "${platform}" \
   --output "dist/footprint/base-micro.${arch}.json"
 
-bash tools/run-stig-arf.sh "${runtime_image}" "${arch}" "${platform}" "dist/stig/${arch}"
+run_bounded_gate "STIG ARF scan" 300 \
+  bash tools/run-stig-arf.sh "${runtime_image}" "${arch}" "${platform}" "dist/stig/${arch}"
 
 mkdir -p dist/sbom
 dist/tools/syft scan "${runtime_image}" \

@@ -9290,6 +9290,94 @@ def check_build_script() -> None:
         require(marker in text, f"build helper missing marker: {marker}")
 
 
+def check_bounded_post_build_gates() -> None:
+    gate_runner = read("tools/run-test-gates.sh")
+    bounded_calls = [
+        'run_bounded_gate "runtime hardening assertions" 300 bash tests/hardening.sh "${runtime_image}"',
+        'run_bounded_gate "FIPS artifact assertions" 300 bash tests/fips.sh "${runtime_image}"',
+        'run_bounded_gate "runtime footprint assertion" 300 python tools/assert-footprint.py',
+        'run_bounded_gate "STIG ARF scan" 300',
+    ]
+    call_positions: list[int] = []
+    for invocation in bounded_calls:
+        require(
+            gate_runner.count(invocation) == 1,
+            f"test gate runner must contain one exact bounded invocation: {invocation}",
+        )
+        call_positions.append(gate_runner.index(invocation))
+    require(
+        call_positions == sorted(call_positions) and len(set(call_positions)) == len(call_positions),
+        "bounded post-build gates must remain in hardening/FIPS/footprint/STIG order",
+    )
+
+    for marker in [
+        'setsid "$@" < /dev/null &',
+        'timeout --signal=TERM "${timeout_seconds}s" bash -c',
+        'kill -TERM -- "-${pgid}"',
+        'kill -KILL -- "-${pgid}"',
+        "GATE START: %s (timeout=%ss)",
+        "GATE PASS: %s (elapsed=%ss)",
+        "GATE TIMEOUT: %s exceeded %ss",
+        'run_bounded_gate "deliberate induced hang" 1 sleep 30',
+        'run_bounded_gate "TERM-ignoring descendant" 1 bash -c',
+        'trap "" TERM',
+        "--self-test-timeout",
+    ]:
+        require(marker in gate_runner, f"bounded gate harness missing marker: {marker}")
+
+    try:
+        timeout_self_test = subprocess.run(
+            ["bash", "tools/run-test-gates.sh", "--self-test-timeout"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=25,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise VerifyError("bounded gate timeout self-test exceeded its 25-second verifier deadline") from exc
+    timeout_output = timeout_self_test.stdout + timeout_self_test.stderr
+    require(
+        timeout_self_test.returncode == 0,
+        "bounded gate timeout self-test failed:\n"
+        f"STDOUT:\n{timeout_self_test.stdout}\nSTDERR:\n{timeout_self_test.stderr}",
+    )
+    for marker in [
+        "GATE START: deliberate induced hang (timeout=1s)",
+        "GATE TIMEOUT: deliberate induced hang exceeded 1s",
+        "timeout self-test caught and named the deliberate induced hang",
+        "GATE START: TERM-ignoring descendant (timeout=1s)",
+        "GATE TIMEOUT: TERM-ignoring descendant exceeded 1s",
+        "timeout self-test killed the TERM-ignoring descendant",
+    ]:
+        require(marker in timeout_output, f"bounded gate timeout self-test missing diagnostic: {marker}")
+
+    for relative_path in ["tools/run-stig-arf.sh", "images/python/tools/run-stig-arf.sh"]:
+        stig_runner = read(relative_path)
+        for forbidden in [r"(?:sudo )?oscap-podman", r"(?:sudo )?podman init", r"(?:sudo )?podman mount"]:
+            require(
+                re.search(rf"^[ \t]*{forbidden}(?:[ \t]|$)", stig_runner, re.MULTILINE) is None,
+                f"{relative_path} retains blocking helper invocation: {forbidden}",
+            )
+        for marker in [
+            "STIG PHASE: resolve image in Podman",
+            "STIG PHASE: export Podman rootfs for OpenSCAP",
+            "STIG PHASE: evaluate exported rootfs with OpenSCAP",
+            'sudo podman export --output "${rootfs_tar}"',
+            "sudo tar --numeric-owner --same-owner",
+            '"OSCAP_CONTAINER_VARS=${oscap_container_vars}"',
+            '"OSCAP_EVALUATION_TARGET=podman-image://${podman_target}"',
+            '"OSCAP_PROBE_ROOT=${scan_rootfs}"',
+            "oscap xccdf eval",
+            '"${datastream}" < /dev/null',
+        ]:
+            require(marker in stig_runner, f"{relative_path} missing exported-rootfs OpenSCAP marker: {marker}")
+        require(
+            stig_runner.index('sudo podman export --output "${rootfs_tar}"') < stig_runner.index("oscap xccdf eval"),
+            f"{relative_path} must export the rootfs before OpenSCAP evaluation",
+        )
+
+
 def check_hardening_script() -> None:
     text = read("tests/hardening.sh")
     for marker in [
@@ -12217,6 +12305,7 @@ def main(argv: list[str] | None = None) -> int:
         check_python_contract_schema,
         check_python_contract_schema_self_test,
         check_build_script,
+        check_bounded_post_build_gates,
         check_hardening_script,
         check_sbom_assertion_script,
         check_scanner_install_scripts,

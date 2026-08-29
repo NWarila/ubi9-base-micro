@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Purpose: Run the image-scoped RHEL9 STIG gate — assert the tailoring, oscap-podman xccdf eval to ARF+HTML, export
-# the rootfs, then chain assert-rootfs-identity / assert-stig-arf (fail-closed) / generate-stig-arf-predicate.
+# Purpose: Run the image-scoped RHEL9 STIG gate — assert the tailoring, export the rootfs, evaluate it with oscap to
+# ARF+HTML, then chain assert-rootfs-identity / assert-stig-arf (fail-closed) / generate-stig-arf-predicate.
 # Role: gate
-# Python-convertible: partial — orchestrator; every assertion/predicate already lives in assert-stig-*.py, only
-# oscap-podman invocation + exit-code/trap handling are shell.
+# Python-convertible: partial — orchestrator; every assertion/predicate already lives in assert-stig-*.py, only the
+# Podman transfer/export, oscap invocation, and exit-code/trap handling are shell.
 # Micro-container candidate: yes — STIG ARF gate; pin the oscap/podman toolchain + ARF parse in a micro-container.
 # Relocate: no — verification gate, not a build-process script.
 
@@ -13,7 +13,7 @@ usage() {
   cat << 'USAGE'
 Usage: tools/run-stig-arf.sh <image-ref> <arch> <platform> <output-dir>
 
-Runs the image-scoped RHEL9 STIG tailoring against an image with oscap-podman,
+Runs the image-scoped RHEL9 STIG tailoring against an exported image rootfs with oscap,
 then parses the ARF fail-closed and emits a structured attestation predicate.
 USAGE
 }
@@ -67,23 +67,30 @@ python "${repo_root}/tools/assert-stig-tailoring.py" \
   --tailoring "${tailoring}" \
   --justifications "${justifications}" \
   --controls-yaml "${controls}" \
-  --datastream "${datastream}"
+  --datastream "${datastream}" < /dev/null
 
+echo "STIG PHASE: resolve image in Podman"
 podman_target="${image_ref}"
-if ! sudo podman image exists "${image_ref}" > /dev/null 2>&1; then
+if ! sudo podman image exists "${image_ref}" < /dev/null > /dev/null 2>&1; then
   if [[ "${image_ref}" == *@sha256:* ]]; then
-    sudo podman pull --arch "${arch}" "${image_ref}"
-  elif docker image inspect "${image_ref}" > /dev/null 2>&1; then
-    docker save "${image_ref}" | sudo podman load
+    sudo podman pull --arch "${arch}" "${image_ref}" < /dev/null
+  elif docker image inspect "${image_ref}" < /dev/null > /dev/null 2>&1; then
+    docker save "${image_ref}" < /dev/null | sudo podman load
   else
-    sudo podman pull --arch "${arch}" "${image_ref}"
+    sudo podman pull --arch "${arch}" "${image_ref}" < /dev/null
   fi
 fi
-if ! sudo podman image exists "${podman_target}" > /dev/null 2>&1; then
+if ! sudo podman image exists "${podman_target}" < /dev/null > /dev/null 2>&1; then
   echo "Podman scan target could not be resolved for ${image_ref}" >&2
   exit 1
 fi
-inspect_observation="$(sudo podman image inspect --format '{{.Id}} {{.Architecture}} {{.Os}}' "${podman_target}" 2> /dev/null || true)"
+inspect_status=0
+inspect_observation="$(sudo podman image inspect --format '{{.Id}} {{.Architecture}} {{.Os}}' \
+  "${podman_target}" < /dev/null 2> /dev/null)" || inspect_status=$?
+if ((inspect_status != 0)); then
+  echo "Podman scan target inspection failed for ${image_ref} with status ${inspect_status}" >&2
+  exit "${inspect_status}"
+fi
 read -r resolved_image_id resolved_arch resolved_os inspect_extra <<< "${inspect_observation}"
 if [[ ! "${resolved_image_id:-}" =~ ^(sha256:)?[0-9a-f]{64}$ || -n "${inspect_extra:-}" || "${inspect_observation}" == *$'\n'* ]]; then
   echo "Podman scan target has an invalid image ID for ${image_ref}: ${resolved_image_id:-<unknown>}" >&2
@@ -101,46 +108,64 @@ summary="${out_dir}/base-python.${arch}.stig.summary.json"
 predicate="${out_dir}/stig-arf.base-python.${arch}.json"
 rootfs_tar="${out_dir}/base-python.${arch}.rootfs.tar"
 identity_summary="${out_dir}/base-python.${arch}.rootfs-identity.json"
-identity_container_id=""
+scan_rootfs="$(mktemp -d)"
+rootfs_container_id=""
 
-cleanup_identity_container() {
-  if [[ -n "${identity_container_id}" ]]; then
-    sudo podman rm "${identity_container_id}" > /dev/null 2>&1
+cleanup_scan_resources() {
+  if [[ -n "${rootfs_container_id}" ]]; then
+    sudo podman rm "${rootfs_container_id}" < /dev/null > /dev/null 2>&1
   fi
+  sudo rm -rf -- "${scan_rootfs}" < /dev/null
 }
-trap cleanup_identity_container EXIT
+trap cleanup_scan_resources EXIT
 
+echo "STIG PHASE: export Podman rootfs for OpenSCAP"
+rootfs_container_id="$(sudo podman create "${podman_target}" /stig-rootfs-export < /dev/null)"
+oscap_container_vars="$(sudo podman inspect --format '{{join .Config.Env "\n"}}' \
+  "${rootfs_container_id}" < /dev/null)"
+sudo podman export --output "${rootfs_tar}" "${rootfs_container_id}" < /dev/null
+sudo podman rm "${rootfs_container_id}" < /dev/null > /dev/null
+rootfs_container_id=""
+
+# oscap-podman initializes and mounts a container only to populate these three
+# environment variables before invoking oscap. The mount has wedged repeatedly
+# in CI. Scan the same merged rootfs from the already-required export instead.
+# Root extraction preserves numeric ownership because the tailored rules assert it.
+sudo tar --numeric-owner --same-owner -xf "${rootfs_tar}" -C "${scan_rootfs}" < /dev/null
+sudo mkdir -p "${scan_rootfs}/run" < /dev/null
+sudo touch "${scan_rootfs}/run/.containerenv" < /dev/null
+
+echo "STIG PHASE: evaluate exported rootfs with OpenSCAP"
 oscap_status=0
-if sudo oscap-podman "${podman_target}" xccdf eval \
+if sudo env \
+  "OSCAP_CONTAINER_VARS=${oscap_container_vars}" \
+  "OSCAP_EVALUATION_TARGET=podman-image://${podman_target}" \
+  "OSCAP_PROBE_ROOT=${scan_rootfs}" \
+  oscap xccdf eval \
   --tailoring-file "${tailoring}" \
   --profile "${profile}" \
   --results-arf "${arf}" \
   --report "${report}" \
-  "${datastream}"; then
+  "${datastream}" < /dev/null; then
   oscap_status=0
 else
   oscap_status=$?
 fi
 
 if [[ "${oscap_status}" != "0" && "${oscap_status}" != "2" ]]; then
-  echo "oscap-podman failed with unexpected status ${oscap_status}" >&2
+  echo "OpenSCAP rootfs evaluation failed with unexpected status ${oscap_status}" >&2
   exit "${oscap_status}"
 fi
 
-identity_container_id="$(sudo podman create "${podman_target}" /stig-rootfs-export)"
-sudo podman export --output "${rootfs_tar}" "${identity_container_id}"
-sudo podman rm "${identity_container_id}" > /dev/null
-identity_container_id=""
-
 python "${repo_root}/tools/assert-rootfs-identity.py" \
   --rootfs-tar "${rootfs_tar}" \
-  --report "${identity_summary}"
+  --report "${identity_summary}" < /dev/null
 
 python "${repo_root}/tools/assert-stig-arf.py" \
   --arf "${arf}" \
   --fail-on "${fail_on}" \
   --equivalent-assertions "${identity_summary}" \
-  --summary "${summary}"
+  --summary "${summary}" < /dev/null
 
 python "${repo_root}/tools/generate-stig-arf-predicate.py" \
   --arf "${arf}" \
@@ -154,7 +179,7 @@ python "${repo_root}/tools/generate-stig-arf-predicate.py" \
   --fail-on "${fail_on}" \
   --ssg-version "${ssg_version}" \
   --ssg-tarball-sha512 "${ssg_sha512}" \
-  --output "${predicate}"
+  --output "${predicate}" < /dev/null
 
 echo "STIG ARF gate passed for ${image_ref} (${platform})"
 echo "ARF: ${arf}"
