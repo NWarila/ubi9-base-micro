@@ -11,6 +11,81 @@
 
 set -euo pipefail
 
+run_bounded_gate() {
+  local label="$1"
+  local timeout_seconds="$2"
+  local started_at
+  local elapsed
+  local status
+  shift 2
+
+  case "${timeout_seconds}" in
+    "" | *[!0-9]*)
+      echo "invalid timeout for ${label}: ${timeout_seconds}" >&2
+      return 2
+      ;;
+    *) ;;
+  esac
+  if ((timeout_seconds < 1)); then
+    echo "timeout for ${label} must be at least 1 second" >&2
+    return 2
+  fi
+  command -v timeout > /dev/null 2>&1 || {
+    echo "timeout is required to bound ${label}" >&2
+    return 2
+  }
+
+  started_at=${SECONDS}
+  printf 'GATE START: %s (timeout=%ss)\n' "${label}" "${timeout_seconds}"
+  if timeout --verbose --signal=TERM --kill-after=10s "${timeout_seconds}s" "$@" < /dev/null; then
+    status=0
+  else
+    status=$?
+  fi
+  elapsed=$((SECONDS - started_at))
+
+  # GNU timeout returns 124 when TERM ends the command and 137 when --kill-after
+  # has to send KILL. The elapsed-time guard keeps an unrelated early SIGKILL
+  # from being mislabeled as a timeout.
+  if (((status == 124 || status == 137) && elapsed >= timeout_seconds)); then
+    printf 'GATE TIMEOUT: %s exceeded %ss (elapsed=%ss, status=%s)\n' \
+      "${label}" "${timeout_seconds}" "${elapsed}" "${status}" >&2
+    return "${status}"
+  fi
+  if ((status != 0)); then
+    printf 'GATE FAIL: %s (elapsed=%ss, status=%s)\n' "${label}" "${elapsed}" "${status}" >&2
+    return "${status}"
+  fi
+
+  printf 'GATE PASS: %s (elapsed=%ss)\n' "${label}" "${elapsed}"
+}
+
+run_timeout_self_test() {
+  local status
+
+  status=0
+  # The fixture must capture the production wrapper's nonzero timeout status.
+  # shellcheck disable=SC2310
+  run_bounded_gate "deliberate induced hang" 1 sleep 30 || status=$?
+  if ((status != 124)); then
+    echo "timeout self-test expected status 124, got ${status}" >&2
+    return 1
+  fi
+  echo "timeout self-test caught and named the deliberate induced hang"
+}
+
+case "${1:-}" in
+  "") ;;
+  --self-test-timeout)
+    run_timeout_self_test
+    exit 0
+    ;;
+  *)
+    echo "unknown argument: $1" >&2
+    exit 2
+    ;;
+esac
+
 runtime_image="${RUNTIME_IMAGE:-ghcr.io/nwarila/ubi9-base-micro:base-micro}"
 platform="${PLATFORM:-linux/amd64}"
 arch="${platform#linux/}"
@@ -75,16 +150,17 @@ bash tools/build-stig-datastream.sh
 
 bash tools/build.sh
 
-bash tests/hardening.sh "${runtime_image}"
-bash tests/fips.sh "${runtime_image}"
+run_bounded_gate "runtime hardening assertions" 300 bash tests/hardening.sh "${runtime_image}"
+run_bounded_gate "FIPS artifact assertions" 300 bash tests/fips.sh "${runtime_image}"
 
 mkdir -p dist/footprint
-python tools/assert-footprint.py \
+run_bounded_gate "runtime footprint assertion" 300 python tools/assert-footprint.py \
   --image "${runtime_image}" \
   --platform "${platform}" \
   --output "dist/footprint/base-micro.${arch}.json"
 
-bash tools/run-stig-arf.sh "${runtime_image}" "${arch}" "${platform}" "dist/stig/${arch}"
+run_bounded_gate "STIG ARF scan" 300 \
+  bash tools/run-stig-arf.sh "${runtime_image}" "${arch}" "${platform}" "dist/stig/${arch}"
 
 mkdir -p dist/sbom
 dist/tools/syft scan "${runtime_image}" \
