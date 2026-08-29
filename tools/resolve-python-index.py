@@ -349,7 +349,7 @@ def load_assert_vex() -> Any:
 
 def scanner_documents(product: str, architecture: str, floor_names: set[str]) -> tuple[dict[str, Any], dict[str, Any]]:
     image_id = "sha256:" + "9" * 64
-    packages = sorted(floor_names | {"python3.12", "python3.12-libs"})
+    packages = sorted(floor_names | {"openssl-libs"})
     trivy = {
         "SchemaVersion": 2,
         "Trivy": {"Version": "0.71.0"},
@@ -369,18 +369,18 @@ def scanner_documents(product: str, architecture: str, floor_names: set[str]) ->
                 "Packages": [
                     {
                         "Name": package,
-                        "Version": "3.12.13-3.el9_8.1" if package.startswith("python3.12") else "1",
+                        "Version": "1:3.5.5-5.el9_8" if package == "openssl-libs" else "1",
                     }
                     for package in packages
                 ],
                 "Vulnerabilities": [
                     {
-                        "VulnerabilityID": "CVE-2026-11940",
+                        "VulnerabilityID": "CVE-2026-14456",
                         "PkgName": package,
-                        "InstalledVersion": "3.12.13-3.el9_8.1",
+                        "InstalledVersion": "1:3.5.5-5.el9_8",
                         "Severity": "HIGH",
                     }
-                    for package in ("python3.12", "python3.12-libs")
+                    for package in ("openssl-libs",)
                 ],
             }
         ],
@@ -399,10 +399,10 @@ def scanner_documents(product: str, architecture: str, floor_names: set[str]) ->
         },
         "matches": [
             {
-                "vulnerability": {"id": "CVE-2026-11940", "severity": "High"},
-                "artifact": {"name": package, "version": "3.12.13-3.el9_8.1"},
+                "vulnerability": {"id": "CVE-2026-14456", "severity": "High"},
+                "artifact": {"name": package, "version": "1:3.5.5-5.el9_8"},
             }
-            for package in ("python3.12", "python3.12-libs")
+            for package in ("openssl-libs",)
         ],
         "ignoredMatches": [],
         "alertsByPackage": {},
@@ -434,7 +434,7 @@ def vex_message(
         shutil.rmtree(vex_dir)
     shutil.copytree("images/python/vex", vex_dir)
     if mutate_document:
-        canonical = vex_dir / "cve-2026-11940.openvex.json"
+        canonical = vex_dir / "cve-2026-14456.openvex.json"
         document = json.loads(canonical.read_text(encoding="utf-8"))
         document["statements"][0]["products"][2]["@id"] += "-mutated"
         canonical.write_text(json.dumps(document, sort_keys=True) + "\n", encoding="utf-8")
