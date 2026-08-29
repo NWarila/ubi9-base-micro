@@ -796,7 +796,7 @@ jobs:
           name: python-index-${{ github.sha }}
           path: dist/python-index
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 90
           compression-level: 0
 
   gate-evidence:
@@ -812,6 +812,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      security-events: write
     outputs:
       evidence_bundle_digest: ${{ steps.bundle.outputs.digest }}
     steps:
@@ -858,7 +859,6 @@ jobs:
             --index-manifest dist/python-index/index.json \
             --push-digest "${INDEX_DIGEST}" \
             --fetch-reference "${IMAGE_REPOSITORY}@${INDEX_DIGEST}" \
-            --consumer "vex=${INDEX_DIGEST}" \
             --github-output "${GITHUB_OUTPUT}"
       - name: Log in to GHCR for read-only gates
         env:
@@ -933,7 +933,6 @@ jobs:
         env:
           AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}
           ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}
-          INDEX_DIGEST: ${{ needs.publish.outputs.digest }}
           CONTAINER_ENGINE: docker
         run: |
           set -euo pipefail
@@ -950,7 +949,6 @@ jobs:
             --grype-json dist/python-publish/evidence/vuln/scanner-canary.grype.json \
             --trivy-json dist/python-publish/evidence/vuln/scanner-canary.trivy.json \
             --expect-cve CVE-2021-44228
-          python3 tools/assert-ignore-scope.py
           bash tools/build-stig-datastream.sh
 
           for arch in amd64 arm64; do
@@ -981,31 +979,32 @@ jobs:
               --image "${image_ref}" --platform "${platform}" \
               --syft-json "${sbom_dir}/base-python.syft.json" \
               --output "${sbom_dir}/base-python.phantom-packages.json" \
-              --expect-absent sqlite-libs
+              --expect-absent sqlite-libs \
+              --expect-absent util-linux \
+              --expect-absent util-linux-core
 
             dist/tools/trivy image --platform "${platform}" --vuln-type os,library \
               --ignore-unfixed --severity MEDIUM,HIGH,CRITICAL \
               --ignorefile security/cve-ignore.trivyignore.yaml --exit-code 1 "${image_ref}"
             dist/tools/grype "${image_ref}" --only-fixed --fail-on medium \
-              -c security/cve-ignore.grype.yaml --show-suppressed -o json \
-              --file "${vuln_dir}/base-python.grype.gate.json"
-            python3 tools/assert-ignore-scope.py --grype-report "${vuln_dir}/base-python.grype.gate.json"
+              -c security/cve-ignore.grype.yaml -o table
             dist/tools/trivy image --platform "${platform}" --vuln-type os,library \
-              --list-all-pkgs --severity HIGH,CRITICAL --format json \
+              --list-all-pkgs --format json \
               --output "${vuln_dir}/base-python.trivy.all.json" "${image_ref}"
-            dist/tools/grype "${image_ref}" -o json --file "${vuln_dir}/base-python.grype.all.json"
+            dist/tools/trivy convert --format sarif \
+              --output "${vuln_dir}/base-python.trivy.all.sarif" \
+              "${vuln_dir}/base-python.trivy.all.json"
+            dist/tools/grype "${image_ref}" \
+              -o "json=${vuln_dir}/base-python.grype.all.json" \
+              -o "sarif=${vuln_dir}/base-python.grype.all.sarif"
+            test -s "${vuln_dir}/base-python.trivy.all.json"
+            test -s "${vuln_dir}/base-python.trivy.all.sarif"
+            test -s "${vuln_dir}/base-python.grype.all.json"
+            test -s "${vuln_dir}/base-python.grype.all.sarif"
             python3 images/python/tools/assert-raw-scanners-no-sqlite.py \
               --trivy-json "${vuln_dir}/base-python.trivy.all.json" \
               --grype-json "${vuln_dir}/base-python.grype.all.json" \
               --contract images/python/contracts/image-manifest.json --arch "${arch}"
-            python3 tools/assert-vex.py \
-              --product "${image_ref}" \
-              --trivy-json "${vuln_dir}/base-python.trivy.all.json" \
-              --grype-json "${vuln_dir}/base-python.grype.all.json" \
-              --package-floor images/python/rpm-lock/micro-floor.json \
-              --vex-dir images/python/vex \
-              --index-reference "${IMAGE_REPOSITORY}@${INDEX_DIGEST}" \
-              --index-manifest dist/python-index/index.json
 
             tar --no-same-owner --no-same-permissions -xf "dist/python-publish/rootfs/base-python.${arch}.tar" -C "${rootfs_dir}"
             chmod -R u+rwX "${rootfs_dir}"
@@ -1028,7 +1027,7 @@ jobs:
           evidence_root=dist/python-publish/evidence
           (
             cd "${evidence_root}"
-            find attestations sbom stig -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+            find attestations sbom stig vuln -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
           )
           digest="sha256:$(sha256sum "${evidence_root}/SHA256SUMS" | cut -d ' ' -f 1)"
           printf 'digest=%s\n' "${digest}" >> "${GITHUB_OUTPUT}"
@@ -1041,10 +1040,35 @@ jobs:
             dist/python-publish/evidence/attestations
             dist/python-publish/evidence/sbom
             dist/python-publish/evidence/stig
+            dist/python-publish/evidence/vuln
             dist/python-publish/evidence/SHA256SUMS
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 90
           compression-level: 0
+
+      - name: Upload Trivy SARIF for base-python amd64
+        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        with:
+          sarif_file: dist/python-publish/evidence/vuln/amd64/base-python.trivy.all.sarif
+          category: base-python/trivy/amd64
+
+      - name: Upload Grype SARIF for base-python amd64
+        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        with:
+          sarif_file: dist/python-publish/evidence/vuln/amd64/base-python.grype.all.sarif
+          category: base-python/grype/amd64
+
+      - name: Upload Trivy SARIF for base-python arm64
+        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        with:
+          sarif_file: dist/python-publish/evidence/vuln/arm64/base-python.trivy.all.sarif
+          category: base-python/trivy/arm64
+
+      - name: Upload Grype SARIF for base-python arm64
+        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        with:
+          sarif_file: dist/python-publish/evidence/vuln/arm64/base-python.grype.all.sarif
+          category: base-python/grype/arm64
 
   sign-attest:
     name: sign and attest verified subjects

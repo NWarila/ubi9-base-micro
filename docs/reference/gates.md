@@ -6,8 +6,8 @@ it.
 
 | Path | Enforces |
 | --- | --- |
-| `tools/verify.py` | Repository contract checks include the required-file manifest, workflow pins, the exact Python Bake shape and inheritance contract, contract-derived builder inputs, identity-step ordering and fail-closed shell shape, CI-rootfs preflight selection and artifact dataflow, Renovate managers, deny-all ignore allowlists, documentation markers, Diataxis layout, ADR inventory, lint setup, helper self-tests, and residue denial. For `publish-python.yaml`, 28 named semantic rejection guards cover the trigger, job graph, concurrency, exact permission inventory, nine base-repository guards, fail-closed spellings, Cosign action/version/adjacency, SLSA generator caller, digest exporter, closed release argv, OCI label binding, attestation subject matrix, signing, trust contract, provenance, alias ordering, alias collisions, independent verification, contract identity, publish scope, gate battery, index dataflow, VEX production caller, SLSA execution-certificate binding, pre-alias absence, and tag isolation. A whole-file SHA-256 and byte-length surface lock is a drift alarm, not a semantic replacement. The deleted secret-reference, registry-credential, OIDC/signing-absence, registry-container, Docker-floor, and BuildKit-network preflight checks have no live equivalent. Static workflow checks are defence-in-depth against accidental regression, not exhaustive interpretation of arbitrary shell or Bake overrides. The Python build-input self-test exercises seven fail-closed classes through 68 negative cases. The workflow-only `--check-python-builder-identity` mode compares the Buildx version, commit, installed plugin SHA-256, BuildKit container image, and BuildKit node version supplied by setup; a mismatch fails before the build. |
-| `tools/run-test-gates.sh` | Local orchestration for the image gate set: build, hardening, FIPS, footprint, STIG, SBOM, fixable MEDIUM+ scanners, OpenVEX, rootfs secret scan, NIST SP 800-190 predicate validation, SLSA builder assertion, and Rekor assertion helpers. |
+| `tools/verify.py` | Repository contract checks include required files, action pins, exact workflow permissions and evidence ordering, Python build/publish surface locks, native TD-6 scope, SQLite and libuuid absence-proof wiring, signing, provenance, SBOM, NIST/STIG, secret gates, scanner freshness/canaries, and retained Python OpenVEX documents. Static workflow checks are defence-in-depth against accidental regression, not exhaustive interpretation of arbitrary shell or Bake overrides. |
+| `tools/run-test-gates.sh` | Local orchestration for build, hardening, FIPS, footprint, STIG, SBOM, native fixable MEDIUM+ scanner gates, rootfs secret scanning, and NIST SP 800-190 predicate validation. |
 | `tools/assert-reproducible.py` | Builds the same runtime twice for a platform, exports both rootfs tar streams, reports canonical rootfs and rpmdb digests, fails on any byte, metadata, ownership, type, mtime, or presence difference when `--assert-byte-identical` is set, and fails when `--expect-from-contract` values from `contracts/image-manifest.json` do not match. |
 | `images/python/tools/assert-reproducible.py` | Builds the Python runtime twice through the `repro` target in `images/python/docker-bake.json`, using one immutable Bake invocation descriptor per side for both `bake --print` and execution. It compares exported rootfs trees and fails when byte identity or the architecture-specific rootfs and rpmdb values in `images/python/contracts/image-manifest.json` do not match. Its single-rootfs mode checks both the effective rootfs exported from the loaded `ci` image in the build job and each registry-served `release` child in the pull-request release preflight. The same preflight uses its two-rootfs mode to compare each served child with a same-commit `ci` rootfs. Builder installation and live identity observations are owned by the workflows, not this helper. |
 | `tools/assert-footprint.py` | Exports the runtime rootfs and fails when regular-file bytes exceed the configured H2 limit. |
@@ -18,10 +18,8 @@ it.
 | `tools/assert-sbom-rpms.py` | Confirms Syft rpmdb-derived SBOM output enumerates required runtime RPMs before SPDX and CycloneDX evidence is attested. |
 | `tools/assert-scanner-db-freshness.py` | Parses Grype DB status and Trivy DB metadata, then fails if either scanner database is missing, malformed, stale, expired, or below the required Grype schema floor. |
 | `tools/assert-scanner-canary.py` | Parses independent Grype and Trivy reports for a committed vulnerable SBOM and fails unless both databases and matchers detect the expected Log4Shell record; this probes content validity, not image cataloging. |
-| `tools/assert-ignore-scope.py` | Rejects missing, malformed, widened, version-unpinned, or expired fixable-CVE ignores and requires Grype gate evidence to contain exactly the two approved runtime suppressions. |
 | `images/python/tools/assert-raw-scanners-no-sqlite.py` | Requires `--trivy-json`, `--grype-json`, `--contract`, and `--arch` for normal execution. It rejects `sqlite-libs` or any of the five SQLite CVEs on either scanner surface. Trivy's `--list-all-pkgs` inventory must contain the policy-selected `python3.12-libs` package at the exact epoch, version, release, and RPM architecture derived from `runtime.shipped[arch]`. Grype must have valid identity, Red Hat distro, source shape, and per-match schema, but `matches: []` is a legal clean result. Malformed marker identities and whitespace-bearing package names fail before the absence decision. |
-| `tools/assert-vex.py` | Binds the Trivy and Grype product, image, architecture, distro, and repository-digest evidence, then fails unless every unfixed HIGH or CRITICAL scanner finding has a matching reviewed OpenVEX statement under the image's CODEOWNERS-gated VEX directory. The only gate-clearing `affected` case is the exact, expiring TD-12 disposition for CVE-2026-14456 on `openssl-libs` at `1:3.5.5-5.el9_8` in Python and micro through `review-by 2026-10-01`. The closed one-entry model has two statement surfaces. Local products require two keys: the exact in-tool disposition surface and its byte-canonical statement. Published children require three: those keys plus paired `--index-reference` and `--index-manifest` evidence under the surface's pinned Python or micro repository. The tool requires exactly one candidate surface, verifies the index byte digest, requires one child for each supported platform with distinct child digests, locks the BuildKit attestation platform and annotations, requires descriptor-digest uniqueness, and enforces child/attestation disjointness. It does not constrain attestation count or per-child reference cardinality and does not close the descriptor top-level or runnable-platform key sets. Valid fix evidence and byte-noncanonical scanner identities refuse authorization; malformed fix metadata does not establish a fix, so the finding remains on the default-deny path. |
-| `tools/resolve-python-index.py` | Enforces the publish-side closed descriptor matrix: exactly one runnable `linux/amd64` child, one runnable `linux/arm64` child, and exactly one BuildKit attestation descriptor referring to each child. Runnable descriptors must contain exactly `digest`, `mediaType`, `platform`, and `size`; attestation descriptors must contain exactly those keys plus `annotations`; both platform objects must contain exactly `architecture` and `os`. It rejects additional `urls`, `data`, and `artifactType` fields on both descriptor kinds and invented keys on every inspected object. It corroborates the push-reported digest against the exact registry readback bytes, locks the same index digest into signing, attestation, VEX, and alias consumers, and verifies checksummed cross-job artifacts before use. Its agreement self-test records all three intentional differences from `tools/assert-vex.py`: top-level key-set closure, runnable-platform key-set closure, and attestation cardinality. |
+| `tools/resolve-python-index.py` | Enforces the publish-side closed descriptor matrix: exactly one runnable `linux/amd64` child, one runnable `linux/arm64` child, and one BuildKit attestation descriptor referring to each child. It closes descriptor and platform key sets, corroborates the push-reported digest against exact registry bytes, binds that digest to signing, attestation, and alias consumers, and verifies checksummed cross-job artifacts. |
 | `tools/decide-python-publish-scope.py` | Decides Python publication independently of the micro policy. A `python/v*` release tag always publishes. On `main`, every `images/python/**` path and every enumerated shared publisher input publishes; an unavailable prior revision, empty delta, unclassified path, or malformed published config also publishes fail-closed. Only a delta entirely within the closed unrelated allowlist skips. |
 | `tools/assert-python-alias-policy.py` | Derives the exact main or release alias set, requires create-once aliases to be absent or already point to the candidate index before evidence and immediately before apply, and requires all aliases to resolve to that digest afterward. These checks detect collisions but are not atomic against an external package writer. |
 | `tools/python-trust-contract.py` | Generates and validates the exact index-only in-toto trust-contract statement. It binds the `ghcr.io/nwarila/ubi9-base-python` package and index digest to the `images/python/` Git tree, publishing workflow, and commit with no extra fields or subjects. |
@@ -36,7 +34,7 @@ it.
 | `tools/assert-rootfs-identity.py` | Checks the exported runtime rootfs for UID 0 uniqueness and unknown file UID/GID ownership. |
 | `tools/assert-stig-arf.py` | Fails closed on ARF parse errors, `error`/`unknown` rule results, threshold failures, or selected must-verify rules returning `notapplicable` without deterministic equivalent evidence. |
 | `tools/generate-stig-arf-predicate.py` | Converts the tailored STIG ARF summary into the signed predicate payload used by publish. |
-| `tools/summarize-gates.py` | Converts hardening and reproducibility reports into decision envelopes for the pull-request comment and nightly drift issue. Its Trivy and Grype fixability classification matches `tools/assert-vex.py`: malformed fix metadata grants no fix and remains on the unfixed OpenVEX path. Malformed report inputs produce an incomplete, attention-bearing envelope instead of a new enforcement path. |
+| `tools/summarize-gates.py` | Converts hardening and reproducibility reports into decision envelopes. Malformed report inputs produce an incomplete, attention-bearing envelope instead of a new enforcement path. |
 | `tools/install-syft.sh` | Installs the pinned Syft binary used for rpmdb-derived SBOM generation. |
 | `tools/install-trivy.sh` | Installs the pinned Trivy binary used for the fixable-vulnerability gate. |
 | `tools/install-grype.sh` | Installs the pinned Grype binary used as the second fixable-vulnerability scanner. |
@@ -60,51 +58,6 @@ does not close the external-writer alias race.
 The internal-process-residue check reads only the three Markdown path sets named
 above. Other paths are outside this check.
 
-The fixable scanner gate rejects MEDIUM, HIGH, and CRITICAL findings. TD-6
-temporarily excuses only `CVE-2026-31790` on the two held FIPS provider packages
-at `3.0.7-8.el9`, with a review date of 2026-10-10. The scanner report pass is
-unfiltered and the separate unfixed OpenVEX default-deny scope remains HIGH and
-CRITICAL. On the current image, the threshold catches two findings and TD-6
-excuses the same two, so the immediate enforcement delta is zero; the
-forward-looking change blocks any other fixable Medium.
+The fixable scanner gate rejects MEDIUM, HIGH, and CRITICAL findings. TD-6 excuses only `CVE-2026-31790` on the two held FIPS provider packages at exactly `3.0.7-8.el9`; both native scanner files pin the scope and `tools/verify.py` exact-checks it. Unfixed vendor findings are report-only. Complete Trivy and Grype JSON and SARIF evidence is sealed and retained by both publication workflows, while scanner, database freshness, and canary failures remain fatal.
 
-TD-12 is separate from the TD-6 fixable-CVE exception. TD-12 accepts and tracks
-known-affected `CVE-2026-14456` on `openssl-libs` at
-`1:3.5.5-5.el9_8` in both images. It suppresses no scanner input.
-
-The model contains one entry and two exact surfaces: TD-12 Python and TD-12
-micro. Local Python CI products and the locally loaded micro
-tag require the two-key conjunction of their exact entry and surface statement.
-A published child additionally requires repository-correct, digest-verified OCI
-index evidence, making that path three-key. Surface selection must be unique;
-authority from one statement, product, repository, or policy IRI cannot satisfy
-the other.
-
-The index digest itself is never eligible, a BuildKit attestation-descriptor
-digest is rejected as a product, and a child for the other scanner-reported
-architecture is not eligible. The separate child/attestation
-digest-disjointness guard rejects an alias before child-product eligibility is
-decided. The Python caller reads the index once by the push-reported digest,
-corroborates and checksum-protects those bytes, and carries the same digest to
-every consumer. The micro caller passes its pushed digest and existing
-registry-read `dist/image-index.json` bytes to both child calls in the same job.
-Production evidence for those paths is in the
-[canonical publication evidence contract](verification-contract.md#image-family-publication-evidence-contract).
-
-`assert-vex.py` remains weaker on descriptor top-level closure, runnable-platform
-key-set closure, attestation count, and duplicate references. The Python
-publish-side resolver rejects those measured shapes before its VEX gate. The
-micro caller uses the VEX-side policy directly, as tracked in TD-11. Raw scanner
-identities must be byte-canonical, valid fix evidence refuses authorization, and
-the repository entry expires after 2026-10-01 even if its finding becomes
-dormant. Every other unfixed HIGH or CRITICAL finding remains default-denied.
-
-Repository verification reports 2 active canonical byte documents plus 1 fixed-history
-document, the exact 1-entry/2-surface model, 12 active document mutations, 6
-fixed-history mutations, 35 disposition documentation prose mutations across 6
-files, and 1/1 dormant expiry locked. It exact-locks
-the published-child and permanent-not-affected source through seven literal
-constants and 12 current function ASTs. Its five
-accept-and-track verifier mutations and five corresponding checker mutations
-are also required to fail. These counts describe repository self-tests, not
-production executions.
+The Python SQLite and libuuid OpenVEX documents are absence evidence, not scanner authorizations. Their independent build, runtime, SBOM, raw-scanner, and phantom-package gates remain blocking, and the production publisher still requires, attests, verifies, and Rekor-checks the non-empty document set.

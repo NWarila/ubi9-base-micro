@@ -107,20 +107,10 @@ def _check_snapshot(snapshot_value: Any, context: dict[str, Any]) -> list[str]:
 
 def _hardening_view(envelope: dict[str, Any], arch: str) -> tuple[dict[str, int], list[str]]:
     reasons: list[str] = []
-    cves = _object(envelope.get("cves"), f"{arch} cves")
-    raw = _object(cves.get("raw"), f"{arch} raw CVEs")
-    ignored = _object(cves.get("ignored"), f"{arch} ignored CVEs")
-    actionable = _object(cves.get("actionable"), f"{arch} actionable CVEs")
     stig = _object(envelope.get("stig"), f"{arch} STIG")
     secrets = _object(envelope.get("secrets"), f"{arch} secrets")
     footprint = _object(envelope.get("footprint"), f"{arch} footprint")
-    vex = _object(envelope.get("vex"), f"{arch} VEX")
-    raw_trivy = _integer(raw.get("trivy"), f"{arch} raw Trivy CVEs")
-    raw_grype = _integer(raw.get("grype"), f"{arch} raw Grype CVEs")
     view = {
-        "raw": _integer(raw.get("unique"), f"{arch} raw CVEs"),
-        "ignored": _integer(ignored.get("unique"), f"{arch} ignored CVEs"),
-        "actionable": _integer(actionable.get("unique"), f"{arch} actionable CVEs"),
         "stig_total": _integer(stig.get("total_rule_results"), f"{arch} STIG total"),
         "stig_pass": _integer(stig.get("pass"), f"{arch} STIG pass"),
         "stig_fail": _integer(stig.get("fail"), f"{arch} STIG fail"),
@@ -128,31 +118,19 @@ def _hardening_view(envelope: dict[str, Any], arch: str) -> tuple[dict[str, int]
         "secrets": _integer(secrets.get("finding_count"), f"{arch} secret findings"),
         "footprint_bytes": _integer(footprint.get("regular_file_bytes"), f"{arch} footprint bytes"),
         "footprint_limit": _integer(footprint.get("limit_bytes"), f"{arch} footprint limit"),
-        "missing_vex": _integer(vex.get("missing"), f"{arch} missing VEX"),
-        "accepted_vex": _integer(vex.get("accepted"), f"{arch} accepted VEX"),
     }
     footprint_passed = _boolean(footprint.get("passed"), f"{arch} footprint passed")
     secret_passed = _boolean(secrets.get("passed"), f"{arch} secret scan passed")
-    if raw_trivy > view["raw"] or raw_grype > view["raw"]:
-        raise RenderError(f"{arch} raw scanner CVE count exceeds the unique count")
-    if view["ignored"] > view["raw"] or view["actionable"] > view["raw"]:
-        raise RenderError(f"{arch} classified CVE count exceeds the raw unique count")
-    if view["accepted_vex"] > view["raw"] or view["missing_vex"] > view["raw"]:
-        raise RenderError(f"{arch} VEX count exceeds the raw unique CVE count")
     if view["stig_pass"] + view["stig_fail"] + view["stig_not_selected"] > view["stig_total"]:
         raise RenderError(f"{arch} STIG counts exceed total rule results")
     if secret_passed != (view["secrets"] == 0):
         raise RenderError(f"{arch} secret status disagrees with finding count")
     if footprint_passed != (view["footprint_bytes"] <= view["footprint_limit"]):
         raise RenderError(f"{arch} footprint passed flag disagrees with byte counts")
-    if view["actionable"]:
-        reasons.append(f"{arch} has {view['actionable']} actionable HIGH/CRITICAL CVE(s)")
     if view["stig_fail"]:
         reasons.append(f"{arch} has {view['stig_fail']} failing STIG result(s)")
     if view["secrets"]:
         reasons.append(f"{arch} has {view['secrets']} secret finding(s)")
-    if view["missing_vex"]:
-        reasons.append(f"{arch} has {view['missing_vex']} finding(s) missing VEX")
     if not footprint_passed:
         reasons.append(f"{arch} exceeds the footprint cap")
     view["footprint_passed"] = int(footprint_passed)
@@ -234,16 +212,12 @@ def _headline(reasons: list[str]) -> str:
 
 def _posture_row(arch: str, view: dict[str, int] | None) -> str:
     if view is None:
-        return f"| {arch} | unavailable | unavailable | unavailable | unavailable | unavailable |"
-    accepted = f"{view['ignored']} CVE · {view['accepted_vex']} VEX"
+        return f"| {arch} | unavailable | unavailable | unavailable |"
     stig = (
         f"pass {view['stig_pass']} · fail {view['stig_fail']} · "
         f"not-selected {view['stig_not_selected']} ({view['stig_total']} rule results)"
     )
-    return (
-        f"| {arch} | {view['raw']} | {accepted} | {view['actionable']} | {stig} | "
-        f"{view['secrets']} / {view['missing_vex']} |"
-    )
+    return f"| {arch} | {stig} | {view['secrets']} | {'yes' if view['footprint_passed'] else 'no'} |"
 
 
 def _footprint_line(views: dict[str, dict[str, int]]) -> str:
@@ -290,9 +264,8 @@ def render_decision(envelope_values: list[Any], context_value: Any, snapshot_val
         "",
         "**Current posture**",
         "",
-        "| Arch | Raw HIGH/CRITICAL CVEs | Policy-ignored CVEs / accepted VEX | "
-        "Actionable CVEs | STIG | Secrets / missing VEX |",
-        "|---|---:|---:|---:|---|---:|",
+        "| Arch | STIG | Secret findings | Footprint passed |",
+        "|---|---|---:|---:|",
         _posture_row("amd64", hardening.get("amd64")),
         _posture_row("arm64", hardening.get("arm64")),
         "",

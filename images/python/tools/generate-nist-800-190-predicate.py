@@ -79,26 +79,32 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
                 "status": "addressed",
                 "posture": (
                     "Fixable MEDIUM, HIGH, and CRITICAL OS/library findings fail closed through both "
-                    "Trivy and Grype, with OpenVEX default-deny for unfixed HIGH/CRITICAL "
-                    "findings and rpmdb-derived package evidence."
+                    "Trivy and Grype. Complete findings are emitted report-only as JSON and SARIF, "
+                    "with rpmdb-derived package evidence."
                 ),
                 "evidence": [
                     evidence(
                         "workflow",
-                        ".github/workflows/python-ci.yaml#Run fixable vulnerability gates",
+                        ".github/workflows/python-ci.yaml#Run canonical fixable vulnerability gates",
                         "Trivy fixable MEDIUM/HIGH/CRITICAL gate",
                     ),
                     evidence(
                         "workflow",
-                        ".github/workflows/python-ci.yaml#Run fixable vulnerability gates",
+                        ".github/workflows/python-ci.yaml#Run canonical fixable vulnerability gates",
                         "Grype fixable MEDIUM/HIGH/CRITICAL gate",
                     ),
                     evidence(
                         "workflow",
-                        ".github/workflows/python-ci.yaml#Run OpenVEX default-deny gate",
-                        "OpenVEX default-deny policy",
+                        ".github/workflows/python-ci.yaml#Generate complete vulnerability reports "
+                        "and prove raw SQLite absence",
+                        "complete Trivy JSON and SARIF report-only evidence",
                     ),
-                    evidence("script", "tools/assert-vex.py", "default-deny OpenVEX assertion"),
+                    evidence(
+                        "workflow",
+                        ".github/workflows/python-ci.yaml#Generate complete vulnerability reports "
+                        "and prove raw SQLite absence",
+                        "complete Grype JSON and SARIF report-only evidence",
+                    ),
                     evidence("script", "images/python/tools/assert-sbom-rpms.py", "rpmdb-backed SBOM assertion"),
                 ],
             },
@@ -149,12 +155,12 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
                     ),
                     evidence(
                         "workflow",
-                        ".github/workflows/python-ci.yaml#Run fixable vulnerability gates",
+                        ".github/workflows/python-ci.yaml#Run canonical fixable vulnerability gates",
                         "Trivy scan over locally built image contents",  # piece-3: reword to published-digest
                     ),
                     evidence(
                         "workflow",
-                        ".github/workflows/python-ci.yaml#Run fixable vulnerability gates",
+                        ".github/workflows/python-ci.yaml#Run canonical fixable vulnerability gates",
                         "Grype scan over locally built image contents",  # piece-3: reword to published-digest
                     ),
                     evidence(

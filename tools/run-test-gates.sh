@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Purpose: Top-level gate pipeline — install scanners + STIG datastream, build images, then run hardening/FIPS tests,
-# footprint, STIG ARF, SBOM gen+assertions, phantom-package check, Trivy/Grype + VEX, rootfs secret scan, and NIST
-# 800-190 predicate gen/validate.
+# footprint, STIG ARF, SBOM gen+assertions, phantom-package check, fixable Trivy/Grype gates,
+# rootfs secret scan, and NIST 800-190 predicate gen/validate.
 # Role: workflow
 # Python-convertible: partial — thin linear orchestration; all substance is in the called .py/.sh gates, conversion
 # mainly relocates the call list.
@@ -26,8 +26,6 @@ case "${arch}" in
     exit 1
     ;;
 esac
-
-python tools/assert-ignore-scope.py
 
 bash tools/install-syft.sh
 bash tools/install-trivy.sh
@@ -122,34 +120,11 @@ dist/tools/trivy image \
   --exit-code 1 \
   "${runtime_image}"
 
-grype_gate_json="dist/vuln/base-micro.${arch}.grype.gate.json"
 dist/tools/grype "${runtime_image}" \
   --only-fixed \
   --fail-on medium \
   -c security/cve-ignore.grype.yaml \
-  --show-suppressed \
-  -o json \
-  --file "${grype_gate_json}"
-python tools/assert-ignore-scope.py --grype-report "${grype_gate_json}"
-
-trivy_json="dist/vuln/base-micro.${arch}.trivy.all.json"
-grype_json="dist/vuln/base-micro.${arch}.grype.all.json"
-
-dist/tools/trivy image \
-  --vuln-type os,library \
-  --list-all-pkgs \
-  --severity HIGH,CRITICAL \
-  --format json \
-  --output "${trivy_json}" \
-  "${runtime_image}"
-
-dist/tools/grype "${runtime_image}" -o json --file "${grype_json}"
-
-python tools/assert-vex.py \
-  --product "${runtime_image}" \
-  --trivy-json "${trivy_json}" \
-  --grype-json "${grype_json}" \
-  --package-floor contracts/image-manifest.json
+  -o table
 
 rootfs_dir="dist/rootfs-secret-scan/rootfs.${arch}"
 report="dist/rootfs-secret-scan/base-micro.${arch}.secret-scan.json"

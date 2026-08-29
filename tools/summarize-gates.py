@@ -11,31 +11,10 @@ import argparse
 import json
 import re
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 ARCHES = {"amd64", "arm64"}
-HIGH_CRITICAL = {"HIGH", "CRITICAL"}
-TRIVY_FIX_STATUSES = {
-    "affected",
-    "end_of_life",
-    "fixed",
-    "fix_deferred",
-    "not_affected",
-    "under_investigation",
-    "unknown",
-    "will_not_fix",
-}
-GRYPE_FIX_STATES = {"fixed", "not-fixed", "unknown", "wont-fix"}
-OPENVEX_STATUSES = {"affected", "fixed", "not_affected", "under_investigation"}
-OPENVEX_NOT_AFFECTED_JUSTIFICATIONS = {
-    "component_not_present",
-    "vulnerable_code_not_present",
-    "vulnerable_code_not_in_execute_path",
-    "vulnerable_code_cannot_be_controlled_by_adversary",
-    "inline_mitigations_already_exist",
-}
 SCHEMA_VERSION = "1.1.0"
 FAILURE_DETAIL_LIMIT = 500
 NEVRA_CANDIDATE_LIMIT = 160
@@ -81,17 +60,6 @@ DIGEST_MISMATCH = re.compile(
 
 class SummaryError(Exception):
     """An input cannot support a complete decision envelope."""
-
-
-@dataclass(frozen=True)
-class Finding:
-    vulnerability: str
-    package: str
-    version: str
-    severity: str
-    fixable: bool
-    fixed_version: str | None = None
-    purl: str | None = None
 
 
 def _load_json(path: Path, label: str) -> Any:
@@ -222,224 +190,6 @@ def _contract_values(contract_path: Path, arch: str) -> tuple[int, str, str]:
     return limit, rootfs_digest, rpmdb_sha256
 
 
-def _trivy_fixability(finding: dict[str, Any]) -> tuple[bool, str | None]:
-    fixed_version = ""
-    if "FixedVersion" in finding:
-        raw_fixed_version = finding["FixedVersion"]
-        if not isinstance(raw_fixed_version, str):
-            return False, None
-        fixed_version = raw_fixed_version.strip()
-    status: str | None = None
-    if "Status" in finding:
-        raw_status = finding["Status"]
-        if not isinstance(raw_status, str) or raw_status not in TRIVY_FIX_STATUSES:
-            return False, None
-        status = raw_status
-    return bool(fixed_version) or status == "fixed", fixed_version or None
-
-
-def _grype_fixability(vulnerability: dict[str, Any]) -> tuple[bool, str | None]:
-    raw_fix = vulnerability.get("fix")
-    if raw_fix is None or not isinstance(raw_fix, dict):
-        return False, None
-    raw_versions = raw_fix.get("versions")
-    if not isinstance(raw_versions, list):
-        return False, None
-    versions: list[str] = []
-    for version in raw_versions:
-        if not isinstance(version, str) or not version.strip():
-            return False, None
-        versions.append(version.strip())
-    raw_state = raw_fix.get("state")
-    if not isinstance(raw_state, str) or raw_state not in GRYPE_FIX_STATES:
-        return False, None
-    fixed_version = ", ".join(versions) or None
-    return bool(versions) or raw_state == "fixed", fixed_version
-
-
-def _trivy_findings(path: Path) -> list[Finding]:
-    report = _object(_load_json(path, "Trivy report"), "Trivy report")
-    findings: list[Finding] = []
-    for result_index, raw_result in enumerate(_list(report.get("Results", []), "Trivy Results")):
-        result = _object(raw_result, f"Trivy Results[{result_index}]")
-        for finding_index, raw_finding in enumerate(
-            _list(result.get("Vulnerabilities", []), f"Trivy Results[{result_index}].Vulnerabilities")
-        ):
-            finding = _object(raw_finding, f"Trivy vulnerability {finding_index}")
-            severity = str(finding.get("Severity") or "").upper()
-            if severity not in HIGH_CRITICAL:
-                continue
-            vulnerability = _string(finding.get("VulnerabilityID"), "Trivy vulnerability id")
-            package = _string(finding.get("PkgName"), f"Trivy package for {vulnerability}")
-            version = _string(finding.get("InstalledVersion"), f"Trivy installed version for {vulnerability}")
-            fixable, fixed_version = _trivy_fixability(finding)
-            purl: str | None = None
-            identifier = finding.get("PkgIdentifier")
-            if isinstance(identifier, dict) and isinstance(identifier.get("PURL"), str):
-                purl = identifier["PURL"].strip() or None
-            findings.append(Finding(vulnerability, package, version, severity, fixable, fixed_version, purl))
-    return findings
-
-
-def _grype_match(raw_match: Any, label: str) -> Finding | None:
-    wrapper = _object(raw_match, label)
-    match = wrapper.get("match") if isinstance(wrapper.get("match"), dict) else wrapper
-    match = _object(match, label)
-    vulnerability = _object(match.get("vulnerability"), f"{label}.vulnerability")
-    severity = str(vulnerability.get("severity") or "").upper()
-    if severity not in HIGH_CRITICAL:
-        return None
-    vulnerability_id = _string(vulnerability.get("id"), f"{label} vulnerability id")
-    artifact = _object(match.get("artifact"), f"{label}.artifact")
-    package = _string(artifact.get("name"), f"{label} package")
-    version = _string(artifact.get("version"), f"{label} version")
-    purl_value = artifact.get("purl")
-    purl = purl_value.strip() if isinstance(purl_value, str) and purl_value.strip() else None
-    fixable, fixed_version = _grype_fixability(vulnerability)
-    return Finding(vulnerability_id, package, version, severity, fixable, fixed_version, purl)
-
-
-def _grype_findings(path: Path, key: str = "matches") -> list[Finding]:
-    report = _object(_load_json(path, "Grype report"), "Grype report")
-    findings: list[Finding] = []
-    for index, raw_match in enumerate(_list(report.get(key, []), f"Grype {key}")):
-        finding = _grype_match(raw_match, f"Grype {key}[{index}]")
-        if finding is not None:
-            findings.append(finding)
-    return findings
-
-
-def _trivy_ignore_entries(path: Path) -> dict[str, set[str]]:
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except FileNotFoundError as exc:
-        raise SummaryError(f"missing Trivy ignore policy: {path}") from exc
-    except (OSError, UnicodeDecodeError) as exc:
-        raise SummaryError(f"malformed Trivy ignore policy: {path}: {exc}") from exc
-
-    entries: dict[str, set[str]] = {}
-    current: str | None = None
-    for line in lines:
-        id_match = re.match(r"^\s*- id:\s*(\S+)\s*$", line)
-        if id_match:
-            current = id_match.group(1)
-            entries.setdefault(current, set())
-            continue
-        purl_match = re.match(r"^\s+- (pkg:[^\s#]+)\s*$", line)
-        if purl_match and current is not None:
-            entries[current].add(purl_match.group(1))
-    if not entries or any(not purls for purls in entries.values()):
-        raise SummaryError(f"malformed or unscoped Trivy ignore policy: {path}")
-    return entries
-
-
-def _trivy_ignored(finding: Finding, entries: dict[str, set[str]]) -> bool:
-    candidates = {
-        finding.purl or "",
-        f"pkg:rpm/redhat/{finding.package}@{finding.version}",
-    }
-    return not entries.get(finding.vulnerability, set()).isdisjoint(candidates)
-
-
-def _vex_statements(vex_dir: Path) -> list[tuple[set[str], set[str], str, bool]]:
-    if not vex_dir.is_dir():
-        raise SummaryError(f"missing VEX directory: {vex_dir}")
-    statements: list[tuple[set[str], set[str], str, bool]] = []
-    for path in sorted(vex_dir.glob("*.json")):
-        document = _object(_load_json(path, "VEX document"), f"VEX document {path}")
-        if "@context" not in document:
-            raise SummaryError(f"VEX document missing @context: {path}")
-        for index, raw_statement in enumerate(_list(document.get("statements"), f"VEX statements in {path}")):
-            statement = _object(raw_statement, f"VEX statement {index} in {path}")
-            raw_vulnerability = statement.get("vulnerability")
-            vulnerability_ids: set[str] = set()
-            if isinstance(raw_vulnerability, str) and raw_vulnerability.strip():
-                vulnerability_ids.add(raw_vulnerability.strip())
-            elif isinstance(raw_vulnerability, dict):
-                for key in ("name", "id", "@id"):
-                    value = raw_vulnerability.get(key)
-                    if isinstance(value, str) and value.strip():
-                        vulnerability_ids.add(value.strip())
-                aliases = raw_vulnerability.get("aliases")
-                if isinstance(aliases, list):
-                    vulnerability_ids.update(str(alias).strip() for alias in aliases if str(alias).strip())
-            if not vulnerability_ids:
-                raise SummaryError(f"VEX statement {index} in {path} has no vulnerability id")
-            products: set[str] = set()
-            for product in _list(statement.get("products"), f"VEX products in {path}"):
-                if isinstance(product, str) and product.strip():
-                    products.add(product.strip())
-                elif isinstance(product, dict):
-                    for key in ("@id", "id", "name"):
-                        value = product.get(key)
-                        if isinstance(value, str) and value.strip():
-                            products.add(value.strip())
-                    identifiers = product.get("identifiers")
-                    if isinstance(identifiers, dict):
-                        products.update(str(value).strip() for value in identifiers.values() if str(value).strip())
-                    elif isinstance(identifiers, list):
-                        for identifier in identifiers:
-                            if isinstance(identifier, str) and identifier.strip():
-                                products.add(identifier.strip())
-                            elif isinstance(identifier, dict):
-                                products.update(
-                                    str(value).strip() for value in identifier.values() if str(value).strip()
-                                )
-            if not products:
-                raise SummaryError(f"VEX statement {index} in {path} has no product identifier")
-            status = _string(statement.get("status"), f"VEX status in {path}")
-            if status not in OPENVEX_STATUSES:
-                raise SummaryError(f"VEX statement {index} in {path} has invalid status {status}")
-            justification = str(statement.get("justification") or "").strip()
-            if status == "not_affected" and justification not in OPENVEX_NOT_AFFECTED_JUSTIFICATIONS:
-                raise SummaryError(f"VEX statement {index} in {path} has invalid not_affected justification")
-            justified = bool(justification)
-            statements.append((vulnerability_ids, products, status, justified))
-    return statements
-
-
-def _accepted_vex(vulnerability: str, product: str, statements: list[tuple[set[str], set[str], str, bool]]) -> bool:
-    candidates = {product, f"pkg:oci/{product}"}
-    for vulnerability_ids, products, status, justified in statements:
-        if vulnerability not in vulnerability_ids or products.isdisjoint(candidates):
-            continue
-        if status == "fixed" or (status == "not_affected" and justified):
-            return True
-    return False
-
-
-def _count_by_scanner(trivy: list[Finding], grype: list[Finding]) -> dict[str, int]:
-    return {
-        "trivy": len({finding.vulnerability for finding in trivy}),
-        "grype": len({finding.vulnerability for finding in grype}),
-        "unique": len({finding.vulnerability for finding in trivy + grype}),
-    }
-
-
-def _actionable_cve_list(findings: list[Finding]) -> list[dict[str, str | bool | None]]:
-    selected: dict[str, Finding] = {}
-    for finding in sorted(
-        findings,
-        key=lambda item: (
-            item.vulnerability,
-            item.severity != "CRITICAL",
-            item.package,
-            item.fixed_version or "",
-        ),
-    ):
-        selected.setdefault(finding.vulnerability, finding)
-    return [
-        {
-            "id": finding.vulnerability,
-            "severity": finding.severity,
-            "package": finding.package,
-            "fixable": finding.fixable,
-            "fixed_version": finding.fixed_version,
-        }
-        for finding in selected.values()
-    ]
-
-
 def _secret_scan_fields(path: Path) -> dict[str, int | bool]:
     report = _object(_load_json(path, "secret-scan report"), "secret-scan report")
     raw_result = report.get("result")
@@ -456,32 +206,7 @@ def _hardening_fields(
     arch: str,
     dist_dir: Path,
     contract_limit: int,
-    trivy_ignore: Path,
-    vex_dir: Path,
-    product: str,
 ) -> dict[str, Any]:
-    trivy_path = dist_dir / f"vuln/base-micro.{arch}.trivy.all.json"
-    grype_path = dist_dir / f"vuln/base-micro.{arch}.grype.all.json"
-    grype_gate_path = dist_dir / f"vuln/base-micro.{arch}.grype.gate.json"
-    trivy = _trivy_findings(trivy_path)
-    grype = _grype_findings(grype_path)
-    grype_gate_active = _grype_findings(grype_gate_path)
-    grype_gate_ignored = _grype_findings(grype_gate_path, "ignoredMatches")
-    ignore_entries = _trivy_ignore_entries(trivy_ignore)
-
-    trivy_ignored = [finding for finding in trivy if finding.fixable and _trivy_ignored(finding, ignore_entries)]
-    trivy_actionable = [finding for finding in trivy if finding.fixable and not _trivy_ignored(finding, ignore_entries)]
-    grype_actionable = [finding for finding in grype_gate_active if finding.fixable]
-    grype_ignored = [finding for finding in grype_gate_ignored if finding.fixable]
-    ignored_ids = {finding.vulnerability for finding in trivy_ignored + grype_ignored}
-    actionable_findings = trivy_actionable + grype_actionable
-    actionable_ids = {finding.vulnerability for finding in actionable_findings}
-
-    unfixed = {finding.vulnerability for finding in trivy + grype if not finding.fixable}
-    statements = _vex_statements(vex_dir)
-    accepted_vex = {vulnerability for vulnerability in unfixed if _accepted_vex(vulnerability, product, statements)}
-    missing_vex = unfixed.difference(accepted_vex)
-
     stig_path = dist_dir / f"stig/{arch}/base-micro.{arch}.stig.summary.json"
     stig = _object(_load_json(stig_path, "STIG summary"), "STIG summary")
     total_rule_results = _integer(stig.get("total_rule_results"), "STIG total_rule_results")
@@ -507,14 +232,6 @@ def _hardening_fields(
         raise SummaryError("footprint passed flag disagrees with byte counts")
 
     return {
-        "cves": {
-            "raw": _count_by_scanner(trivy, grype),
-            "ignored": {"unique": len(ignored_ids)},
-            "actionable": {
-                "unique": len(actionable_ids),
-                "findings": _actionable_cve_list(actionable_findings),
-            },
-        },
         "stig": {
             "total_rule_results": total_rule_results,
             "pass": pass_count,
@@ -527,10 +244,6 @@ def _hardening_fields(
             "limit_bytes": limit_bytes,
             "passed": passed,
         },
-        "vex": {
-            "accepted": len(accepted_vex),
-            "missing": len(missing_vex),
-        },
     }
 
 
@@ -538,21 +251,14 @@ def summarize_hardening(
     arch: str,
     dist_dir: Path,
     contract: Path,
-    trivy_ignore: Path,
-    vex_dir: Path,
-    product: str,
 ) -> dict[str, Any]:
     envelope = _base_envelope("hardening", arch)
     try:
         if arch not in ARCHES:
             raise SummaryError(f"unsupported architecture: {arch}")
         contract_limit, _, _ = _contract_values(contract, arch)
-        envelope.update(_hardening_fields(arch, dist_dir, contract_limit, trivy_ignore, vex_dir, product))
+        envelope.update(_hardening_fields(arch, dist_dir, contract_limit))
         reasons: list[str] = []
-        cves = _object(envelope["cves"], "cves")
-        actionable = _object(cves["actionable"], "cves.actionable")
-        if _integer(actionable["unique"], "actionable CVEs"):
-            reasons.append(f"{arch} has actionable HIGH/CRITICAL CVEs")
         stig = _object(envelope["stig"], "stig")
         if _integer(stig["fail"], "STIG failures"):
             reasons.append(f"{arch} has failing STIG results")
@@ -562,9 +268,6 @@ def summarize_hardening(
         footprint = _object(envelope["footprint"], "footprint")
         if not _boolean(footprint["passed"], "footprint passed"):
             reasons.append(f"{arch} exceeds the footprint cap")
-        vex = _object(envelope["vex"], "vex")
-        if _integer(vex["missing"], "missing VEX"):
-            reasons.append(f"{arch} has findings missing VEX")
         envelope["complete"] = True
         envelope["attention_reasons"] = reasons
     except (SummaryError, KeyError, TypeError, ValueError):
@@ -624,23 +327,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--failure-log", type=Path)
     parser.add_argument("--dist-dir", type=Path, default=Path("dist"))
     parser.add_argument("--repro-report", type=Path)
-    parser.add_argument("--trivy-ignore", type=Path, default=Path("security/cve-ignore.trivyignore.yaml"))
-    parser.add_argument("--vex-dir", type=Path, default=Path("vex"))
-    parser.add_argument("--product", default="ghcr.io/nwarila/ubi9-base-micro:base-micro")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     if args.kind == "hardening":
-        envelope = summarize_hardening(
-            args.arch,
-            args.dist_dir,
-            args.contract,
-            args.trivy_ignore,
-            args.vex_dir,
-            args.product,
-        )
+        envelope = summarize_hardening(args.arch, args.dist_dir, args.contract)
     else:
         report = args.repro_report or (args.dist_dir / f"reproducibility/base-micro.{args.arch}.reproducibility.json")
         envelope = summarize_repro(args.arch, report, args.contract)

@@ -105,15 +105,13 @@ The current-state ledger is:
   Inventory-bearing Trivy supplies the positive runtime-package evidence.
   Grype's `matches` surface contains findings rather than a package inventory,
   so an empty list is valid while every present match remains schema-checked.
-  Cross-report product and image binding remains the responsibility of the
-  immediately following `tools/assert-vex.py` gate.
+  The workflows retain both complete raw reports as evidence.
 - `tools/decide-python-publish-scope.py` owns the closed, fail-closed decision
   over Python publication inputs and unrelated paths.
 - `tools/resolve-python-index.py` owns the registry-index byte/digest
   corroboration, exact four-key runnable and five-key attestation descriptor
   shapes, one attestation reference per child, cross-job bundle verification,
-  and one-index-digest consumer bindings. Its agreement self-test deliberately
-  records the VEX-side key-set and attestation-cardinality gaps.
+  and one-index-digest bindings for signing, attestation, and alias consumers.
 - `tools/assert-python-alias-policy.py`,
   `tools/assert-python-attestation.py`,
   `tools/assert-python-provenance.py`, and
@@ -181,7 +179,6 @@ The current-state ledger is:
 - `.github/workflows/python-ci.yaml`
 - `.github/workflows/publish-python.yaml`
 - `images/python/tools/assert-raw-scanners-no-sqlite.py`
-- `tools/assert-vex.py`
 - `tools/rpmlock.py`
 - `tools/assert-rpm-lock-hashes.py`
 - `tools/build-runtime-rootfs.py`

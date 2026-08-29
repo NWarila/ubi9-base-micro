@@ -49,9 +49,9 @@ than a package inventory, so `matches: []` is a legitimate clean result; every
 present match is still schema-checked, and both reports are still searched for
 `sqlite-libs` and the five associated CVEs. Malformed marker NEVRAs, colons in
 the compared version or release, and whitespace-bearing Trivy package or Grype
-artifact names fail as malformed evidence. The adjacent `tools/assert-vex.py`
-gate, not this raw absence gate, binds the two reports to each other and to the
-scanned product.
+artifact names fail as malformed evidence. This raw proof intentionally
+validates each complete scanner report independently, and the workflows retain
+those reports as evidence.
 
 This decision does not authorize mechanical stripping from other language
 images. Node and Java require independent dependency and API review. Standard
@@ -66,7 +66,7 @@ their omission and gives consumers a viable alternative.
   fuller Red Hat Python base or a derivative retaining both parts.
 - The final rpmdb and all three SBOM formats omit `sqlite-libs`; raw Trivy and
   Grype reports must contain neither that package nor the five associated
-  findings before OpenVEX is evaluated. A correctly formed pair with zero
+  findings. A correctly formed pair with zero
   vulnerability findings is a successful proof, not a gate failure.
 - The retained `python3.12-libs` RPM has a deliberate, exact payload deviation
   instead of an implied claim of complete RPM payload fidelity.
@@ -81,6 +81,5 @@ their omission and gives consumers a viable alternative.
 - `images/python/tools/build-python-rootfs.py`
 - `images/python/tools/run-python-gates.sh`
 - `images/python/tools/assert-raw-scanners-no-sqlite.py`
-- `tools/assert-vex.py`
 - `tools/assert-no-phantom-packages.py`
 - `docs/decision-records/repo/0005-strip-runtime-with-phantom-package-guard.md`

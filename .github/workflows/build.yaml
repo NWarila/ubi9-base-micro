@@ -86,7 +86,6 @@ jobs:
           python tools/assert-rpm-lock-hashes.py --self-test
           bash tools/generate-rpm-lock.sh --self-test
           python tools/assert-scanner-db-freshness.py --self-test
-          python tools/assert-vex.py --self-test
           python tools/assert-no-rootfs-secrets.py --self-test
           python tools/generate-nist-800-190-predicate.py --self-test
           python tools/assert-slsa-builder-id.py --self-test

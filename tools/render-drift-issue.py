@@ -107,52 +107,8 @@ def _context(value: Any) -> tuple[str, str, bool, list[str]]:
     return run_url, date, not reasons, reasons
 
 
-def _actionable_cves(value: Any, arch: str) -> tuple[list[dict[str, str | bool | None]], list[str]]:
-    actionable = _object(value, f"{arch} actionable CVEs")
-    count = _integer(actionable.get("unique"), f"{arch} actionable CVE count")
-    findings: list[dict[str, str | bool | None]] = []
-    seen_ids: set[str] = set()
-    for index, raw_finding in enumerate(_array(actionable.get("findings"), f"{arch} actionable CVE findings")):
-        finding = _object(raw_finding, f"{arch} actionable CVE {index}")
-        vulnerability = _string(finding.get("id"), f"{arch} actionable CVE id")
-        severity = _string(finding.get("severity"), f"{arch} actionable CVE severity").upper()
-        if severity not in {"HIGH", "CRITICAL"}:
-            raise RenderError(f"{arch} actionable CVE severity is unsupported")
-        package = _string(finding.get("package"), f"{arch} actionable CVE package")
-        fixable = _boolean(finding.get("fixable"), f"{arch} actionable CVE fixable")
-        if not fixable:
-            raise RenderError(f"{arch} actionable CVE is not fixable")
-        raw_fixed_version = finding.get("fixed_version")
-        fixed_version = None if raw_fixed_version is None else _string(raw_fixed_version, "fixed version")
-        if vulnerability in seen_ids:
-            raise RenderError(f"{arch} actionable CVE list contains duplicate ids")
-        seen_ids.add(vulnerability)
-        findings.append(
-            {
-                "id": vulnerability,
-                "severity": severity,
-                "package": package,
-                "fixable": fixable,
-                "fixed_version": fixed_version,
-            }
-        )
-    if count != len(findings):
-        raise RenderError(f"{arch} actionable CVE count disagrees with its sanitized list")
-    findings.sort(
-        key=lambda finding: (
-            str(finding["id"]),
-            str(finding["severity"]),
-            str(finding["package"]),
-            str(finding["fixed_version"]),
-        )
-    )
-    reasons = [f"{arch} has {count} actionable HIGH/CRITICAL CVE(s)"] if count else []
-    return findings, reasons
-
-
 def _hardening_view(envelope: dict[str, Any], arch: str) -> tuple[dict[str, Any], list[str]]:
-    cves = _object(envelope.get("cves"), f"{arch} CVEs")
-    findings, reasons = _actionable_cves(cves.get("actionable"), arch)
+    reasons: list[str] = []
     stig = _object(envelope.get("stig"), f"{arch} STIG")
     stig_fail = _integer(stig.get("fail"), f"{arch} STIG failures")
     secrets = _object(envelope.get("secrets"), f"{arch} secrets")
@@ -162,23 +118,16 @@ def _hardening_view(envelope: dict[str, Any], arch: str) -> tuple[dict[str, Any]
         raise RenderError(f"{arch} secret status disagrees with its count")
     footprint = _object(envelope.get("footprint"), f"{arch} footprint")
     footprint_passed = _boolean(footprint.get("passed"), f"{arch} footprint status")
-    vex = _object(envelope.get("vex"), f"{arch} VEX")
-    missing_vex = _integer(vex.get("missing"), f"{arch} missing VEX")
-
     if stig_fail:
         reasons.append(f"{arch} has {stig_fail} failing STIG result(s)")
     if secret_count:
         reasons.append(f"{arch} has {secret_count} secret finding(s)")
-    if missing_vex:
-        reasons.append(f"{arch} has {missing_vex} finding(s) missing VEX")
     if not footprint_passed:
         reasons.append(f"{arch} exceeds the footprint cap")
     return {
-        "cves": findings,
         "stig_fail": stig_fail,
         "secret_count": secret_count,
         "footprint_passed": footprint_passed,
-        "missing_vex": missing_vex,
     }, reasons
 
 
@@ -317,23 +266,10 @@ def _arch_section(
     if hardening_view is None:
         lines.append("- Hardening evidence: unavailable or malformed")
     else:
-        cves = hardening_view["cves"]
-        if cves:
-            lines.append("- Actionable fixable HIGH/CRITICAL CVEs:")
-            for finding in cves:
-                fixed_version = finding["fixed_version"]
-                fix = "fix available" if fixed_version is None else f"fixed version {_safe_text(str(fixed_version))}"
-                lines.append(
-                    f"  - {_safe_text(str(finding['id']))} — {_safe_text(str(finding['severity']))}; "
-                    f"package {_safe_text(str(finding['package']))}; {fix}"
-                )
-        else:
-            lines.append("- Actionable fixable HIGH/CRITICAL CVEs: 0")
         lines.extend(
             [
                 f"- STIG failures: {hardening_view['stig_fail']}",
                 f"- Secret findings: {hardening_view['secret_count']} (count only; matched material is never rendered)",
-                f"- Findings missing VEX: {hardening_view['missing_vex']}",
                 f"- Footprint: {'passed' if hardening_view['footprint_passed'] else 'failed'}",
             ]
         )
@@ -383,7 +319,7 @@ def render_issue(envelope_values: list[Any], results_value: Any, context_value: 
         lines.extend(f"- {reason}" for reason in reasons)
         lines.append("")
     else:
-        lines.extend(["Both architectures are complete, reproducible, and free of actionable drift.", ""])
+        lines.extend(["Both architectures are complete, reproducible, and free of hardening drift.", ""])
     for arch in ARCHES:
         lines.extend(_arch_section(arch, hardening, repro, failure_details))
         lines.append("")

@@ -73,7 +73,7 @@ make test
 
 ## Full Local Gate Harness
 
-Run this for image, RPM lock, scanner, FIPS, STIG, SBOM, VEX, NIST, or
+Run this for image, RPM lock, scanner, FIPS, STIG, SBOM, NIST, or
 publish-evidence changes:
 
 Cosign v2.5.2 is a required local prerequisite because the harness installs
@@ -111,9 +111,7 @@ python3 images/python/tools/assert-raw-scanners-no-sqlite.py \
 Use `arm64` only with the corresponding arm64 reports. The Trivy input must be
 the inventory-bearing report produced with `--list-all-pkgs`; the Grype report
 may legitimately contain `"matches": []`. The raw gate validates the required
-identity and schema fields plus SQLite absence in each report, but it does not
-bind the report identities to each other. The following `tools/assert-vex.py`
-invocation in the workflow owns that binding.
+identity and schema fields plus SQLite absence in each complete report.
 
 The offline self-test remains standalone:
 

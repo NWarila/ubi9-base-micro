@@ -98,18 +98,6 @@ for CHILD_REF in "${AMD64_REF}" "${ARM64_REF}"; do
 done
 ```
 
-If `vex/*.json` existed in the publishing commit, verify the OpenVEX attestation
-on both child digests too:
-
-```sh
-set -euo pipefail
-for CHILD_REF in "${AMD64_REF}" "${ARM64_REF}"; do
-  cosign verify-attestation --type openvex "${CHILD_REF}" \
-    --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-image.yaml@${PUBLISH_REF}" \
-    --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
-done
-```
-
 Verify index-bound SLSA provenance:
 
 ```sh

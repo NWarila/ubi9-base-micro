@@ -17,6 +17,10 @@ vulnerable code no supported feature needs. CI requires
 library, extension, package directory, and build-id link are absent on both
 architectures.
 
+The image also retains `libuuid` while omitting the vulnerable `mount(8)` code
+from its source package. CI and publication prove both `util-linux` and
+`util-linux-core` absent with the generic phantom-package assertion.
+
 Installing `sqlite-libs` alone does **not** restore Python SQLite support because
 the matching Python payload is also absent. Consumers that need `sqlite3` should
 use a fuller Red Hat Python base image or build a derivative that deliberately
@@ -41,10 +45,9 @@ extra epoch separator or a colon in version/release, and whitespace-bearing
 Trivy package or Grype artifact names, are rejected as malformed evidence.
 
 Normal execution requires `--trivy-json`, `--grype-json`, `--contract`, and
-`--arch` (`amd64` or `arm64`); `--self-test` remains standalone. This raw gate
-does not bind the two reports to each other. The adjacent `tools/assert-vex.py`
-invocation owns product, image, architecture, distro, and repository-digest
-binding before findings are evaluated against OpenVEX.
+`--arch` (`amd64` or `arm64`); `--self-test` remains standalone. This helper
+validates each complete report independently for the SQLite absence proof; the
+JSON and SARIF reports remain available as evidence.
 
 ## Build input contract
 
@@ -124,18 +127,13 @@ It skips only a delta entirely within its closed unrelated allowlist.
 A production run pushes one unaliased candidate by digest and reads its index
 bytes back from GHCR exactly once at the digest reported by Buildx metadata. It
 independently hashes those bytes, checksum-protects each cross-job handoff, and
-passes that same digest to signing, attestation, VEX, provenance, collision, and
+passes that same digest to signing, attestation, provenance, collision, and
 alias consumers. The publish resolver requires one runnable child and one
 BuildKit attestation reference for each of `linux/amd64` and `linux/arm64`, and
 exact-checks the runnable descriptor's four top-level keys and the attestation
 descriptor's five, and exact-checks both platform objects as `architecture`
 plus `os`. It rejects `urls`, `data`, and `artifactType` additions on both
-descriptor kinds. The VEX-side policy independently verifies runnable children,
-the attestation platform and annotations, and digest relationships, but it
-neither closes the descriptor top-level key sets nor the runnable platform key
-set, and it does not constrain attestation count or duplicate per-child
-references. TD-11 tracks all three measured differences, and the stricter
-publish resolver runs first.
+descriptor kinds.
 
 The index and both children are signed recursively. SPDX, CycloneDX, OpenVEX,
 NIST SP 800-190, and STIG ARF attestations are required on each child. The exact
@@ -150,8 +148,8 @@ Current and historical publication evidence is in the
 The evidence machinery is exercised by the CI-rootfs preflight on every push to `main` and
 manual dispatch, and for Python-tree or shared-gate changes selected on pull
 requests — a tailored RHEL9 STIG profile evaluated fail-closed, rpmdb-derived
-SPDX and CycloneDX SBOMs, dual CVE scanners with OpenVEX default-deny, a rootfs
-secret gate, and a NIST SP 800-190 image-control predicate. The pull-request
+SPDX and CycloneDX SBOMs, dual fixable-CVE gates with complete report-only JSON
+and SARIF, a rootfs secret gate, and a NIST SP 800-190 image-control predicate. The pull-request
 release preflight additionally pushes a candidate tag and unsigned BuildKit
 provenance to its ephemeral loopback registry. See
 [`../../docs/how-to/verify-a-published-image.md`](../../docs/how-to/verify-a-published-image.md)

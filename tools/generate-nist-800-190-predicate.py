@@ -79,8 +79,8 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
                 "status": "addressed",
                 "posture": (
                     "Fixable MEDIUM, HIGH, and CRITICAL OS/library findings fail closed through both "
-                    "Trivy and Grype, with OpenVEX default-deny for unfixed HIGH/CRITICAL "
-                    "findings and rpmdb-derived package evidence."
+                    "Trivy and Grype. Complete findings are emitted report-only as JSON and SARIF, "
+                    "with rpmdb-derived package evidence."
                 ),
                 "evidence": [
                     evidence(
@@ -95,10 +95,14 @@ def generate_predicate(args: argparse.Namespace) -> dict[str, Any]:
                     ),
                     evidence(
                         "workflow",
-                        ".github/workflows/publish-image.yaml#Run OpenVEX default-deny gates",
-                        "OpenVEX default-deny policy",
+                        ".github/workflows/publish-image.yaml#Generate complete vulnerability reports",
+                        "complete Trivy JSON and SARIF report-only evidence",
                     ),
-                    evidence("script", "tools/assert-vex.py", "default-deny OpenVEX assertion"),
+                    evidence(
+                        "workflow",
+                        ".github/workflows/publish-image.yaml#Generate complete vulnerability reports",
+                        "complete Grype JSON and SARIF report-only evidence",
+                    ),
                     evidence("script", "tools/assert-sbom-rpms.py", "rpmdb-backed SBOM package assertion"),
                 ],
             },

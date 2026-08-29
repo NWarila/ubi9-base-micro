@@ -54,7 +54,7 @@ source of truth for published digest verification.
 At a high level, verification requires:
 
 - `cosign verify` for the published digest signature.
-- `cosign verify-attestation` for SPDX, CycloneDX, OpenVEX when present, NIST
+- `cosign verify-attestation` for SPDX, CycloneDX, Python absence-proof OpenVEX, NIST
   SP 800-190, tailored STIG ARF, and SLSA provenance predicates.
 - `slsa-verifier verify-image` for the SLSA L3 provenance.
 - Exact certificate identities and the GitHub Actions OIDC issuer documented in

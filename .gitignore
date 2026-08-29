@@ -46,6 +46,7 @@
 !/.github/workflows/codeql.yml
 !/.github/workflows/nightly.yaml
 !/.github/workflows/publish-image.yaml
+!/.github/workflows/publish-python.yaml
 !/.github/workflows/python-ci.yaml
 !/.github/workflows/rpm-lock-refresh.yaml
 
@@ -109,14 +110,8 @@
 !/images/python/stig/*.xml
 !/images/python/stig/*.json
 !/images/python/vex/
-!/images/python/vex/.gitkeep
 !/images/python/vex/*.json
 !/images/python/vex/README.md
-
-!/vex/
-!/vex/.gitkeep
-!/vex/*.json
-!/vex/README.md
 
 !/stig/
 !/stig/*.json
