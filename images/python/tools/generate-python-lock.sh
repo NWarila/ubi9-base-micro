@@ -123,6 +123,8 @@ from retained_payload_trim import (  # noqa: E402
     apply_retained_payload_trim,
     assert_exact_rpm_verify_deviations,
     load_trim_contract,
+    materialize_trim_contract,
+    parse_rpm_file_records,
 )
 
 work = pathlib.Path("/work")
@@ -144,9 +146,18 @@ overlap = sorted(set(rows) & floor_names)
 if overlap:
     raise SystemExit(f"resolved closure overlaps the parent floor (CDN drift?): {overlap}")
 
-# This is the same exact retained-package payload trim consumed by the image
-# build. It is load-bearing: trim before deriving the protected ELF closure.
-trim_entries = load_trim_contract(work / "retained-payload-trim.json", os.environ["TARGETARCH"])
+# This is the same semantic retained-package payload trim consumed by the image
+# build. The installed candidate and rpmdb materialize its exact concrete paths;
+# trimming remains load-bearing before deriving the protected ELF closure.
+trim_contract = load_trim_contract(work / "retained-payload-trim.json", os.environ["TARGETARCH"])
+trim_entries = materialize_trim_contract(
+    pathlib.Path("/rootfs"),
+    trim_contract,
+    lambda path: rpm_root(["-qf", "--qf", "%{NAME}\n", path]).strip(),
+    lambda package: parse_rpm_file_records(
+        rpm_root(["-q", "--qf", "[%{FILENAMES}\t%{FILELINKTOS}\n]", package])
+    ),
+)
 apply_retained_payload_trim(
     pathlib.Path("/rootfs"),
     trim_entries,

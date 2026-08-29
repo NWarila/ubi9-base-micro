@@ -32,10 +32,12 @@ For `base-python`, remove the packaged `sqlite3` directory, `_sqlite3` extension
 and its build-id link from the retained `python3.12-libs` payload before
 computing the protected ELF closure. Then erase `sqlite-libs` as a
 `final_rpmdb=no` transaction package. The exact 20-path per-architecture
-deviation is committed in
-`images/python/rpm-lock/retained-payload-trim.json`; the
-`rpm -V --nodeps python3.12-libs` result must report exactly that set and no
-other retained-package payload deviation.
+deviation is materialized from the semantic policy committed in
+`images/python/rpm-lock/retained-payload-trim.json`. The native extension's
+single GNU build ID derives its canonical link, and installed RPM ownership,
+file/link metadata, and the link's actual resolved target must all agree before
+the trim. The `rpm -V --nodeps python3.12-libs` result must then report exactly
+the materialized set and no other retained-package payload deviation.
 
 The raw-scanner proof uses `python3.12-libs` as a policy selector, not as a
 hardcoded package identity. With required `--contract` and `--arch` inputs,

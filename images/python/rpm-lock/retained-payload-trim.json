@@ -1,20 +1,20 @@
 {
   "_comment": [
     "Exact package-owned payload intentionally removed from retained RPMs.",
-    "Every listed path must exist with the declared owner and kind before the trim, and rpm -V --nodeps",
-    "must report exactly these missing paths afterward. Any other retained-package payload deviation fails.",
-    "The sqlite3 Python package, its native extension, and the extension build-id link are removed together",
-    "so python3.12-libs remains useful without leaving a partial sqlite3 API or a dangling ELF dependency."
+    "Static paths and the semantic _sqlite3 target are policy; the target's GNU build-ID link is",
+    "materialized from the installed ELF and cross-checked against RPM metadata before deletion.",
+    "rpm -V --nodeps must report exactly the materialized missing paths afterward; any other",
+    "retained-package payload deviation fails."
   ],
-  "version": 1,
+  "version": 2,
   "architectures": {
-    "amd64": [
-      {
+    "amd64": {
+      "build_id_link": {
         "package": "python3.12-libs",
-        "path": "/usr/lib/.build-id/25/d179ab0964692e50f739c920f84b862d9d827f",
-        "kind": "symlink"
+        "target": "/usr/lib64/python3.12/lib-dynload/_sqlite3.cpython-312-x86_64-linux-gnu.so"
       },
-      {
+      "entries": [
+        {
         "package": "python3.12-libs",
         "path": "/usr/lib64/python3.12/lib-dynload/_sqlite3.cpython-312-x86_64-linux-gnu.so",
         "kind": "file"
@@ -109,14 +109,15 @@
         "path": "/usr/lib64/python3.12/sqlite3/dump.py",
         "kind": "file"
       }
-    ],
-    "arm64": [
-      {
+      ]
+    },
+    "arm64": {
+      "build_id_link": {
         "package": "python3.12-libs",
-        "path": "/usr/lib/.build-id/6c/76e7f5c98973eba1c3e222c03025e4ea7a8345",
-        "kind": "symlink"
+        "target": "/usr/lib64/python3.12/lib-dynload/_sqlite3.cpython-312-aarch64-linux-gnu.so"
       },
-      {
+      "entries": [
+        {
         "package": "python3.12-libs",
         "path": "/usr/lib64/python3.12/lib-dynload/_sqlite3.cpython-312-aarch64-linux-gnu.so",
         "kind": "file"
@@ -211,6 +212,7 @@
         "path": "/usr/lib64/python3.12/sqlite3/dump.py",
         "kind": "file"
       }
-    ]
+      ]
+    }
   }
 }

@@ -34,6 +34,8 @@ from retained_payload_trim import (  # type: ignore[import-not-found]
     apply_retained_payload_trim,
     assert_exact_rpm_verify_deviations,
     load_trim_contract,
+    materialize_trim_contract,
+    parse_rpm_file_records,
 )
 
 EXECUTABLE_DIRS: Final = ("usr/bin", "usr/sbin", "bin", "sbin")
@@ -668,7 +670,7 @@ def build(args: argparse.Namespace) -> None:
     shipped_nevras = [row["package"] for row in shipped_rows]
     shipped_names = [row["name"] for row in shipped_rows]
     exceptions = load_requires_exceptions(Path(args.requires_exceptions))
-    trim_entries = load_trim_contract(Path(args.retained_payload_trim), args.target_arch)
+    trim_contract = load_trim_contract(Path(args.retained_payload_trim), args.target_arch)
     source_date_epoch = int(headers.get("source_date_epoch", "0"))
     _require(source_date_epoch > 0, "lock header missing source_date_epoch")
 
@@ -684,6 +686,14 @@ def build(args: argparse.Namespace) -> None:
     print("step 3: pinned transaction", flush=True)
     run_transaction(rootfs, Path(args.rpm_dir), rows)
     print("step 4: exact retained-package payload trim", flush=True)
+    trim_entries = materialize_trim_contract(
+        rootfs,
+        trim_contract,
+        lambda path: _rpm_output(rootfs, ["-qf", "--qf", "%{NAME}\n", path]),
+        lambda package: parse_rpm_file_records(
+            _rpm_output(rootfs, ["-q", "--qf", "[%{FILENAMES}\t%{FILELINKTOS}\n]", package])
+        ),
+    )
     apply_retained_payload_trim(
         rootfs,
         trim_entries,

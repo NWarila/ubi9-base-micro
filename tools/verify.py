@@ -24,6 +24,7 @@ import tempfile
 from collections import Counter
 from collections.abc import Callable, Mapping
 from datetime import date
+from itertools import pairwise
 from pathlib import Path
 from typing import Any, cast
 
@@ -3479,6 +3480,98 @@ def rpm_lock_generator_errors(text: str) -> list[str]:
 def _move_after(text: str, moved: str, anchor: str) -> str:
     without = text.replace(moved, "", 1)
     return without.replace(anchor, f"{anchor}\n{moved}", 1)
+
+
+def check_python_trim_policy() -> None:
+    declaration = load_json_object("images/python/rpm-lock/retained-payload-trim.json")
+    require(declaration.get("version") == 2, "python trim declaration must use semantic contract version 2")
+    architectures = declaration.get("architectures")
+    require(isinstance(architectures, dict), "python trim declaration architectures must be an object")
+    assert isinstance(architectures, dict)
+    require(set(architectures) == {"amd64", "arm64"}, "python trim declaration must cover both architectures")
+    for arch, expected_suffix in (
+        ("amd64", "_sqlite3.cpython-312-x86_64-linux-gnu.so"),
+        ("arm64", "_sqlite3.cpython-312-aarch64-linux-gnu.so"),
+    ):
+        architecture = architectures.get(arch)
+        require(isinstance(architecture, dict), f"python trim {arch} declaration must be an object")
+        assert isinstance(architecture, dict)
+        require(
+            set(architecture) == {"build_id_link", "entries"},
+            f"python trim {arch} declaration must separate semantic and static entries",
+        )
+        build_id_link = architecture.get("build_id_link")
+        require(isinstance(build_id_link, dict), f"python trim {arch} build_id_link must be an object")
+        assert isinstance(build_id_link, dict)
+        require(
+            set(build_id_link) == {"package", "target"}
+            and build_id_link.get("package") == "python3.12-libs"
+            and str(build_id_link.get("target", "")).endswith(expected_suffix),
+            f"python trim {arch} must semantically target the architecture-specific _sqlite3 extension",
+        )
+    require(
+        "/usr/lib/.build-id/" not in json.dumps(declaration, sort_keys=True),
+        "python trim declaration must not pin a concrete build-ID path",
+    )
+
+    helper = read("images/python/tools/retained_payload_trim.py")
+    for marker in [
+        "def materialize_trim_contract(",
+        "def _gnu_build_id(",
+        "ELF_MACHINE",
+        "derived build-ID link target differs from RPM metadata",
+        "derived build-ID link target is dangling",
+        "build-ID link target escapes the rootfs",
+        "additional or ambiguous build-ID link",
+        "materialized trim contains duplicate concrete paths",
+    ]:
+        require(marker in helper, f"python trim materializer missing fail-closed marker: {marker}")
+    require("readelf" not in helper, "python trim materializer must remain standard-library-only for ELF parsing")
+
+    generator = read("images/python/tools/generate-python-lock.sh")
+    generator_markers = [
+        "microdnf install -y --installroot=/rootfs",
+        "trim_contract = load_trim_contract(",
+        "trim_entries = materialize_trim_contract(",
+        "apply_retained_payload_trim(",
+        "# Shipped derivation:",
+    ]
+    require(
+        '"[%{FILENAMES}\\t%{FILELINKTOS}\\n]"' in generator,
+        "python lock generator materialization must query RPM file/link records",
+    )
+    require(
+        all(generator.count(marker) == 1 for marker in generator_markers),
+        "python lock generator must contain one identifiable trim transaction/materialization sequence",
+    )
+    require(
+        all(generator.index(before) < generator.index(after) for before, after in pairwise(generator_markers)),
+        "python lock generator must materialize after the candidate transaction and apply before closure derivation",
+    )
+
+    builder = read("images/python/tools/build-python-rootfs.py")
+    build_start = builder.index("def build(args: argparse.Namespace) -> None:")
+    build_end = builder.index("\ndef self_test() -> None:", build_start)
+    build_body = builder[build_start:build_end]
+    builder_markers = [
+        "trim_contract = load_trim_contract(",
+        "run_transaction(rootfs, Path(args.rpm_dir), rows)",
+        "trim_entries = materialize_trim_contract(",
+        "apply_retained_payload_trim(",
+        "protected = protected_paths(rootfs)",
+    ]
+    require(
+        '"[%{FILENAMES}\\t%{FILELINKTOS}\\n]"' in build_body,
+        "python build materialization must query RPM file/link records",
+    )
+    require(
+        all(build_body.count(marker) == 1 for marker in builder_markers),
+        "python build helper must contain one identifiable trim transaction/materialization sequence",
+    )
+    require(
+        all(build_body.index(before) < build_body.index(after) for before, after in pairwise(builder_markers)),
+        "python build helper must materialize after run_transaction and apply before protected-path derivation",
+    )
 
 
 def check_rpm_lock_generator() -> None:
@@ -13336,6 +13429,7 @@ def main(argv: list[str] | None = None) -> int:
         check_acceptance_enforcement_claim_self_test,
         check_verify_docs_child_loop_self_test,
         check_dockerfile,
+        check_python_trim_policy,
         check_rpm_lock_generator,
         check_dockerfile_forbidden_scan_self_test,
         check_builder_toolchain_floor_self_test,
