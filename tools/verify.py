@@ -4387,7 +4387,7 @@ def check_build_hardening_matrix(text: str) -> None:
     for marker in [
         "    name: hardening (${{ matrix.arch }})",
         "    runs-on: ubuntu-24.04",
-        "    timeout-minutes: 45",
+        "    timeout-minutes: 15",
         "    needs: verify",
     ]:
         require(marker in hardening, f"build hardening job missing exact marker: {marker.strip()}")
@@ -4450,7 +4450,7 @@ def check_nightly_hardening_matrix(text: str) -> None:
     for marker in [
         "    name: hardening (${{ matrix.arch }})",
         "    runs-on: ubuntu-24.04",
-        "    timeout-minutes: 45",
+        "    timeout-minutes: 15",
         "    needs: verify",
     ]:
         require(marker in hardening, f"nightly hardening job missing exact marker: {marker.strip()}")
@@ -6103,8 +6103,8 @@ PYTHON_EVIDENCE_UPLOAD_PATHS = (
     "dist/python-evidence/attestations/*.json",
     "dist/python-evidence/base-python.${{ matrix.arch }}.secret-scan.json",
 )
-PYTHON_CI_WORKFLOW_SHA256 = "374f043913e9d7d3241125fb59c64fbf7cc3a786febff5e046a20156f10177ee"
-PYTHON_CI_WORKFLOW_BYTE_LENGTH = 30251
+PYTHON_CI_WORKFLOW_SHA256 = "f2ed53077a320da53a96a834233c9fccd7ece1a381f770b1df15c4330fd2f021"
+PYTHON_CI_WORKFLOW_BYTE_LENGTH = 30249
 PYTHON_CI_JOB_IDS = ("changes", "self-tests", "build", "reproducibility", "python-required")
 PYTHON_CI_TRIGGER_BLOCK = (
     "on:\n  pull_request:\n    branches: [main]\n  push:\n    branches: [main]\n  workflow_dispatch:\n\n"
@@ -6684,11 +6684,11 @@ def _python_ci_semantic_fixtures(workflow: str) -> list[tuple[str, str, str]]:
         (
             "job-level reusable workflow added",
             workflow.replace(
-                "    runs-on: ubuntu-24.04\n    timeout-minutes: 120\n",
+                "    runs-on: ubuntu-24.04\n    timeout-minutes: 45\n",
                 "    runs-on: ubuntu-24.04\n"
                 "    uses: example/repository/.github/workflows/reusable.yaml@"
                 "1111111111111111111111111111111111111111\n"
-                "    timeout-minutes: 120\n",
+                "    timeout-minutes: 45\n",
                 1,
             ),
             "python CI must not call a reusable workflow at job level",
@@ -6696,8 +6696,8 @@ def _python_ci_semantic_fixtures(workflow: str) -> list[tuple[str, str, str]]:
         (
             "job environment added",
             workflow.replace(
-                "    runs-on: ubuntu-24.04\n    timeout-minutes: 120\n",
-                "    runs-on: ubuntu-24.04\n    environment: preflight\n    timeout-minutes: 120\n",
+                "    runs-on: ubuntu-24.04\n    timeout-minutes: 45\n",
+                "    runs-on: ubuntu-24.04\n    environment: preflight\n    timeout-minutes: 45\n",
                 1,
             ),
             "python CI jobs must not declare an environment",
@@ -8007,7 +8007,7 @@ def python_evidence_errors(workflow: str, tailoring: str, ledger: str, gitignore
         "dist/tools/trivy convert",
         "*.sarif",
         "--validate",
-        "timeout-minutes: 120",
+        "timeout-minutes: 45",
     ):
         expect(marker in workflow, f"python CI missing evidence marker: {marker}")
     for pattern in PYTHON_EVIDENCE_SHARED_DEPENDENCIES:

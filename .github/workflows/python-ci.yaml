@@ -216,7 +216,7 @@ jobs:
   build:
     name: python build and gates
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 45
     needs: changes
     if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.python == 'true' }}
     permissions:
@@ -547,7 +547,7 @@ jobs:
   reproducibility:
     name: python reproducibility (${{ matrix.arch }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 60
     needs: changes
     if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.python == 'true' }}
     permissions:
