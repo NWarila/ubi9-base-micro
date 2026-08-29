@@ -1047,25 +1047,25 @@ jobs:
           compression-level: 0
 
       - name: Upload Trivy SARIF for base-python amd64
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           sarif_file: dist/python-publish/evidence/vuln/amd64/base-python.trivy.all.sarif
           category: base-python/trivy/amd64
 
       - name: Upload Grype SARIF for base-python amd64
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           sarif_file: dist/python-publish/evidence/vuln/amd64/base-python.grype.all.sarif
           category: base-python/grype/amd64
 
       - name: Upload Trivy SARIF for base-python arm64
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           sarif_file: dist/python-publish/evidence/vuln/arm64/base-python.trivy.all.sarif
           category: base-python/trivy/arm64
 
       - name: Upload Grype SARIF for base-python arm64
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           sarif_file: dist/python-publish/evidence/vuln/arm64/base-python.grype.all.sarif
           category: base-python/grype/arm64
