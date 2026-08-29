@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
 from typing import cast
@@ -61,6 +62,34 @@ def _fixture() -> tuple[tuple[rpmlock.LockRow, ...], tuple[str, ...], tuple[rpml
         for index, row in enumerate(rows)
     )
     return rows, final_nevras, direct
+
+
+def _fips_fixture() -> tuple[tuple[rpmlock.LockRow, ...], rpmlock.LockRow, rpmlock.DirectRpm]:
+    libraries = rpmlock.LockRow(
+        package="openssl-libs-1:3.5.5-6.el9_8.x86_64",
+        final_rpmdb="no",
+        name="openssl-libs",
+        epoch="1",
+        version="3.5.5",
+        release="6.el9_8",
+        arch="x86_64",
+        sha256_header="1" * 64,
+        sigmd5="2" * 32,
+    )
+    openssl = replace(
+        cast(rpmlock.LockRow, generator.openssl_row_for_runtime((libraries,), arch="amd64")),
+        sha256_header="3" * 64,
+        sigmd5="4" * 32,
+    )
+    direct = rpmlock.DirectRpm(
+        package=openssl.package,
+        url=(
+            "https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/"
+            f"baseos/os/Packages/o/{rpmlock.rpm_filename(openssl)}"
+        ),
+        sha256="5" * 64,
+    )
+    return (libraries,), openssl, direct
 
 
 class _ExactlyOnce:
@@ -204,6 +233,92 @@ def test_candidate_derivation_is_baseos_then_appstream() -> None:
     assert "/x86_64/baseos/os/Packages/s/" in candidates[0]
     assert "/x86_64/appstream/os/Packages/s/" in candidates[1]
     assert candidates[0].endswith(rpmlock.rpm_filename(row))
+
+
+def test_fips_candidate_is_derived_from_unique_openssl_libraries_identity() -> None:
+    runtime_rows, openssl, _ = _fips_fixture()
+
+    package, baseos, appstream = cast(
+        tuple[str, str, str],
+        generator.fips_candidate(
+            runtime_rows,
+            arch="amd64",
+            base_url="https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9",
+        ),
+    )
+
+    assert package == "openssl-1:3.5.5-6.el9_8.x86_64"
+    assert baseos.endswith(rpmlock.rpm_filename(openssl))
+    assert "/x86_64/baseos/" in baseos
+    assert "/x86_64/appstream/" in appstream
+
+
+def test_render_fips_lock_records_queried_metadata_and_direct_pin() -> None:
+    runtime_rows, openssl, direct = _fips_fixture()
+
+    rendered = cast(
+        bytes,
+        generator.render_fips_lock(
+            arch="amd64",
+            source_date_epoch="1704067200",
+            runtime_rows=runtime_rows,
+            fips_rows=(openssl,),
+            direct_results=(direct,),
+        ),
+    )
+
+    assert (
+        rendered
+        == (
+            f"# arch: amd64\n"
+            f"# source_date_epoch: 1704067200\n"
+            f"# columns: {rpmlock.COLUMNS}\n"
+            f"# direct_rpm: {direct.package}|{direct.url}|{direct.sha256}\n"
+            f"{openssl.package}|no|openssl|1|3.5.5|6.el9_8|x86_64|{'3' * 64}|{'4' * 32}\n"
+        ).encode()
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("missing_libraries", "exactly one openssl-libs row, got 0"),
+        ("duplicate_libraries", "exactly one openssl-libs row, got 2"),
+        ("wrong_arch", "wrong RPM architecture"),
+        ("cli_mismatch", "does not match the resolved openssl-libs identity"),
+        ("duplicate_cli", "exactly one row, got 2"),
+        ("orphan_direct", "package does not match captured openssl"),
+    ],
+)
+def test_render_fips_lock_rejects_identity_and_cardinality_mutations(mutation: str, message: str) -> None:
+    runtime_rows, openssl, direct = _fips_fixture()
+    active_runtime: tuple[rpmlock.LockRow, ...] = runtime_rows
+    active_fips: tuple[rpmlock.LockRow, ...] = (openssl,)
+    active_direct: tuple[rpmlock.DirectRpm, ...] = (direct,)
+    if mutation == "missing_libraries":
+        active_runtime = ()
+    elif mutation == "duplicate_libraries":
+        active_runtime = (*runtime_rows, runtime_rows[0])
+    elif mutation == "wrong_arch":
+        wrong_arch = replace(
+            runtime_rows[0], arch="aarch64", package=runtime_rows[0].package.replace("x86_64", "aarch64")
+        )
+        active_runtime = (wrong_arch,)
+    elif mutation == "cli_mismatch":
+        active_fips = (replace(openssl, release="7.el9_8", package=openssl.package.replace("6.el9_8", "7.el9_8")),)
+    elif mutation == "duplicate_cli":
+        active_fips = (openssl, openssl)
+    elif mutation == "orphan_direct":
+        active_direct = (replace(direct, package="openssl-1:3.5.5-7.el9_8.x86_64"),)
+
+    with pytest.raises(generator.GenerationError, match=message):
+        generator.render_fips_lock(
+            arch="amd64",
+            source_date_epoch="1704067200",
+            runtime_rows=active_runtime,
+            fips_rows=active_fips,
+            direct_results=active_direct,
+        )
 
 
 @pytest.mark.parametrize(

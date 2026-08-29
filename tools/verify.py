@@ -3250,9 +3250,9 @@ def rpm_lock_generator_errors(text: str) -> list[str]:
         if not condition:
             errors.append(message)
 
-    if "write_capture_dockerfile() {" not in text or "\nvalidate_lockfile()" not in text:
+    if "write_capture_dockerfile() {" not in text or "\nvalidate_runtime_lockfile()" not in text:
         return ["RPM lock generator capture function boundaries are missing"]
-    capture = text.split("write_capture_dockerfile() {", 1)[1].split("\nvalidate_lockfile()", 1)[0]
+    capture = text.split("write_capture_dockerfile() {", 1)[1].split("\nvalidate_runtime_lockfile()", 1)[0]
     if "generate_one() {" not in text or "\nrun_check()" not in text:
         return ["RPM lock generator staging function boundaries are missing"]
     staging = text.split("generate_one() {", 1)[1].split("\nrun_check()", 1)[0]
@@ -3282,26 +3282,62 @@ def rpm_lock_generator_errors(text: str) -> list[str]:
         '  --source-date-epoch "${SOURCE_DATE_EPOCH}" \\\n'
         '  --output "/out/runtime.${TARGETARCH}.txt"'
     )
+    fips_candidate_invocation = (
+        "python3.12 /tmp/generate-runtime-lock.py fips-candidate \\\n"
+        "  --full-rows /tmp/runtime.full.tsv \\\n"
+        '  --arch "${TARGETARCH}" \\\n'
+        '  --base-url "${OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}" \\\n'
+        "  > /tmp/fips.candidates.tsv"
+    )
+    fips_metadata_query = (
+        "rpm -qp \\\n"
+        "  --qf '%{NEVRA}|%{NAME}|%{EPOCHNUM}|%{VERSION}|%{RELEASE}|%{ARCH}|%{SHA256HEADER}|%{SIGMD5}\\n' \\\n"
+        '  "${fetched_direct_rpm_path}" > /tmp/fips.full.tsv'
+    )
+    fips_render_invocation = (
+        "python3.12 /tmp/generate-runtime-lock.py render-fips \\\n"
+        "  --full-rows /tmp/runtime.full.tsv \\\n"
+        "  --fips-rows /tmp/fips.full.tsv \\\n"
+        "  --direct-results /tmp/fips.direct.tsv \\\n"
+        '  --arch "${TARGETARCH}" \\\n'
+        '  --source-date-epoch "${SOURCE_DATE_EPOCH}" \\\n'
+        '  --output "/out/fips-verify.${TARGETARCH}.txt"'
+    )
 
     for marker in [
         pre_strip_snapshot,
         strip_invocation,
         post_strip_snapshot,
         floor_invocation,
+        fips_candidate_invocation,
+        fips_metadata_query,
         render_invocation,
+        fips_render_invocation,
     ]:
         expect(marker in capture, f"RPM lock generator missing capture-stage marker: {marker}")
     expect(text.count(strip_invocation) == 1, "RPM lock generator must invoke strip-packages exactly once")
 
-    ordering_markers = [pre_strip_snapshot, strip_invocation, post_strip_snapshot, floor_invocation, render_invocation]
+    ordering_markers = [
+        pre_strip_snapshot,
+        strip_invocation,
+        post_strip_snapshot,
+        floor_invocation,
+        fips_candidate_invocation,
+        fips_metadata_query,
+        render_invocation,
+        fips_render_invocation,
+    ]
     if all(marker in capture for marker in ordering_markers):
         expect(
             capture.index(pre_strip_snapshot)
             < capture.index(strip_invocation)
             < capture.index(post_strip_snapshot)
             < capture.index(floor_invocation)
-            < capture.index(render_invocation),
-            "RPM lock generator must preserve pre-snapshot, strip, post-snapshot, floor, render ordering",
+            < capture.index(fips_candidate_invocation)
+            < capture.index(fips_metadata_query)
+            < capture.index(render_invocation)
+            < capture.index(fips_render_invocation),
+            "RPM lock generator must capture, verify, and render the atomic runtime/FIPS pair in order",
         )
 
     for marker in [
@@ -3341,6 +3377,25 @@ def rpm_lock_generator_errors(text: str) -> list[str]:
     ]
     for marker in staging_sources:
         expect(marker in staging, f"RPM lock generator missing staged source path: {marker}")
+    pair_copy = (
+        "  cp \\\n"
+        '    "${tmpdir}/out/runtime.${platform_arch}.txt" \\\n'
+        '    "${tmpdir}/out/fips-verify.${platform_arch}.txt" \\\n'
+        '    "${output_dir}/"'
+    )
+    expect(pair_copy in staging, "RPM lock generator must publish the validated runtime/FIPS pair together")
+    for marker in [
+        'validate_runtime_lockfile "${tmpdir}/out/runtime.${platform_arch}.txt" "${platform_arch}"',
+        'validate_fips_lockfile "${tmpdir}/out/fips-verify.${platform_arch}.txt" "${platform_arch}"',
+        '"${tmpdir}/out/runtime.${platform_arch}.txt" \\\n    "${tmpdir}/out/fips-verify.${platform_arch}.txt"',
+        '"${output_dir}/runtime.${platform_arch}.txt"',
+        '"${output_dir}/fips-verify.${platform_arch}.txt"',
+        "for lock_kind in runtime fips-verify; do",
+        '"${repo_root}/rpm-lock/${lock_kind}.${platform_arch}.txt"',
+        '"${generated_dir}/${lock_kind}.${platform_arch}.txt"',
+        'validate_lock_pair \\\n      "${repo_root}/rpm-lock/runtime.${platform_arch}.txt"',
+    ]:
+        expect(marker in text, f"RPM lock generator missing atomic output/check marker: {marker}")
 
     builder_fetch = "bash /tmp/fetch-builder-rpms.sh"
     builder_install = 'rpm -Uvh --oldpackage --replacepkgs --excludedocs "${builder_rpm_paths[@]}"'
@@ -3363,10 +3418,14 @@ def rpm_lock_generator_errors(text: str) -> list[str]:
     for marker in [
         "python3.12 /tmp/generate-runtime-lock.py package-specs > /tmp/runtime-package-specs",
         "python3.12 /tmp/generate-runtime-lock.py candidates",
-        "python3.12 /tmp/generate-runtime-lock.py signature-output --output /tmp/runtime.signature-output",
+        "python3.12 /tmp/generate-runtime-lock.py fips-candidate",
+        "python3.12 /tmp/generate-runtime-lock.py render-fips",
+        'python3.12 /tmp/generate-runtime-lock.py signature-output --output "${signature_output}"',
         "curl -fL --retry 3 --retry-delay 2 --proto '=https' --tlsv1.2",
         'actual_sha="$(sha256sum "${tmp}" | awk \'{print $1}\')"',
-        'rpm -K "${path}" | tee /tmp/runtime.signature-output',
+        'rpm -K "${path}" | tee "${signature_output}"',
+        'printf \'%s|%s|%s\\n\' "${package}" "${url}" "${actual_sha}" >> "${results_file}"',
+        'test -s "${fetched_direct_rpm_path}"',
     ]:
         expect(marker in capture, f"RPM lock generator missing fail-closed helper/orchestration marker: {marker}")
 
@@ -3391,22 +3450,54 @@ def check_rpm_lock_generator() -> None:
     strip = "python3.12 /tmp/build-runtime-rootfs.py strip-packages --rootfs /rootfs"
     post_snapshot = "rpm --root=/rootfs -qa --qf '%{NEVRA}\\n' | LC_ALL=C sort > /tmp/runtime.final.nevras"
     render = "python3.12 /tmp/generate-runtime-lock.py render"
+    render_fips = "python3.12 /tmp/generate-runtime-lock.py render-fips"
+    fips_candidate = "python3.12 /tmp/generate-runtime-lock.py fips-candidate"
+    fips_query = (
+        "rpm -qp \\\n  --qf '%{NEVRA}|%{NAME}|%{EPOCHNUM}|%{VERSION}|%{RELEASE}|%{ARCH}|%{SHA256HEADER}|%{SIGMD5}\\n'"
+    )
     mutations: list[tuple[str, str]] = [
         ("delete pre-strip snapshot", text.replace(pre_snapshot, "", 1)),
         ("move pre-strip snapshot below strip", _move_after(text, pre_snapshot, strip)),
         ("delete post-strip snapshot", text.replace(post_snapshot, "", 1)),
         ("move post-strip snapshot above strip", _move_after(text, post_snapshot, pre_snapshot)),
         ("move rendering above post-strip snapshot", _move_after(text, render, strip)),
+        ("delete FIPS candidate derivation", text.replace(fips_candidate, "true", 1)),
+        ("delete FIPS RPM metadata query", text.replace(fips_query, "true", 1)),
+        ("delete FIPS companion render", text.replace(render_fips, "true", 1)),
         (
             "swap render full/final input",
             text.replace("--full-rows /tmp/runtime.full.tsv", "--full-rows /tmp/runtime.final.nevras", 2),
         ),
         ("remove render direct input", text.replace("  --direct-results /tmp/runtime.direct.tsv \\\n", "", 1)),
+        ("remove FIPS render direct input", text.replace("  --direct-results /tmp/fips.direct.tsv \\\n", "", 1)),
         (
             "weaken signature checker",
             text.replace(
-                "python3.12 /tmp/generate-runtime-lock.py signature-output --output /tmp/runtime.signature-output",
+                'python3.12 /tmp/generate-runtime-lock.py signature-output --output "${signature_output}"',
                 "true",
+                1,
+            ),
+        ),
+        (
+            "omit FIPS companion from checks",
+            text.replace("for lock_kind in runtime fips-verify; do", "for lock_kind in runtime; do", 1),
+        ),
+        (
+            "omit FIPS companion from publication",
+            text.replace(
+                "  cp \\\n"
+                '    "${tmpdir}/out/runtime.${platform_arch}.txt" \\\n'
+                '    "${tmpdir}/out/fips-verify.${platform_arch}.txt" \\\n'
+                '    "${output_dir}/"',
+                '  cp "${tmpdir}/out/runtime.${platform_arch}.txt" "${output_dir}/"',
+                1,
+            ),
+        ),
+        (
+            "remove generated pair validation",
+            text.replace(
+                '  validate_fips_lockfile "${tmpdir}/out/fips-verify.${platform_arch}.txt" "${platform_arch}"',
+                "  true",
                 1,
             ),
         ),
@@ -3579,11 +3670,18 @@ def check_dockerfile() -> None:
         'bash /tmp/fetch-runtime-rpms.sh --targetarch "${TARGETARCH}" '
         '--lockfile "${fips_lockfile}" --dest /tmp/fips-rpms'
     )
+    fips_selector = "python3.12 /tmp/rpmlock.py fips-rpm-filenames"
+    fips_selector_capture = (
+        '--openssl-fips-provider-so-rpm-sha256-aarch64 "${OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64}" \\\n'
+        '      > "${fips_names_tmp}";'
+    )
+    fips_selector_mapfile = 'mapfile -t fips_rpm_names < "${fips_names_tmp}"'
+    fips_selector_count = 'test "${#fips_rpm_names[@]}" -eq 3'
     fips_locked_install = (
         "rpm -Uvh --oldpackage --replacepkgs \\\n"
-        '      "/tmp/fips-rpms/openssl-3.5.5-5.el9_8.${rpm_arch}.rpm" \\\n'
-        '      "/tmp/runtime-rpms/openssl-libs-3.5.5-5.el9_8.${rpm_arch}.rpm" \\\n'
-        '      "/tmp/runtime-rpms/crypto-policies-20260224-1.gitea0f072.el9_8.noarch.rpm" \\\n'
+        '      "${openssl_cli_rpm}" \\\n'
+        '      "${openssl_libs_rpm}" \\\n'
+        '      "${crypto_policies_rpm}" \\\n'
         '      "/tmp/runtime-rpms/openssl-fips-provider-${fips_provider_nvr}.${rpm_arch}.rpm" \\\n'
         '      "/tmp/runtime-rpms/${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}.rpm";'
     )
@@ -3596,6 +3694,7 @@ def check_dockerfile() -> None:
             "COPY rpm-lock/fips-verify.amd64.txt rpm-lock/fips-verify.arm64.txt /tmp/rpm-lock/",
             "COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh",
             "COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh",
+            "COPY tools/rpmlock.py /tmp/rpmlock.py",
             "COPY tools/verify-fips-provider.py /tmp/verify-fips-provider.py",
             "# The builder loop below bootstraps python, so it cannot use rpmlock.py (ADR-0014).",
             'fips_lockfile="/tmp/rpm-lock/fips-verify.amd64.txt"',
@@ -3607,6 +3706,17 @@ def check_dockerfile() -> None:
             fips_builder_install,
             fips_python_sanity,
             fips_builder_cleanup,
+            fips_selector,
+            '--fips-lockfile "${fips_lockfile}"',
+            '--runtime-lockfile "${runtime_lockfile}"',
+            '--arch "${TARGETARCH}"',
+            '--source-date-epoch "${SOURCE_DATE_EPOCH}"',
+            fips_selector_capture,
+            fips_selector_mapfile,
+            fips_selector_count,
+            'openssl_cli_rpm="/tmp/fips-rpms/${fips_rpm_names[0]}"',
+            'openssl_libs_rpm="/tmp/runtime-rpms/${fips_rpm_names[1]}"',
+            'crypto_policies_rpm="/tmp/runtime-rpms/${fips_rpm_names[2]}"',
             fips_runtime_fetch,
             fips_lock_fetch,
             fips_locked_install,
@@ -3635,6 +3745,16 @@ def check_dockerfile() -> None:
             "fips-verify must fetch the FIPS verification lock exactly once",
         )
         require(
+            stage.count(fips_selector) == 1,
+            "fips-verify must select the three identity-derived filenames exactly once",
+        )
+        require(
+            "openssl-3.5.5" not in stage
+            and "openssl-libs-3.5.5" not in stage
+            and "crypto-policies-20260224" not in stage,
+            "fips-verify retains literal observed-version RPM paths",
+        )
+        require(
             stage.count("rpm -Uvh --oldpackage --replacepkgs \\\n") == 1 and stage.count(fips_locked_install) == 1,
             "fips-verify must install exactly one five-RPM pinned OpenSSL closure transaction",
         )
@@ -3645,12 +3765,16 @@ def check_dockerfile() -> None:
             < stage.index(fips_builder_install)
             < stage.index(fips_python_sanity)
             < stage.index(fips_builder_cleanup)
+            < stage.index(fips_selector)
+            < stage.index(fips_selector_capture)
+            < stage.index(fips_selector_mapfile)
+            < stage.index(fips_selector_count)
             < stage.index(fips_runtime_fetch)
             < stage.index(fips_lock_fetch)
             < stage.index(fips_locked_install)
             < stage.index(fips_microdnf_clean)
             < stage.index(fips_verifier_invocation),
-            "fips-verify must bootstrap Python before fetching and installing the pinned closure, then verify it",
+            "fips-verify must bootstrap Python, fail closed on lock identities, fetch/install once, then verify",
         )
         require(
             stage.count(fips_verifier_invocation) == 1,
@@ -3682,8 +3806,24 @@ def check_dockerfile() -> None:
         ),
         ("FIPS lock fetch deletion", fips_verify.replace(fips_lock_fetch, "true", 1)),
         (
-            "pinned OpenSSL CLI path deletion",
-            fips_verify.replace('      "/tmp/fips-rpms/openssl-3.5.5-5.el9_8.${rpm_arch}.rpm" \\\n', "", 1),
+            "identity selector deletion",
+            fips_verify.replace(fips_selector, "true", 1),
+        ),
+        (
+            "runtime selector lock mismatch",
+            fips_verify.replace(
+                '--runtime-lockfile "${runtime_lockfile}"',
+                '--runtime-lockfile "${fips_lockfile}"',
+                1,
+            ),
+        ),
+        (
+            "identity cardinality deletion",
+            fips_verify.replace(fips_selector_count, "true", 1),
+        ),
+        (
+            "derived crypto-policies path deletion",
+            fips_verify.replace('      "${crypto_policies_rpm}" \\\n', "", 1),
         ),
         (
             "live microdnf reintroduction",
@@ -3701,6 +3841,18 @@ def check_dockerfile() -> None:
             continue
         raise VerifyError(f"fips-verify mutation was not rejected: {label}")
     print(f"FIPS-verify mutation probes: {len(fips_mutations)}/{len(fips_mutations)} rejected")
+
+    rpmlock_text = read("tools/rpmlock.py")
+    for marker in [
+        'openssl = _unique_named_row(fips_lockfile, "openssl")',
+        'openssl_libs = _unique_named_row(runtime_lockfile, "openssl-libs")',
+        'crypto_policies = _unique_named_row(runtime_lockfile, "crypto-policies")',
+        "cli_evr == libraries_evr",
+        "rpm_filename(openssl)",
+        "rpm_filename(openssl_libs)",
+        "rpm_filename(crypto_policies)",
+    ]:
+        require(marker in rpmlock_text, f"rpmlock FIPS identity selector missing marker: {marker}")
 
     rpm_rootfs = text.split("FROM ${UBI_MINIMAL_IMAGE} AS rpm-rootfs", 1)[1].split(
         "FROM ${UBI_MINIMAL_IMAGE} AS dev-rootfs", 1
@@ -3946,6 +4098,10 @@ def rpm_lock_refresh_errors(text: str) -> list[str]:
     refresh_condition = (
         "if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.verify_only)"
     )
+    lock_paths = (
+        "rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt "
+        "rpm-lock/fips-verify.amd64.txt rpm-lock/fips-verify.arm64.txt"
+    )
 
     for marker in [
         "workflow_dispatch:",
@@ -3978,9 +4134,9 @@ def rpm_lock_refresh_errors(text: str) -> list[str]:
         "bash tools/generate-rpm-lock.sh --self-test",
         "bash tools/generate-rpm-lock.sh --arch amd64",
         "bash tools/generate-rpm-lock.sh --arch arm64",
-        "git diff --quiet -- rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt",
-        "git diff -- rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt",
-        "RPM lockfiles already match the current UBI repositories.",
+        f"git diff --quiet -- {lock_paths}",
+        f"git diff -- {lock_paths}",
+        "Runtime/FIPS RPM lock pairs already match the current UBI repositories.",
         "exit 1",
     ]
     for marker in required_verify_markers:
@@ -3992,6 +4148,13 @@ def rpm_lock_refresh_errors(text: str) -> list[str]:
             < verify_job.index("exit 1"),
             "verify-only unified diff and non-zero exit ordering is invalid",
         )
+    for marker in [
+        f"git diff --quiet -- {lock_paths}",
+        f"git diff -- {lock_paths}",
+        f"git add {lock_paths}",
+        '"Refresh runtime and FIPS RPM lockfiles"',
+    ]:
+        expect(marker in refresh_job, f"refresh job missing atomic runtime/FIPS marker: {marker}")
     return errors
 
 
@@ -4041,8 +4204,22 @@ def check_rpm_lock_refresh_workflow(text: str) -> None:
         (
             "remove unified diff",
             text.replace(
-                "            git diff -- rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt\n",
+                (
+                    "            git diff -- rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt "
+                    "rpm-lock/fips-verify.amd64.txt rpm-lock/fips-verify.arm64.txt\n"
+                ),
                 "",
+                1,
+            ),
+        ),
+        (
+            "omit FIPS companion from refresh staging",
+            text.replace(
+                (
+                    "git add rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt "
+                    "rpm-lock/fips-verify.amd64.txt rpm-lock/fips-verify.arm64.txt"
+                ),
+                "git add rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt",
                 1,
             ),
         ),
@@ -4821,13 +4998,24 @@ def check_workflow() -> None:
         "bash tools/generate-rpm-lock.sh --self-test",
         "bash tools/generate-rpm-lock.sh --arch amd64",
         "bash tools/generate-rpm-lock.sh --arch arm64",
-        "git diff --quiet -- rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt",
+        (
+            "git diff --quiet -- rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt "
+            "rpm-lock/fips-verify.amd64.txt rpm-lock/fips-verify.arm64.txt"
+        ),
+        (
+            "git diff -- rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt "
+            "rpm-lock/fips-verify.amd64.txt rpm-lock/fips-verify.arm64.txt"
+        ),
+        (
+            "git add rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt "
+            "rpm-lock/fips-verify.amd64.txt rpm-lock/fips-verify.arm64.txt"
+        ),
         "github-actions[bot]",
         "gh pr list",
         "gh pr create",
         "--base main",
         '--head "${branch}"',
-        "Refresh runtime RPM lockfiles",
+        "Refresh runtime and FIPS RPM lockfiles",
         "build and\n          hardening gates",
         "byte-for-byte reproducibility gates",
         "fixable-CVE gates",
@@ -12277,7 +12465,9 @@ def check_docs() -> None:
         "tools/generate-rpm-lock.sh --check",
         ".github/workflows/rpm-lock-refresh.yaml",
         "nightly sentinel detects",
-        "Refresh runtime RPM lockfiles",
+        "Refresh runtime and FIPS RPM lockfiles",
+        "rpm-lock/fips-verify.<arch>.txt",
+        "unique resolved `openssl-libs` row",
         "direct CDN RPM URLs",
         "rpm -Uvh",
         "Vulnerability Database Freshness",

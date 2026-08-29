@@ -23,9 +23,13 @@ Regenerate the lockfiles when a controlled bump is required:
 bash tools/generate-rpm-lock.sh
 ```
 
-Review changes to `rpm-lock/runtime.amd64.txt` and
-`rpm-lock/runtime.arm64.txt`. Each runtime package row must retain exact NEVRA,
-direct-CDN URL, whole-RPM SHA-256, `%{SHA256HEADER}`, and `%{SIGMD5}` values.
+Review the two atomic pairs: `rpm-lock/runtime.amd64.txt` with
+`rpm-lock/fips-verify.amd64.txt`, and `rpm-lock/runtime.arm64.txt` with
+`rpm-lock/fips-verify.arm64.txt`. Each row must retain exact NEVRA, direct-CDN
+URL, whole-RPM SHA-256, `%{SHA256HEADER}`, and `%{SIGMD5}` values. The generated
+one-row FIPS lock must pin `openssl` at exactly the epoch, version, release, and
+RPM architecture of the runtime lock's unique `openssl-libs` row; never stage
+or commit only one side of a pair.
 
 Run the repository verifier:
 

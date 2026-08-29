@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -76,6 +77,26 @@ def _rpm_filenames_command(path: Path, arch: str, policy: rpmlock.LockPolicy) ->
         "rpm-filenames",
         "--lockfile",
         str(path),
+        "--arch",
+        arch,
+        *_policy_cli_args(policy),
+    ]
+
+
+def _fips_rpm_filenames_command(
+    fips_path: Path,
+    runtime_path: Path,
+    arch: str,
+    policy: rpmlock.LockPolicy,
+) -> list[str]:
+    return [
+        sys.executable,
+        str(ROOT / "tools" / "rpmlock.py"),
+        "fips-rpm-filenames",
+        "--fips-lockfile",
+        str(fips_path),
+        "--runtime-lockfile",
+        str(runtime_path),
         "--arch",
         arch,
         *_policy_cli_args(policy),
@@ -210,6 +231,110 @@ def test_rpm_filename_derivation_omits_epoch() -> None:
     assert row.epoch == "1"
     assert row.package.startswith("findutils-1:")
     assert rpmlock.rpm_filename(row) == "findutils-4.8.0-7.el9.x86_64.rpm"
+
+
+@pytest.mark.parametrize(
+    ("arch", "runtime_path", "fips_path"),
+    [
+        ("amd64", AMD64_LOCK, FIPS_AMD64_LOCK),
+        ("arm64", ARM64_LOCK, FIPS_ARM64_LOCK),
+    ],
+)
+def test_cli_fips_rpm_filenames_selects_exact_identities(
+    arch: str,
+    runtime_path: Path,
+    fips_path: Path,
+) -> None:
+    result = subprocess.run(
+        _fips_rpm_filenames_command(fips_path, runtime_path, arch, rpmlock.LockPolicy.from_repo()),
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    fips_lockfile = rpmlock.parse(fips_path)
+    runtime_lockfile = rpmlock.parse(runtime_path)
+    expected_rows = (
+        next(row for row in fips_lockfile.rows if row.name == "openssl"),
+        next(row for row in runtime_lockfile.rows if row.name == "openssl-libs"),
+        next(row for row in runtime_lockfile.rows if row.name == "crypto-policies"),
+    )
+    assert result.stdout.splitlines() == [rpmlock.rpm_filename(row) for row in expected_rows]
+
+
+def test_fips_filename_selection_rejects_missing_and_duplicate_identities() -> None:
+    fips_lockfile = rpmlock.parse(FIPS_AMD64_LOCK)
+    runtime_lockfile = rpmlock.parse(AMD64_LOCK)
+    crypto = next(row for row in runtime_lockfile.rows if row.name == "crypto-policies")
+    without_crypto = replace(runtime_lockfile, rows=tuple(row for row in runtime_lockfile.rows if row is not crypto))
+    duplicate_crypto = replace(runtime_lockfile, rows=(*runtime_lockfile.rows, crypto))
+
+    with pytest.raises(rpmlock.LockError, match="exactly one crypto-policies row, got 0"):
+        rpmlock.fips_verification_filenames(fips_lockfile, without_crypto)
+    with pytest.raises(rpmlock.LockError, match="exactly one crypto-policies row, got 2"):
+        rpmlock.fips_verification_filenames(fips_lockfile, duplicate_crypto)
+
+
+def test_crypto_policies_filename_is_derived_from_fixture_identity() -> None:
+    fips_lockfile = rpmlock.parse(FIPS_AMD64_LOCK)
+    runtime_lockfile = rpmlock.parse(AMD64_LOCK)
+    crypto = next(row for row in runtime_lockfile.rows if row.name == "crypto-policies")
+    changed_crypto = replace(
+        crypto,
+        package="crypto-policies-20991231-2.example.el9.noarch",
+        version="20991231",
+        release="2.example.el9",
+    )
+    fixture = replace(
+        runtime_lockfile,
+        rows=tuple(changed_crypto if row is crypto else row for row in runtime_lockfile.rows),
+    )
+
+    assert rpmlock.fips_verification_filenames(fips_lockfile, fixture)[2] == (
+        "crypto-policies-20991231-2.example.el9.noarch.rpm"
+    )
+
+
+def test_cli_fips_filename_selection_rejects_cross_lock_evr_mismatch(tmp_path: Path) -> None:
+    fips_path = tmp_path / "fips-verify.amd64.txt"
+    fips_path.write_text(
+        _fips_lock_text().replace("5.el9_8", "4.el9_8"),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    result = subprocess.run(
+        _fips_rpm_filenames_command(fips_path, AMD64_LOCK, "amd64", rpmlock.LockPolicy.from_repo()),
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "openssl EVR does not match" in result.stderr
+
+
+def test_cli_fips_filename_selection_rejects_wrong_arch(tmp_path: Path) -> None:
+    fips_path = tmp_path / "fips-verify.amd64.txt"
+    fips_path.write_text(
+        _fips_lock_text().replace("x86_64", "aarch64"),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    result = subprocess.run(
+        _fips_rpm_filenames_command(fips_path, AMD64_LOCK, "amd64", rpmlock.LockPolicy.from_repo()),
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "invalid arch=aarch64" in result.stderr
 
 
 @pytest.mark.parametrize(("arch", "path"), [("amd64", AMD64_LOCK), ("arm64", ARM64_LOCK)])
