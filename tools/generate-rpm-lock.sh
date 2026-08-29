@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Purpose: Regenerate / --check / --self-test rpm-lock/runtime.<arch>.txt via a capture Dockerfile (install runtime
-# set, ldd-protected strip of shells/pkg-managers/unneeded deps, resolve direct CDN URLs) plus host-side
-# lockfile-grammar validation against committed files and Dockerfile ARG pins.
+# Purpose: Regenerate / --check / --self-test atomic runtime.<arch>.txt + fips-verify.<arch>.txt pairs via a capture
+# Dockerfile (install runtime set, strip shells/pkg-managers/unneeded deps, resolve direct CDN URLs) plus host-side
+# lockfile-grammar and cross-lock validation against committed files and Dockerfile ARG pins.
 # Role: tooling
 # Python-convertible: conforming boundary — Python owns parse/decide/render logic; shell retains buildx, package/fetch
 # command orchestration, frozen snapshots, and file plumbing.
@@ -18,7 +18,7 @@ usage: generate-rpm-lock.sh [--arch amd64|arm64|all] [--output-dir DIR]
        generate-rpm-lock.sh --check [--arch amd64|arm64|all]
        generate-rpm-lock.sh --self-test
 
-Regenerates rpm-lock/runtime.<arch>.txt from the current UBI 9 repositories.
+Regenerates paired rpm-lock/runtime.<arch>.txt and fips-verify.<arch>.txt files from current UBI 9 repositories.
 EOF
 }
 
@@ -182,6 +182,7 @@ python3.12 /tmp/generate-runtime-lock.py validate-floor \
 rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
 mkdir -p /tmp/direct-runtime-rpms
 : > /tmp/runtime.direct.tsv
+: > /tmp/fips.direct.tsv
 python3.12 /tmp/generate-runtime-lock.py candidates \
   --full-rows /tmp/runtime.full.tsv \
   --arch "${TARGETARCH}" \
@@ -192,6 +193,8 @@ fetch_direct_rpm_for_row() {
   local package="$1"
   local baseos_url="$2"
   local appstream_url="$3"
+  local results_file="$4"
+  local signature_output="$5"
   local url filename tmp path actual_sha
 
   for url in "${baseos_url}" "${appstream_url}"; do
@@ -201,9 +204,10 @@ fetch_direct_rpm_for_row() {
       actual_sha="$(sha256sum "${tmp}" | awk '{print $1}')"
       path="/tmp/direct-runtime-rpms/${filename}"
       mv "${tmp}" "${path}"
-      rpm -K "${path}" | tee /tmp/runtime.signature-output
-      python3.12 /tmp/generate-runtime-lock.py signature-output --output /tmp/runtime.signature-output
-      printf '%s|%s|%s\n' "${package}" "${url}" "${actual_sha}" >> /tmp/runtime.direct.tsv
+      rpm -K "${path}" | tee "${signature_output}"
+      python3.12 /tmp/generate-runtime-lock.py signature-output --output "${signature_output}"
+      printf '%s|%s|%s\n' "${package}" "${url}" "${actual_sha}" >> "${results_file}"
+      fetched_direct_rpm_path="${path}"
       return 0
     fi
     rm -f "${tmp}"
@@ -214,8 +218,26 @@ fetch_direct_rpm_for_row() {
 }
 
 while IFS='|' read -r package baseos_url appstream_url; do
-  fetch_direct_rpm_for_row "${package}" "${baseos_url}" "${appstream_url}"
+  fetch_direct_rpm_for_row \
+    "${package}" "${baseos_url}" "${appstream_url}" \
+    /tmp/runtime.direct.tsv /tmp/runtime.signature-output
 done < /tmp/runtime.candidates.tsv
+
+python3.12 /tmp/generate-runtime-lock.py fips-candidate \
+  --full-rows /tmp/runtime.full.tsv \
+  --arch "${TARGETARCH}" \
+  --base-url "${OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}" \
+  > /tmp/fips.candidates.tsv
+fetched_direct_rpm_path=""
+while IFS='|' read -r package baseos_url appstream_url; do
+  fetch_direct_rpm_for_row \
+    "${package}" "${baseos_url}" "${appstream_url}" \
+    /tmp/fips.direct.tsv /tmp/fips.signature-output
+done < /tmp/fips.candidates.tsv
+test -s "${fetched_direct_rpm_path}"
+rpm -qp \
+  --qf '%{NEVRA}|%{NAME}|%{EPOCHNUM}|%{VERSION}|%{RELEASE}|%{ARCH}|%{SHA256HEADER}|%{SIGMD5}\n' \
+  "${fetched_direct_rpm_path}" > /tmp/fips.full.tsv
 
 python3.12 /tmp/generate-runtime-lock.py render \
   --full-rows /tmp/runtime.full.tsv \
@@ -224,6 +246,13 @@ python3.12 /tmp/generate-runtime-lock.py render \
   --arch "${TARGETARCH}" \
   --source-date-epoch "${SOURCE_DATE_EPOCH}" \
   --output "/out/runtime.${TARGETARCH}.txt"
+python3.12 /tmp/generate-runtime-lock.py render-fips \
+  --full-rows /tmp/runtime.full.tsv \
+  --fips-rows /tmp/fips.full.tsv \
+  --direct-results /tmp/fips.direct.tsv \
+  --arch "${TARGETARCH}" \
+  --source-date-epoch "${SOURCE_DATE_EPOCH}" \
+  --output "/out/fips-verify.${TARGETARCH}.txt"
 CAPTURE
 
 FROM scratch AS export
@@ -231,7 +260,7 @@ COPY --from=capture /out/ /
 DOCKERFILE
 }
 
-validate_lockfile() {
+validate_runtime_lockfile() {
   local path="$1"
   local platform_arch="$2"
 
@@ -246,6 +275,36 @@ validate_lockfile() {
     --openssl-fips-provider-so-rpm-sha256-x86-64 "${openssl_fips_provider_so_rpm_sha256_x86_64}" \
     --openssl-fips-provider-so-rpm-sha256-aarch64 "${openssl_fips_provider_so_rpm_sha256_aarch64}"
 }
+
+validate_fips_lockfile() {
+  local path="$1"
+  local platform_arch="$2"
+
+  python3 "${repo_root}/tools/rpmlock.py" fips-validate \
+    --lockfile "${path}" \
+    --arch "${platform_arch}" \
+    --source-date-epoch "${source_date_epoch}"
+}
+
+validate_lock_pair() {
+  local runtime_path="$1"
+  local fips_path="$2"
+  local platform_arch="$3"
+
+  python3 "${repo_root}/tools/rpmlock.py" fips-rpm-filenames \
+    --runtime-lockfile "${runtime_path}" \
+    --fips-lockfile "${fips_path}" \
+    --arch "${platform_arch}" \
+    --source-date-epoch "${source_date_epoch}" \
+    --openssl-fips-provider-nevra "${openssl_fips_provider_nevra}" \
+    --openssl-fips-provider-rpm-base-url "${openssl_fips_provider_rpm_base_url}" \
+    --openssl-fips-provider-rpm-sha256-x86-64 "${openssl_fips_provider_rpm_sha256_x86_64}" \
+    --openssl-fips-provider-rpm-sha256-aarch64 "${openssl_fips_provider_rpm_sha256_aarch64}" \
+    --openssl-fips-provider-so-rpm-sha256-x86-64 "${openssl_fips_provider_so_rpm_sha256_x86_64}" \
+    --openssl-fips-provider-so-rpm-sha256-aarch64 "${openssl_fips_provider_so_rpm_sha256_aarch64}" \
+    > /dev/null
+}
+
 generate_one() {
   local platform_arch="$1"
   local output_dir="$2"
@@ -277,10 +336,24 @@ generate_one() {
     --output "type=local,dest=${tmpdir}/out" \
     "${tmpdir}"
 
+  validate_runtime_lockfile "${tmpdir}/out/runtime.${platform_arch}.txt" "${platform_arch}"
+  validate_fips_lockfile "${tmpdir}/out/fips-verify.${platform_arch}.txt" "${platform_arch}"
+  validate_lock_pair \
+    "${tmpdir}/out/runtime.${platform_arch}.txt" \
+    "${tmpdir}/out/fips-verify.${platform_arch}.txt" \
+    "${platform_arch}"
   mkdir -p "${output_dir}"
-  cp "${tmpdir}/out/runtime.${platform_arch}.txt" "${output_dir}/runtime.${platform_arch}.txt"
-  validate_lockfile "${output_dir}/runtime.${platform_arch}.txt" "${platform_arch}"
-  echo "generated ${output_dir}/runtime.${platform_arch}.txt"
+  cp \
+    "${tmpdir}/out/runtime.${platform_arch}.txt" \
+    "${tmpdir}/out/fips-verify.${platform_arch}.txt" \
+    "${output_dir}/"
+  validate_runtime_lockfile "${output_dir}/runtime.${platform_arch}.txt" "${platform_arch}"
+  validate_fips_lockfile "${output_dir}/fips-verify.${platform_arch}.txt" "${platform_arch}"
+  validate_lock_pair \
+    "${output_dir}/runtime.${platform_arch}.txt" \
+    "${output_dir}/fips-verify.${platform_arch}.txt" \
+    "${platform_arch}"
+  echo "generated ${output_dir}/runtime.${platform_arch}.txt + ${output_dir}/fips-verify.${platform_arch}.txt"
 }
 
 run_check() {
@@ -296,22 +369,32 @@ run_check() {
   arch_list="$(arches_for "${arch}")"
   while IFS= read -r platform_arch; do
     generate_one "${platform_arch}" "${generated_dir}"
-    local expected="${repo_root}/rpm-lock/runtime.${platform_arch}.txt"
-    local generated="${generated_dir}/runtime.${platform_arch}.txt"
-    if ! cmp -s "${expected}" "${generated}"; then
-      echo "RPM lockfile drift detected for ${platform_arch}: ${expected}" >&2
-      diff -u "${expected}" "${generated}" >&2 || true
-      failed=1
-    fi
+    local lock_kind
+    for lock_kind in runtime fips-verify; do
+      local expected="${repo_root}/rpm-lock/${lock_kind}.${platform_arch}.txt"
+      local generated="${generated_dir}/${lock_kind}.${platform_arch}.txt"
+      if ! cmp -s "${expected}" "${generated}"; then
+        echo "RPM lockfile drift detected for ${platform_arch}: ${expected}" >&2
+        diff -u "${expected}" "${generated}" >&2 || true
+        failed=1
+      fi
+    done
   done <<< "${arch_list}"
 
   [[ "${failed}" -eq 0 ]] || return 1
-  echo "RPM lockfile check: ok (generated lockfiles match committed files)"
+  echo "RPM lockfile check: ok (generated runtime/FIPS lock pairs match committed files)"
 }
 
 run_self_test() {
-  validate_lockfile "${repo_root}/rpm-lock/runtime.amd64.txt" amd64
-  validate_lockfile "${repo_root}/rpm-lock/runtime.arm64.txt" arm64
+  local platform_arch
+  for platform_arch in amd64 arm64; do
+    validate_runtime_lockfile "${repo_root}/rpm-lock/runtime.${platform_arch}.txt" "${platform_arch}"
+    validate_fips_lockfile "${repo_root}/rpm-lock/fips-verify.${platform_arch}.txt" "${platform_arch}"
+    validate_lock_pair \
+      "${repo_root}/rpm-lock/runtime.${platform_arch}.txt" \
+      "${repo_root}/rpm-lock/fips-verify.${platform_arch}.txt" \
+      "${platform_arch}"
+  done
   echo "RPM lock generator self-test: ok"
 }
 main() {

@@ -213,14 +213,18 @@ RPMs are not absorbed automatically. The nightly sentinel detects when a pinned
 runtime RPM has a fixable CVE and turns the gate red. The weekly and manually
 runnable `.github/workflows/rpm-lock-refresh.yaml` workflow runs
 `tools/generate-rpm-lock.sh` for `linux/amd64` and `linux/arm64`; the generator
-uses current UBI metadata only during the intentional refresh, resolves direct CDN RPM URLs for every runtime row, and emits the
-`rpm-lock/runtime.<arch>.txt` format consumed by the build.
+uses current UBI metadata only during the intentional refresh, resolves direct CDN RPM URLs
+for every runtime row, derives the exact `openssl` CLI identity from
+the unique resolved `openssl-libs` row, verifies and queries that downloaded CLI
+RPM, and emits the atomic `rpm-lock/runtime.<arch>.txt` plus
+`rpm-lock/fips-verify.<arch>.txt` pair consumed by the build.
 
 A no-change refresh is expected to be byte-identical. Maintainers can reproduce
 that proof locally with `tools/generate-rpm-lock.sh --check`, which regenerates
-both lockfiles in a temporary directory and fails with a unified diff if either
-file drifts. When Red Hat has published patched RPMs, the refresh workflow opens
-a normal pull request titled `Refresh runtime RPM lockfiles`. That PR is not a
+both architecture pairs in a temporary directory and fails with a unified diff
+if any of the four files drifts. When Red Hat has published patched RPMs, the
+refresh workflow opens a normal pull request titled
+`Refresh runtime and FIPS RPM lockfiles`. That PR is not a
 publish path and is not auto-merged; the repository PR gates must pass first,
 including the fixable-CVE gates, both-architecture byte-for-byte reproducibility
 gates, whole-RPM direct-CDN SHA-256 and `rpm -K` verification, and

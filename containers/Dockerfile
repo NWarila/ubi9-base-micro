@@ -47,6 +47,7 @@ COPY rpm-lock/fips-verify.amd64.txt rpm-lock/fips-verify.arm64.txt /tmp/rpm-lock
 COPY rpm-lock/runtime.amd64.txt rpm-lock/runtime.arm64.txt /tmp/rpm-lock/
 COPY tools/fetch-builder-rpms.sh /tmp/fetch-builder-rpms.sh
 COPY tools/fetch-runtime-rpms.sh /tmp/fetch-runtime-rpms.sh
+COPY tools/rpmlock.py /tmp/rpmlock.py
 COPY tools/verify-fips-provider.py /tmp/verify-fips-provider.py
 
 # The FIPS provider NEVRA is asserted after install; this verification stage does not ship directly.
@@ -78,13 +79,32 @@ RUN set -eux; \
     rm -rf /tmp/builder-rpms; \
     fips_provider_nvr="${OPENSSL_FIPS_PROVIDER_NEVRA#openssl-fips-provider-so-}"; \
     test "${fips_provider_nvr}" != "${OPENSSL_FIPS_PROVIDER_NEVRA}" || { echo "invalid FIPS provider NEVRA pin: ${OPENSSL_FIPS_PROVIDER_NEVRA}" >&2; exit 1; }; \
+    fips_names_tmp="$(mktemp)"; \
+    python3.12 /tmp/rpmlock.py fips-rpm-filenames \
+      --fips-lockfile "${fips_lockfile}" \
+      --runtime-lockfile "${runtime_lockfile}" \
+      --arch "${TARGETARCH}" \
+      --source-date-epoch "${SOURCE_DATE_EPOCH}" \
+      --openssl-fips-provider-nevra "${OPENSSL_FIPS_PROVIDER_NEVRA}" \
+      --openssl-fips-provider-rpm-base-url "${OPENSSL_FIPS_PROVIDER_RPM_BASE_URL}" \
+      --openssl-fips-provider-rpm-sha256-x86-64 "${OPENSSL_FIPS_PROVIDER_RPM_SHA256_X86_64}" \
+      --openssl-fips-provider-rpm-sha256-aarch64 "${OPENSSL_FIPS_PROVIDER_RPM_SHA256_AARCH64}" \
+      --openssl-fips-provider-so-rpm-sha256-x86-64 "${OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_X86_64}" \
+      --openssl-fips-provider-so-rpm-sha256-aarch64 "${OPENSSL_FIPS_PROVIDER_SO_RPM_SHA256_AARCH64}" \
+      > "${fips_names_tmp}"; \
+    mapfile -t fips_rpm_names < "${fips_names_tmp}"; \
+    rm -f "${fips_names_tmp}"; \
+    test "${#fips_rpm_names[@]}" -eq 3 || { echo "FIPS lock selector must yield exactly 3 package filenames" >&2; exit 1; }; \
+    openssl_cli_rpm="/tmp/fips-rpms/${fips_rpm_names[0]}"; \
+    openssl_libs_rpm="/tmp/runtime-rpms/${fips_rpm_names[1]}"; \
+    crypto_policies_rpm="/tmp/runtime-rpms/${fips_rpm_names[2]}"; \
     mkdir -p /tmp/fips-rpms /tmp/runtime-rpms; \
     bash /tmp/fetch-runtime-rpms.sh --targetarch "${TARGETARCH}" --lockfile "${runtime_lockfile}" --dest /tmp/runtime-rpms; \
     bash /tmp/fetch-runtime-rpms.sh --targetarch "${TARGETARCH}" --lockfile "${fips_lockfile}" --dest /tmp/fips-rpms; \
     rpm -Uvh --oldpackage --replacepkgs \
-      "/tmp/fips-rpms/openssl-3.5.5-5.el9_8.${rpm_arch}.rpm" \
-      "/tmp/runtime-rpms/openssl-libs-3.5.5-5.el9_8.${rpm_arch}.rpm" \
-      "/tmp/runtime-rpms/crypto-policies-20260224-1.gitea0f072.el9_8.noarch.rpm" \
+      "${openssl_cli_rpm}" \
+      "${openssl_libs_rpm}" \
+      "${crypto_policies_rpm}" \
       "/tmp/runtime-rpms/openssl-fips-provider-${fips_provider_nvr}.${rpm_arch}.rpm" \
       "/tmp/runtime-rpms/${OPENSSL_FIPS_PROVIDER_NEVRA}.${rpm_arch}.rpm"; \
     microdnf clean all; \

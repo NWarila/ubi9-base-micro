@@ -55,10 +55,13 @@ old rpmdb, this one-time re-baseline was accepted.
 `tools/generate-rpm-lock.sh` remains the controlled CVE-absorption path: it uses
 current UBI metadata only when intentionally refreshing the lock, then resolves
 and records the direct CDN URL and whole-RPM SHA-256 for every generated runtime
-row. The generated runtime lock and manually maintained `fips-verify` lock have a
-deliberate co-refresh obligation: a future `openssl-libs` refresh is blocked until
-the matching `openssl` CLI NEVRA, URL, and hashes are updated in the FIPS lock.
-Repository verification enforces equality of their epoch, version, and release.
+row. In the same run it selects the unique resolved `openssl-libs` identity,
+fetches and signature-verifies `openssl` at exactly that epoch, version, release,
+and architecture, queries the CLI RPM's actual metadata, and renders the existing
+one-row `fips-verify` lock beside the runtime lock. Generation, validation,
+`--check`, workflow diff display, staging, and commit treat each pair as one
+unit. Repository verification independently enforces equality of their epoch,
+version, and release.
 
 ## Consequences
 
@@ -70,8 +73,9 @@ Repository verification enforces equality of their epoch, version, and release.
   explicit vendor or version-bump decision.
 - CVE absorption still happens through reviewed lock refresh pull requests that
   update the NEVRA, URL, and SHA-256 together.
-- An `openssl-libs` refresh cannot pass until both architecture-specific
-  `fips-verify` locks are co-refreshed to the matching OpenSSL CLI version.
+- An `openssl-libs` refresh generates both architecture-specific `fips-verify`
+  locks at the matching OpenSSL CLI version; a missing or mismatched companion
+  fails before the verification transaction.
 - The Red Hat CDN blob lifetime is not guaranteed forever; nightly rebuilds act
   as the purge sentinel.
 

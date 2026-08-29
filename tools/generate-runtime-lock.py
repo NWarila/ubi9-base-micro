@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Purpose: Validate capture snapshots, derive direct RPM candidates, and render runtime RPM lockfiles.
+# Purpose: Validate capture snapshots, derive direct RPM candidates, and render atomic runtime/FIPS lock pairs.
 # Role: tooling
 # Micro-container candidate: no - generation policy invoked inside the discarded capture stage.
 # Build-process: yes - owns runtime-lock generation decisions while shell retains fetch/install orchestration.
@@ -26,6 +26,7 @@ if TYPE_CHECKING:
         LockRow,
         rpm_filename,
         validate_common,
+        validate_fips,
     )
 else:
     from rpmlock import (
@@ -38,6 +39,7 @@ else:
         LockRow,
         rpm_filename,
         validate_common,
+        validate_fips,
     )
 
 ASCII_DECIMAL: Final = re.compile(r"^[0-9]+$")
@@ -213,6 +215,52 @@ def provider_nvr(provider_nevra: str) -> str:
     return value
 
 
+def _unique_named_full_row(rows: Iterable[LockRow], name: str, description: str) -> LockRow:
+    matches = [row for row in rows if row.name == name]
+    _require(len(matches) == 1, f"{description} must contain exactly one {name} row, got {len(matches)}")
+    return matches[0]
+
+
+def openssl_row_for_runtime(
+    runtime_rows: Iterable[LockRow],
+    *,
+    arch: str,
+) -> LockRow:
+    """Derive the exact OpenSSL CLI identity from the unique runtime libraries row."""
+
+    _require(arch in RPM_ARCH_BY_PLATFORM, f"unsupported architecture: {arch}")
+    libraries = _unique_named_full_row(runtime_rows, "openssl-libs", "full RPM snapshot")
+    _validate_full_row(libraries)
+    rpm_arch = RPM_ARCH_BY_PLATFORM[arch]
+    _require(libraries.arch == rpm_arch, f"openssl-libs row has wrong RPM architecture: {libraries.arch}")
+    epoch_prefix = "" if libraries.epoch == "0" else f"{libraries.epoch}:"
+    package = f"openssl-{epoch_prefix}{libraries.version}-{libraries.release}.{libraries.arch}"
+    return LockRow(
+        package=package,
+        final_rpmdb="no",
+        name="openssl",
+        epoch=libraries.epoch,
+        version=libraries.version,
+        release=libraries.release,
+        arch=libraries.arch,
+        sha256_header=libraries.sha256_header,
+        sigmd5=libraries.sigmd5,
+    )
+
+
+def fips_candidate(
+    runtime_rows: Iterable[LockRow],
+    *,
+    arch: str,
+    base_url: str,
+) -> tuple[str, str, str]:
+    """Return the exact CLI package and its ordered direct-CDN candidates."""
+
+    openssl = openssl_row_for_runtime(runtime_rows, arch=arch)
+    first, second = candidate_urls(openssl, base_url, RPM_ARCH_BY_PLATFORM[arch])
+    return openssl.package, first, second
+
+
 def _validate_floor(full_rows: Iterable[LockRow], final_nevras: Iterable[str]) -> None:
     final_set = set(final_nevras)
     full_packages: set[str] = set()
@@ -342,11 +390,99 @@ def render_lock(
     return header + render(full_rows, final_nevras, direct_results)
 
 
+def render_fips_lock(
+    *,
+    arch: str,
+    source_date_epoch: str,
+    runtime_rows: Iterable[LockRow],
+    fips_rows: Iterable[LockRow],
+    direct_results: Iterable[DirectRpm],
+) -> bytes:
+    """Render the one-row companion CLI lock and enforce its runtime-library identity."""
+
+    _require(arch in RPM_ARCH_BY_PLATFORM, f"unsupported architecture: {arch}")
+    _require(ASCII_DECIMAL.fullmatch(source_date_epoch) is not None, "SOURCE_DATE_EPOCH must be numeric")
+    expected = openssl_row_for_runtime(runtime_rows, arch=arch)
+    captured_rows = tuple(fips_rows)
+    _require(len(captured_rows) == 1, f"FIPS RPM snapshot must contain exactly one row, got {len(captured_rows)}")
+    openssl = _unique_named_full_row(captured_rows, "openssl", "FIPS RPM snapshot")
+    _validate_full_row(openssl)
+    expected_identity = (expected.epoch, expected.version, expected.release, expected.arch)
+    captured_identity = (openssl.epoch, openssl.version, openssl.release, openssl.arch)
+    _require(
+        captured_identity == expected_identity,
+        "captured openssl identity does not match the resolved openssl-libs identity",
+    )
+
+    direct = tuple(direct_results)
+    _require(len(direct) == 1, f"FIPS direct RPM result set must contain exactly one row, got {len(direct)}")
+    selected = direct[0]
+    _require(selected.package == openssl.package, "FIPS direct RPM result package does not match captured openssl")
+    _validate_selected_direct(openssl, selected)
+    locked_row = LockRow(
+        package=openssl.package,
+        final_rpmdb="no",
+        name=openssl.name,
+        epoch=openssl.epoch,
+        version=openssl.version,
+        release=openssl.release,
+        arch=openssl.arch,
+        sha256_header=openssl.sha256_header,
+        sigmd5=openssl.sigmd5,
+    )
+    headers = {
+        "arch": arch,
+        "source_date_epoch": source_date_epoch,
+        "columns": COLUMNS,
+    }
+    generated = Lockfile(
+        path=Path("<generated-fips-lock>"),
+        headers=headers,
+        direct_entries=(selected,),
+        direct_map={selected.package: (selected.url, selected.sha256)},
+        rows=(locked_row,),
+        terminal_lf=True,
+        direct_line_numbers={selected.package: 4},
+        row_line_numbers=(5,),
+    )
+    try:
+        validate_common(generated, mode=CommonValidationMode.STRICT)
+        validate_fips(generated, arch=arch, source_date_epoch=source_date_epoch)
+    except LockError as exc:
+        raise GenerationError(str(exc)) from exc
+    header = f"# arch: {arch}\n# source_date_epoch: {source_date_epoch}\n# columns: {COLUMNS}\n"
+    direct_line = f"# direct_rpm: {selected.package}|{selected.url}|{selected.sha256}\n"
+    row_line = "|".join(
+        (
+            locked_row.package,
+            locked_row.final_rpmdb,
+            locked_row.name,
+            locked_row.epoch,
+            locked_row.version,
+            locked_row.release,
+            locked_row.arch,
+            locked_row.sha256_header,
+            locked_row.sigmd5,
+        )
+    )
+    return (header + direct_line + row_line + "\n").encode()
+
+
 def _cmd_candidates(args: argparse.Namespace) -> int:
     rpm_arch = RPM_ARCH_BY_PLATFORM[cast(str, args.arch)]
     for row in parse_full_rows(args.full_rows):
         first, second = candidate_urls(row, args.base_url, rpm_arch)
         print(f"{row.package}|{first}|{second}")
+    return 0
+
+
+def _cmd_fips_candidate(args: argparse.Namespace) -> int:
+    package, first, second = fips_candidate(
+        parse_full_rows(args.full_rows),
+        arch=args.arch,
+        base_url=args.base_url,
+    )
+    print(f"{package}|{first}|{second}")
     return 0
 
 
@@ -396,6 +532,22 @@ def _cmd_render(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_render_fips(args: argparse.Namespace) -> int:
+    rendered = render_fips_lock(
+        arch=args.arch,
+        source_date_epoch=args.source_date_epoch,
+        runtime_rows=parse_full_rows(args.full_rows),
+        fips_rows=parse_full_rows(args.fips_rows),
+        direct_results=parse_direct_results(args.direct_results),
+    )
+    try:
+        args.output.write_bytes(rendered)
+    except OSError as exc:
+        raise GenerationError(f"could not write generated FIPS lock: {args.output}") from exc
+    print("rendered FIPS verification lock rows=1 build-only=1")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -405,6 +557,15 @@ def _build_parser() -> argparse.ArgumentParser:
     candidates.add_argument("--arch", required=True, choices=sorted(RPM_ARCH_BY_PLATFORM))
     candidates.add_argument("--base-url", required=True)
     candidates.set_defaults(handler=_cmd_candidates)
+
+    fips_candidate_parser = subparsers.add_parser(
+        "fips-candidate",
+        help="emit the OpenSSL CLI candidate matching the resolved runtime libraries",
+    )
+    fips_candidate_parser.add_argument("--full-rows", required=True, type=Path)
+    fips_candidate_parser.add_argument("--arch", required=True, choices=sorted(RPM_ARCH_BY_PLATFORM))
+    fips_candidate_parser.add_argument("--base-url", required=True)
+    fips_candidate_parser.set_defaults(handler=_cmd_fips_candidate)
 
     package_specs = subparsers.add_parser("package-specs", help="emit the runtime installation package policy")
     package_specs.set_defaults(handler=_cmd_package_specs)
@@ -430,6 +591,15 @@ def _build_parser() -> argparse.ArgumentParser:
     render_parser.add_argument("--source-date-epoch", required=True)
     render_parser.add_argument("--output", required=True, type=Path)
     render_parser.set_defaults(handler=_cmd_render)
+
+    render_fips_parser = subparsers.add_parser("render-fips", help="render the companion FIPS CLI RPM lock")
+    render_fips_parser.add_argument("--full-rows", required=True, type=Path)
+    render_fips_parser.add_argument("--fips-rows", required=True, type=Path)
+    render_fips_parser.add_argument("--direct-results", required=True, type=Path)
+    render_fips_parser.add_argument("--arch", required=True, choices=sorted(RPM_ARCH_BY_PLATFORM))
+    render_fips_parser.add_argument("--source-date-epoch", required=True)
+    render_fips_parser.add_argument("--output", required=True, type=Path)
+    render_fips_parser.set_defaults(handler=_cmd_render_fips)
     return parser
 
 

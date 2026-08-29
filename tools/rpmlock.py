@@ -2,7 +2,7 @@
 # Purpose: Canonical RPM lock parser/validator plus the public repository Dockerfile ARG-default reader.
 # Role: tooling
 # Micro-container candidate: gate-adjacent - host/CI validation and discarded-stage filename emission.
-# Build-process: yes - validates locks and emits runtime RPM filenames in the rpm-rootfs build stage.
+# Build-process: yes - validates locks and emits derived RPM filenames in image build stages.
 
 """Parse and validate runtime, FIPS-verification, and builder RPM lockfiles."""
 
@@ -789,6 +789,37 @@ def rpm_filename(row: LockRow | BuilderLockRow) -> str:
     return f"{row.name}-{row.version}-{row.release}.{row.arch}.rpm"
 
 
+def _unique_named_row(lockfile: Lockfile, name: str) -> LockRow:
+    rows = [row for row in lockfile.rows if row.name == name]
+    _require(
+        len(rows) == 1,
+        f"{lockfile.path}: expected exactly one {name} row, got {len(rows)}",
+    )
+    return rows[0]
+
+
+def fips_verification_filenames(
+    fips_lockfile: Lockfile,
+    runtime_lockfile: Lockfile,
+) -> tuple[str, str, str]:
+    """Derive the CLI, libraries, and crypto-policy filenames from exact lock identities."""
+
+    openssl = _unique_named_row(fips_lockfile, "openssl")
+    openssl_libs = _unique_named_row(runtime_lockfile, "openssl-libs")
+    crypto_policies = _unique_named_row(runtime_lockfile, "crypto-policies")
+    cli_evr = (openssl.epoch, openssl.version, openssl.release)
+    libraries_evr = (openssl_libs.epoch, openssl_libs.version, openssl_libs.release)
+    _require(
+        cli_evr == libraries_evr,
+        f"{fips_lockfile.path}: openssl EVR does not match {runtime_lockfile.path} openssl-libs EVR",
+    )
+    return (
+        rpm_filename(openssl),
+        rpm_filename(openssl_libs),
+        rpm_filename(crypto_policies),
+    )
+
+
 def floor(lockfile: Lockfile) -> list[str]:
     return [row.package for row in lockfile.rows if row.final_rpmdb == "yes"]
 
@@ -885,6 +916,21 @@ def _cmd_rpm_filenames(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_fips_rpm_filenames(args: argparse.Namespace) -> int:
+    policy = _policy_from_args(args)
+    runtime_lockfile = parse(args.runtime_lockfile)
+    validate(runtime_lockfile, arch=args.arch, policy=policy)
+    fips_lockfile = parse(args.fips_lockfile)
+    validate_fips(
+        fips_lockfile,
+        arch=args.arch,
+        source_date_epoch=policy.source_date_epoch,
+    )
+    for filename in fips_verification_filenames(fips_lockfile, runtime_lockfile):
+        print(filename)
+    return 0
+
+
 def _cmd_direct_rpms(args: argparse.Namespace) -> int:
     lockfile = _validated_lockfile(args)
     for package, url, sha256 in direct_rpms(lockfile):
@@ -934,9 +980,7 @@ def _cmd_arg_default(args: argparse.Namespace) -> int:
     return 0
 
 
-def _add_common_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--lockfile", required=True, type=Path)
-    parser.add_argument("--arch", required=True, choices=sorted(RPM_ARCH_BY_PLATFORM))
+def _add_policy_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--source-date-epoch")
     parser.add_argument("--openssl-fips-provider-nevra")
     parser.add_argument("--openssl-fips-provider-rpm-base-url")
@@ -947,6 +991,12 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         dest="openssl_fips_provider_so_rpm_sha256_x86_64",
     )
     parser.add_argument("--openssl-fips-provider-so-rpm-sha256-aarch64")
+
+
+def _add_common_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--lockfile", required=True, type=Path)
+    parser.add_argument("--arch", required=True, choices=sorted(RPM_ARCH_BY_PLATFORM))
+    _add_policy_args(parser)
 
 
 def _add_builder_args(parser: argparse.ArgumentParser) -> None:
@@ -976,6 +1026,16 @@ def _build_parser() -> argparse.ArgumentParser:
     filenames_parser = subparsers.add_parser("rpm-filenames", help="print derived RPM filenames in row order")
     _add_common_args(filenames_parser)
     filenames_parser.set_defaults(handler=_cmd_rpm_filenames)
+
+    fips_filenames_parser = subparsers.add_parser(
+        "fips-rpm-filenames",
+        help="print identity-selected FIPS verification RPM filenames",
+    )
+    fips_filenames_parser.add_argument("--fips-lockfile", required=True, type=Path)
+    fips_filenames_parser.add_argument("--runtime-lockfile", required=True, type=Path)
+    fips_filenames_parser.add_argument("--arch", required=True, choices=sorted(RPM_ARCH_BY_PLATFORM))
+    _add_policy_args(fips_filenames_parser)
+    fips_filenames_parser.set_defaults(handler=_cmd_fips_rpm_filenames)
 
     direct_parser = subparsers.add_parser("direct-rpms", help="print direct RPM pins in lockfile order")
     _add_common_args(direct_parser)
