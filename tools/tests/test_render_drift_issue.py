@@ -201,9 +201,7 @@ def test_signature_is_canonical_across_envelope_and_job_order(
     signature = _signature(clean_inputs)
     clean_inputs[0].reverse()
     clean_inputs[1].clear()
-    clean_inputs[1].update(
-        {"reproducibility-gate": " SUCCESS ", "build": " SUCCESS ", "hardening": " SUCCESS "}
-    )
+    clean_inputs[1].update({"reproducibility-gate": " SUCCESS ", "build": " SUCCESS ", "hardening": " SUCCESS "})
 
     assert _signature(clean_inputs) == signature
 

@@ -5215,8 +5215,7 @@ def check_workflow() -> None:
             )
         )
         and all(
-            marker in grype_gate
-            for marker in ("--only-fixed", "--fail-on medium", "-c security/cve-ignore.grype.yaml")
+            marker in grype_gate for marker in ("--only-fixed", "--fail-on medium", "-c security/cve-ignore.grype.yaml")
         ),
         "fixable scanner gate pass must use both explicit non-default ignore files",
     )
@@ -5703,8 +5702,7 @@ def check_publish_workflow() -> None:
     )
     require(
         all(
-            marker in grype_gate
-            for marker in ("--only-fixed", "--fail-on medium", "-c security/cve-ignore.grype.yaml")
+            marker in grype_gate for marker in ("--only-fixed", "--fail-on medium", "-c security/cve-ignore.grype.yaml")
         ),
         "publish Grype fixable gate must keep the native blocking flags and TD6 config",
     )
@@ -5716,9 +5714,9 @@ def check_publish_workflow() -> None:
         "publish report-only pass must remain complete and non-blocking on findings",
     )
     require(
-        "--output \"${trivy_json}\"" in trivy_report
+        '--output "${trivy_json}"' in trivy_report
         and "dist/tools/trivy convert" in trivy_report
-        and "--output \"${trivy_sarif}\"" in trivy_report,
+        and '--output "${trivy_sarif}"' in trivy_report,
         "publish Trivy report pass must scan once to JSON and convert that JSON to SARIF",
     )
     require(
@@ -7471,35 +7469,36 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
         and "--print-base" in workflow
         and "needs.publish-scope.outputs.publish == 'true'" in publish
     )
-    gates_invalid = not all(
-        marker in gate_evidence
-        for marker in (
-            "assert-reproducible.py",
-            "assert-parent-subset.py",
-            "run-python-gates.sh",
-            "assert-scanner-db-freshness.py",
-            "assert-scanner-canary.py",
-            "assert-no-phantom-packages.py",
-            "--expect-absent sqlite-libs",
-            "--expect-absent util-linux",
-            "--expect-absent util-linux-core",
-            "assert-raw-scanners-no-sqlite.py",
-            "assert-no-rootfs-secrets.py",
-            "generate-nist-800-190-predicate.py",
-            "run-stig-arf.sh",
-            "dist/tools/trivy convert",
-            '-o "json=${vuln_dir}/base-python.grype.all.json"',
-            '-o "sarif=${vuln_dir}/base-python.grype.all.sarif"',
-            "find attestations sbom stig vuln -type f",
-            "retention-days: 90",
-            "category: base-python/trivy/amd64",
-            "category: base-python/grype/amd64",
-            "category: base-python/trivy/arm64",
-            "category: base-python/grype/arm64",
+    gates_invalid = (
+        not all(
+            marker in gate_evidence
+            for marker in (
+                "assert-reproducible.py",
+                "assert-parent-subset.py",
+                "run-python-gates.sh",
+                "assert-scanner-db-freshness.py",
+                "assert-scanner-canary.py",
+                "assert-no-phantom-packages.py",
+                "--expect-absent sqlite-libs",
+                "--expect-absent util-linux",
+                "--expect-absent util-linux-core",
+                "assert-raw-scanners-no-sqlite.py",
+                "assert-no-rootfs-secrets.py",
+                "generate-nist-800-190-predicate.py",
+                "run-stig-arf.sh",
+                "dist/tools/trivy convert",
+                '-o "json=${vuln_dir}/base-python.grype.all.json"',
+                '-o "sarif=${vuln_dir}/base-python.grype.all.sarif"',
+                "find attestations sbom stig vuln -type f",
+                "retention-days: 90",
+                "category: base-python/trivy/amd64",
+                "category: base-python/grype/amd64",
+                "category: base-python/trivy/arm64",
+                "category: base-python/grype/arm64",
+            )
         )
-    ) or gate_evidence.count(
-        "github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9"
-    ) != 4
+        or gate_evidence.count("github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9") != 4
+    )
     index_dataflow_invalid = not (
         publish.count('crane manifest "${IMAGE_REF}" > dist/python-index/index.json') == 1
         and workflow.count('crane manifest "${IMAGE_REF}" > dist/python-index/index.json') == 1
@@ -9271,9 +9270,7 @@ def check_python_sqlite_vex_self_test() -> None:
             rejected += 1
         else:
             raise VerifyError(f"python SQLite VEX mutation unexpectedly passed: {label}")
-    print(
-        f"python SQLite VEX mutation probes: {rejected}/{len(mutations)} rejected"
-    )
+    print(f"python SQLite VEX mutation probes: {rejected}/{len(mutations)} rejected")
 
 
 def check_build_script() -> None:
@@ -10723,9 +10720,7 @@ def _child_attestations_are_looped(
         if marker not in fenced_text:
             return f"missing-resolution:{label}"
 
-    known_child_types = tuple(
-        predicate_type(name) for name in ["spdx", "cyclonedx", "nist_800_190", "stig_arf"]
-    )
+    known_child_types = tuple(predicate_type(name) for name in ["spdx", "cyclonedx", "nist_800_190", "stig_arf"])
     expected = Counter(expected_child_attestations)
     if set(expected) != set(known_child_types) or any(count < 1 for count in expected.values()):
         return "invalid-expected-child-attestation-multiset"
