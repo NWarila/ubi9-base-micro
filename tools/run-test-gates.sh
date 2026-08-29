@@ -15,8 +15,14 @@ run_bounded_gate() {
   local label="$1"
   local timeout_seconds="$2"
   local started_at
+  local drain_tick
   local elapsed
+  local gate_pid
+  local grace_tick
+  local monitor_status
+  local pgid
   local status
+  local timed_out=0
   shift 2
 
   case "${timeout_seconds}" in
@@ -34,23 +40,93 @@ run_bounded_gate() {
     echo "timeout is required to bound ${label}" >&2
     return 2
   }
+  command -v setsid > /dev/null 2>&1 || {
+    echo "setsid is required to isolate ${label}" >&2
+    return 2
+  }
 
   started_at=${SECONDS}
   printf 'GATE START: %s (timeout=%ss)\n' "${label}" "${timeout_seconds}"
-  if timeout --verbose --signal=TERM --kill-after=10s "${timeout_seconds}s" "$@" < /dev/null; then
+
+  setsid "$@" < /dev/null &
+  gate_pid=$!
+  pgid=${gate_pid}
+
+  # Wait until setsid establishes the gate's process group, or until a short-lived
+  # gate exits. The group ID is the setsid process ID because Bash job control is
+  # disabled in this non-interactive script.
+  while ! kill -0 -- "-${pgid}" 2> /dev/null; do
+    if ! kill -0 "${gate_pid}" 2> /dev/null; then
+      break
+    fi
+    sleep 0.01
+  done
+
+  # Timeout supervises group liveness rather than the group leader. If the leader
+  # exits while a descendant remains, the monitor still reaches the deadline.
+  # shellcheck disable=SC2016
+  if timeout --signal=TERM "${timeout_seconds}s" bash -c '
+    pgid=$1
+    while kill -0 -- "-${pgid}" 2> /dev/null; do
+      sleep 0.1
+    done
+  ' bash "${pgid}" < /dev/null; then
+    monitor_status=0
+  else
+    monitor_status=$?
+  fi
+
+  if ((monitor_status != 0)); then
+    if ((monitor_status == 124)); then
+      timed_out=1
+    fi
+
+    # Always terminate the complete process group if the monitor fails. TERM is
+    # followed by a full ten-second grace period before KILL escalation.
+    if kill -TERM -- "-${pgid}" 2> /dev/null; then
+      :
+    fi
+    for ((grace_tick = 0; grace_tick < 100; grace_tick++)); do
+      if ! kill -0 -- "-${pgid}" 2> /dev/null; then
+        break
+      fi
+      sleep 0.1
+    done
+    if kill -0 -- "-${pgid}" 2> /dev/null; then
+      if kill -KILL -- "-${pgid}" 2> /dev/null; then
+        :
+      fi
+    fi
+  fi
+
+  if wait "${gate_pid}"; then
     status=0
   else
     status=$?
   fi
   elapsed=$((SECONDS - started_at))
 
-  # GNU timeout returns 124 when TERM ends the command and 137 when --kill-after
-  # has to send KILL. The elapsed-time guard keeps an unrelated early SIGKILL
-  # from being mislabeled as a timeout.
-  if (((status == 124 || status == 137) && elapsed >= timeout_seconds)); then
+  if ((timed_out)); then
+    # Reaping the group leader above must leave no live descendant behind.
+    for ((drain_tick = 0; drain_tick < 100; drain_tick++)); do
+      if ! kill -0 -- "-${pgid}" 2> /dev/null; then
+        break
+      fi
+      sleep 0.01
+    done
+    if kill -0 -- "-${pgid}" 2> /dev/null; then
+      printf 'GATE CLEANUP FAIL: %s process group %s survived KILL escalation\n' \
+        "${label}" "${pgid}" >&2
+      return 125
+    fi
     printf 'GATE TIMEOUT: %s exceeded %ss (elapsed=%ss, status=%s)\n' \
-      "${label}" "${timeout_seconds}" "${elapsed}" "${status}" >&2
-    return "${status}"
+      "${label}" "${timeout_seconds}" "${elapsed}" 124 >&2
+    return 124
+  fi
+  if ((monitor_status != 0)); then
+    printf 'GATE FAIL: %s timeout monitor failed (elapsed=%ss, status=%s)\n' \
+      "${label}" "${elapsed}" "${monitor_status}" >&2
+    return "${monitor_status}"
   fi
   if ((status != 0)); then
     printf 'GATE FAIL: %s (elapsed=%ss, status=%s)\n' "${label}" "${elapsed}" "${status}" >&2
@@ -61,6 +137,8 @@ run_bounded_gate() {
 }
 
 run_timeout_self_test() {
+  local descendant_pid
+  local descendant_pid_file
   local status
 
   status=0
@@ -72,6 +150,45 @@ run_timeout_self_test() {
     return 1
   fi
   echo "timeout self-test caught and named the deliberate induced hang"
+
+  descendant_pid_file=$(mktemp)
+  status=0
+  # The parent exits when TERM arrives, while its descendant ignores TERM and
+  # keeps running. Only process-group KILL escalation can finish this fixture.
+  # shellcheck disable=SC2016,SC2310
+  run_bounded_gate "TERM-ignoring descendant" 1 bash -c '
+    descendant_pid_file=$1
+    trap "exit 0" TERM
+    (
+      trap "" TERM
+      printf "%s\n" "${BASHPID}" > "${descendant_pid_file}"
+      while :; do
+        sleep 30
+      done
+    ) &
+    wait
+  ' bash "${descendant_pid_file}" || status=$?
+  if ! read -r descendant_pid < "${descendant_pid_file}"; then
+    rm -f "${descendant_pid_file}"
+    echo "descendant timeout self-test did not record its child PID" >&2
+    return 1
+  fi
+  rm -f "${descendant_pid_file}"
+  if ((status != 124)); then
+    if kill -KILL "${descendant_pid}" 2> /dev/null; then
+      :
+    fi
+    echo "descendant timeout self-test expected status 124, got ${status}" >&2
+    return 1
+  fi
+  if kill -0 "${descendant_pid}" 2> /dev/null; then
+    if kill -KILL "${descendant_pid}" 2> /dev/null; then
+      :
+    fi
+    echo "descendant timeout self-test left PID ${descendant_pid} alive" >&2
+    return 1
+  fi
+  echo "timeout self-test killed the TERM-ignoring descendant"
 }
 
 case "${1:-}" in

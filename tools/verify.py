@@ -9311,11 +9311,16 @@ def check_bounded_post_build_gates() -> None:
     )
 
     for marker in [
-        'timeout --verbose --signal=TERM --kill-after=10s "${timeout_seconds}s" "$@" < /dev/null',
+        'setsid "$@" < /dev/null &',
+        'timeout --signal=TERM "${timeout_seconds}s" bash -c',
+        'kill -TERM -- "-${pgid}"',
+        'kill -KILL -- "-${pgid}"',
         "GATE START: %s (timeout=%ss)",
         "GATE PASS: %s (elapsed=%ss)",
         "GATE TIMEOUT: %s exceeded %ss",
         'run_bounded_gate "deliberate induced hang" 1 sleep 30',
+        'run_bounded_gate "TERM-ignoring descendant" 1 bash -c',
+        'trap "" TERM',
         "--self-test-timeout",
     ]:
         require(marker in gate_runner, f"bounded gate harness missing marker: {marker}")
@@ -9327,10 +9332,10 @@ def check_bounded_post_build_gates() -> None:
             text=True,
             capture_output=True,
             check=False,
-            timeout=15,
+            timeout=25,
         )
     except subprocess.TimeoutExpired as exc:
-        raise VerifyError("bounded gate timeout self-test exceeded its 15-second verifier deadline") from exc
+        raise VerifyError("bounded gate timeout self-test exceeded its 25-second verifier deadline") from exc
     timeout_output = timeout_self_test.stdout + timeout_self_test.stderr
     require(
         timeout_self_test.returncode == 0,
@@ -9341,6 +9346,9 @@ def check_bounded_post_build_gates() -> None:
         "GATE START: deliberate induced hang (timeout=1s)",
         "GATE TIMEOUT: deliberate induced hang exceeded 1s",
         "timeout self-test caught and named the deliberate induced hang",
+        "GATE START: TERM-ignoring descendant (timeout=1s)",
+        "GATE TIMEOUT: TERM-ignoring descendant exceeded 1s",
+        "timeout self-test killed the TERM-ignoring descendant",
     ]:
         require(marker in timeout_output, f"bounded gate timeout self-test missing diagnostic: {marker}")
 
