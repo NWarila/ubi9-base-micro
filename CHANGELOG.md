@@ -12,9 +12,10 @@ and this project adheres to
 
 - Installed the pinned Cosign release before the base-python publication gate
   tool installers and added semantic locks for the action SHA, version input,
-  and immediate step ordering. This repairs and lock-enforces the gate job's
-  prerequisite; production proof of the full chain remains pending the next
-  `main` push.
+  and immediate step ordering. This repaired and lock-enforced the gate job's
+  prerequisite. The production chain had not yet rerun when this change was
+  recorded; later evidence is in the
+  [canonical publication evidence contract](docs/reference/verification-contract.md#base-python-publication-evidence-contract).
 
 ### Security
 
@@ -34,8 +35,9 @@ and this project adheres to
   OpenVEX documents cover the Python and micro products, and the micro
   publisher now supplies the index evidence it already reads from GHCR. Both
   entries expire after `review-by 2026-10-01`, refuse valid fix evidence, and
-  suppress no raw finding. Production proof of the new published-child paths
-  remains pending the merge-triggered runs.
+  suppress no raw finding. The merge-triggered publication checks had not run
+  when this entry was recorded; later evidence is in the
+  [canonical publication evidence contract](docs/reference/verification-contract.md#base-python-publication-evidence-contract).
 - Added an exact, expiring accept-and-track disposition for the known-affected
   base-python `CVE-2026-11940` finding on `python3.12` and
   `python3.12-libs` at `3.12.13-3.el9_8.1`. The legacy local-product path is a
@@ -87,10 +89,9 @@ and this project adheres to
   ledger, forked SBOM, NIST SP 800-190 and rootfs-secret gates, an OpenVEX
   disclosure, and the image contract's record of the identity the production
   publish workflow must use. The evidence chain runs in CI on locally built
-  images for both architectures. The image still has no external or project
-  publication, public or moving tag, signature, consumer-resolvable attestation,
-  or transparency-log evidence; those require a completed production publish
-  run.
+  images for both architectures. At the time this machinery was added, the image
+  had no external or project publication, public or moving tag, signature,
+  consumer-resolvable attestation, or transparency-log evidence.
 - `images/python/`: the base-python image build — a pinned, signature-verified RPM
   transaction applied to a byte-asserted clone of the published `base-micro`
   parent, producing one truthful combined rpmdb; build-support packages are
@@ -100,9 +101,9 @@ and this project adheres to
   entrypoint) and is gated in CI by tool self-tests, a functional stdlib battery
   with a real loopback TLS handshake, parent-subset invariance on the exported
   image, an OCI config contract, dual CVE scanners reading the combined rpmdb,
-  and a both-arch byte-identical double-build. The image remains unpublished: it
-  has no external or project publication, public or moving tag, signature, or
-  consumer-resolvable attestation or digest yet.
+  and a both-arch byte-identical double-build. At the time this build was added,
+  the image had no external or project publication, public or moving tag,
+  signature, consumer-resolvable attestation, or digest.
 - Added a registry-capable Python `release` Bake target and a pull-request-only
   preflight that invokes it once for both architectures. The preflight pushes a
   candidate index and unsigned BuildKit provenance to a loopback-bound ephemeral
@@ -114,10 +115,10 @@ and this project adheres to
   `python/v*` pushes. It uses an unaliased digest-first candidate, per-child
   evidence and index-only trust/SLSA evidence, credentialed pre-alias
   verification, non-atomic collision detection with post-apply readback, and a
-  separate anonymous post-visibility leg. This is publication capability only;
-  the publisher is merged and its first production execution is awaited. No
-  Python package, public artifact, or consumable image is claimed by this
-  change.
+  separate anonymous post-visibility leg. This change added publication
+  capability only and did not itself claim a Python package, public artifact, or
+  consumable image. Later publication evidence is in the
+  [canonical publication evidence contract](docs/reference/verification-contract.md#base-python-publication-evidence-contract).
 - Added a fail-closed Python publish-scope policy. Python release tags always
   publish; a `main` push skips only when every changed path is in the closed
   unrelated allowlist, while Python-tree changes, consumed shared inputs,
@@ -138,7 +139,7 @@ and this project adheres to
   `CONTRIBUTING.md`, or `CODE_OF_CONDUCT.md`. Any unlisted path or ambiguity
   still publishes; skipping avoids a new publication and does not remove an
   already-published digest.
-- Pinned the unpublished `base-python` builder input chain through one native
+- Pinned the then-unpublished `base-python` builder input chain through one native
   Bake contract used by its CI and double-build paths. Python builders now
   fail before building unless the Buildx version, commit, Linux-amd64 asset
   SHA-256, BuildKit driver image, and derived BuildKit version match; repository

@@ -36,9 +36,10 @@ post-execution binding before aliases: after successful Cosign and
 requires the Fulcio Build Signer Digest extension to equal the pinned generator
 commit. It also binds the source SHA/ref and Python caller workflow through the
 source and build-config extensions. That closes this tag-movement ambiguity for
-the Python publication path at its implemented scope. Its first production
-execution is post-merge and has not yet produced Python evidence; the residual
-in this entry remains the micro publisher's weaker binding.
+the Python publication path at its implemented scope. Its production evidence is
+recorded in the
+[canonical publication evidence contract](reference/verification-contract.md#base-python-publication-evidence-contract);
+the residual in this entry remains the micro publisher's weaker binding.
 
 ## TD-3: Per-architecture FIPS scope
 

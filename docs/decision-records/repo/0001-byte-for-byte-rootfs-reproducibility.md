@@ -31,7 +31,7 @@ workflow's QEMU/binfmt path, with both the setup action SHA and the binfmt index
 digest immutably pinned, so its current proof is emulator-relative to those
 pinned inputs.
 
-The built-and-gated, unpublished `base-python` path additionally defines its
+The built-and-gated `base-python` path additionally defines its
 build graph in `images/python/docker-bake.json`. That native Bake contract owns
 the context, Dockerfile, runtime target, platforms, fixed timestamp arguments,
 and the distinct CI, release, and double-build exporter policies. It pins

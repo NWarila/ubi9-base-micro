@@ -145,23 +145,15 @@ evidence, immediately before apply, and after apply, but they cannot make the
 resolve-then-write window atomic against an external package writer; TD-10
 records that residual.
 
-**Status: production attempted; the publication chain is not yet proven.** The
-2026-08-17 production run reached the `registry-served gates and evidence` job
-but failed while `Install publication gate tools` tried to install Syft without
-Cosign available. The workflow now repairs and lock-enforces that prerequisite;
-production proof remains pending the next `main` push. The evidence
-machinery is exercised by the CI-rootfs preflight on every push to `main` and
+Current and historical publication evidence is in the
+[canonical publication evidence contract](../../docs/reference/verification-contract.md#base-python-publication-evidence-contract).
+The evidence machinery is exercised by the CI-rootfs preflight on every push to `main` and
 manual dispatch, and for Python-tree or shared-gate changes selected on pull
 requests — a tailored RHEL9 STIG profile evaluated fail-closed, rpmdb-derived
 SPDX and CycloneDX SBOMs, dual CVE scanners with OpenVEX default-deny, a rootfs
 secret gate, and a NIST SP 800-190 image-control predicate. The pull-request
 release preflight additionally pushes a candidate tag and unsigned BuildKit
-provenance to its ephemeral loopback registry. The project package exists and
-is public, but it serves only unaliased, unsigned candidate digests from the
-failed production attempt. The candidate's two BuildKit `mode=max` provenance
-attestation manifests exist. No production gate evidence, Cosign signature or
-attestation, SLSA-generator provenance, Rekor record, or consumer alias exists.
-Publication requires a successful publish run. See
+provenance to its ephemeral loopback registry. See
 [`../../docs/how-to/verify-a-published-image.md`](../../docs/how-to/verify-a-published-image.md)
 for the post-publication procedure.
 

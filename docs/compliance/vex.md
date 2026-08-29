@@ -70,12 +70,8 @@ The Python publisher reads the index once by the push-reported digest,
 corroborates its SHA-256, checksum-protects cross-job transfers, and gives the
 same digest to every consumer. The micro publisher passes the pushed digest and
 the exact `dist/image-index.json` bytes it already read from the registry to
-both child gate calls in the same job. Production proof of the new TD-12
-published-child paths remains pending the merge-triggered runs. The earlier
-Python production attempt remains incomplete: its public package serves only
-unaliased, unsigned candidate digests, with no production gate evidence,
-Cosign signature or attestation, SLSA-generator provenance, Rekor record, or
-consumer alias.
+both child gate calls in the same job. Production evidence for those paths is in
+the [canonical publication evidence contract](../reference/verification-contract.md#base-python-publication-evidence-contract).
 
 A mismatch, duplicate statement, byte-noncanonical scanner identity, or valid
 fix evidence from either scanner leaves the finding un-vexed. Candidate

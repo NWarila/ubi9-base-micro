@@ -83,8 +83,9 @@ SHA-256 against push metadata, checksum-verifies every cross-job transfer, and
 gives the same digest to signing, attestation, VEX, provenance, collision, and
 alias consumers. The micro publisher passes the pushed digest and the exact
 `dist/image-index.json` bytes it already read from the registry to both child
-gate calls in the same job. Production proof of the new TD-12 published-child
-paths remains pending the merge-triggered runs. These bindings are limited to
+gate calls in the same job. Production evidence for those paths is in the
+[canonical publication evidence contract](../../reference/verification-contract.md#base-python-publication-evidence-contract).
+These bindings are limited to
 the index each run pushed and read back, and the Python binding does not close
 the external-writer alias race. TD-11 tracks the remaining VEX-side descriptor,
 runnable-platform, and attestation-cardinality asymmetries.

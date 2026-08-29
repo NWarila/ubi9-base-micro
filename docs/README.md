@@ -28,8 +28,8 @@ Documentation for this repository follows the Diataxis framework.
 - [`verify.md`](reference/verify.md) - published digest verification contract.
 - [`gates.md`](reference/gates.md) - what each local assertion and generation helper enforces, including the Python publication resolver, alias, attestation, provenance, certificate, trust-contract, and publish-scope policies.
 - [`verification-contract.md`](reference/verification-contract.md) - summary of PR, publish, and post-publish verification boundaries.
-- [`../../contracts/image-manifest.json`](../../contracts/image-manifest.json) - schema-validated image contract values consumers can verify.
-- [`../../contracts/examples/README.md`](../../contracts/examples/README.md) - worked example for checking a pulled digest against the manifest.
+- [`../contracts/image-manifest.json`](../contracts/image-manifest.json) - schema-validated image contract values consumers can verify.
+- [`../contracts/examples/README.md`](../contracts/examples/README.md) - worked example for checking a pulled digest against the manifest.
 
 ## Explanation
 
