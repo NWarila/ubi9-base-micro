@@ -102,7 +102,9 @@ publisher grants package-write or OIDC authority only to jobs that need it,
 guards every independently executable privileged job to the base repository,
 and accepts only `main` or `python/v*` pushes. Repository verification checks the
 publisher's closed Bake invocation, digest-only export, subject matrix, identity,
-two-phase alias ordering, and fail-closed guards.
+two-phase alias ordering, and fail-closed guards, then uses whole-workflow SHA-256
+and byte-length locks as a fallback when no semantic diagnostic fires. The locks
+do not cover external code.
 
 Renovate tracks the Buildx release version and the BuildKit
 version-plus-digest reference through separate managers with automerge disabled.

