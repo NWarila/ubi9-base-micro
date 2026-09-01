@@ -129,12 +129,14 @@ binding or effective values.
 
 Each complete workflow is also bound to an expected SHA-256 and byte length. The
 named semantic validator runs first; only when it returns no errors does the
-whole-file lock run as a fallback. Guard B therefore has no version-integrity
-semantics, and the registry container has no named semantic guard, while the two
-surface locks backstop the consistent whole-repository checkout downgrade and the
-release-preflight registry-digest substitution. The fallback preserves pass/fail,
-not complete multi-defect reporting: a semantic failure suppresses the lock, so a
-maintainer may encounter a second failure after fixing the first.
+whole-file lock run as a fallback. The checkout-consistency guard therefore has no
+version-integrity semantics, and the registry container has no named semantic
+guard, while the two surface locks backstop the consistent whole-repository
+checkout downgrade, the release-preflight registry-digest substitution, and
+BuildKit or Docker-version reassignments outside those presence checks. The
+fallback preserves pass/fail, not complete multi-defect reporting: a semantic
+failure suppresses the lock, so a maintainer may encounter a second failure after
+fixing the first.
 
 A legitimate edit to one locked workflow requires resolving any named semantic
 guard it intentionally changes, updating that workflow's digest and its byte count

