@@ -97,17 +97,22 @@ write, not an external or project publication: it creates no project package,
 public or moving alias, production signature or attestation, SLSA or Rekor
 record, or consumer-resolvable digest.
 
-The surviving `publish-python.yaml` verifier applies 28 named semantic rejection
-guards: trigger, job graph, concurrency, exact permission inventory, nine
+The surviving `publish-python.yaml` verifier applies named semantic rejection
+guards covering trigger, job graph, concurrency, exact permission inventory, nine
 base-repository guards, fail-closed spellings, Cosign action/version/adjacency,
 SLSA generator caller, digest exporter, closed release argv, OCI label binding,
 attestation subject matrix, signing, trust contract, provenance, alias ordering,
 alias collisions, independent verification, contract identity, publish scope,
 gate battery, index dataflow, absence-proof publication, SLSA execution-certificate
-binding, pre-alias absence, and tag isolation. The deleted secret-reference, registry-credential,
-OIDC/signing-absence, registry-container, Docker-floor, and BuildKit-network
-preflight checks have no live equivalent. The `python / required` reducer is not
-a required repository status context.
+binding, pre-alias absence, tag isolation, scanner-DB age, checkout-SHA consistency,
+direct network-fetch-to-shell pipelines, runner timeouts, BuildKit host networking,
+the Docker server floor, and the pull-request preflight's zero `secrets.*` surface.
+The deleted registry-credential, OIDC/signing-absence, and registry-container
+preflight checks have no live equivalent. Checkout pins are required to remain
+consistent across repository workflows, but this local consistency property cannot
+reject a consistent whole-repository downgrade; that remains reviewable by Renovate
+and PR review. The `python / required` reducer is not a required repository status
+context.
 
 The publish path uses exact certificate identities. The repository workflow
 identity signs image signatures and repository-generated predicates; the SLSA

