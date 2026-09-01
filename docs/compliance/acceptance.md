@@ -67,9 +67,7 @@ package-write and OIDC permissions exist only on jobs that push, sign, or attest
 and every independently guarded privileged job requires the exact base
 repository. The verifier checks those boundaries, the `main` and `python/v*`
 trigger namespace, the digest-only export, complete evidence subject matrix,
-exact identities, collision checks, and alias ordering. It also binds each
-complete workflow to an expected SHA-256 and byte length. Those locks do not
-cover pinned external code or every possible caller spelling. Neither preflight
+exact identities, collision checks, and alias ordering. Neither preflight
 creates a package in the project namespace, a public or moving alias, a
 signature, a Cosign or GitHub artifact attestation, a SLSA or Rekor record, or a
 consumer-resolvable digest. Before the production workflow merged, this path had

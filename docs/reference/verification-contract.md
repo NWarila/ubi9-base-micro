@@ -104,9 +104,7 @@ SLSA generator caller, digest exporter, closed release argv, OCI label binding,
 attestation subject matrix, signing, trust contract, provenance, alias ordering,
 alias collisions, independent verification, contract identity, publish scope,
 gate battery, index dataflow, absence-proof publication, SLSA execution-certificate
-binding, pre-alias absence, and tag isolation. It also binds the complete file to
-an expected SHA-256 and byte length. That surface lock is a drift alarm, not a
-semantic replacement. The deleted secret-reference, registry-credential,
+binding, pre-alias absence, and tag isolation. The deleted secret-reference, registry-credential,
 OIDC/signing-absence, registry-container, Docker-floor, and BuildKit-network
 preflight checks have no live equivalent. The `python / required` reducer is not
 a required repository status context.

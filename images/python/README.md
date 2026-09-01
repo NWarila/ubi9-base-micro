@@ -100,11 +100,9 @@ The Python CI and pull-request preflight jobs grant `contents: read` only and
 contain no external registry credential or login surface. The production
 publisher grants package-write or OIDC authority only to jobs that need it,
 guards every independently executable privileged job to the base repository,
-and accepts only `main` or `python/v*` pushes. Repository verification binds each
-complete workflow to an expected SHA-256 and byte length and also locks the
+and accepts only `main` or `python/v*` pushes. Repository verification checks the
 publisher's closed Bake invocation, digest-only export, subject matrix, identity,
-two-phase alias ordering, and fail-closed guards. Those locks do not cover
-pinned external code.
+two-phase alias ordering, and fail-closed guards.
 
 Renovate tracks the Buildx release version and the BuildKit
 version-plus-digest reference through separate managers with automerge disabled.

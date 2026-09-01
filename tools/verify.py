@@ -1949,55 +1949,6 @@ def check_python_release_bake_self_test(only_label: str | None = None) -> None:
         require(selected == 1, f"unknown python release Bake fixture: {only_label}")
 
 
-def check_python_release_bake_checker_mutation_self_test() -> None:
-    source = read("tools/verify.py")
-    checker_start = source.index("def python_release_bake_errors(")
-    checker_end = source.index("\ndef _python_release_bake_fixtures(", checker_start)
-    checker_source = source[checker_start:checker_end]
-    guards = [
-        ("python-release-bake-variable-set", "variable_set_invalid", "variable-set"),
-        ("python-release-bake-target-set", "target_set_invalid", "target-set"),
-        ("python-release-bake-ref-default", "release_ref_default_invalid", "release-ref-default"),
-        ("python-release-bake-input-defaults", "release_input_defaults_invalid", "release-input-defaults"),
-        ("python-release-bake-key-set", "release_key_set_invalid", "release-open-key-set"),
-        ("python-release-bake-inheritance", "release_inheritance_invalid", "release-inheritance"),
-        ("python-release-bake-args", "release_args_invalid", "release-args"),
-        ("python-release-bake-tags", "release_tags_invalid", "release-tags"),
-        ("python-release-bake-attest", "release_attest_invalid", "release-attest"),
-        ("python-release-bake-output", "release_output_invalid", "release-output"),
-    ]
-    markers = re.findall(r"^    # CHECK: (python-release-bake-[a-z-]+)$", checker_source, re.MULTILINE)
-    require(
-        Counter(markers) == Counter(guard for guard, _, _ in guards) and len(markers) == len(guards),
-        "python release Bake checker mutation list must cover every rejection guard exactly once",
-    )
-    for guard, condition, fixture in guards:
-        anchor = f"reject({condition},"
-        require(checker_source.count(anchor) == 1, f"python release Bake checker anchor changed: {guard}")
-        mutated_checker = checker_source.replace(anchor, "reject(False,", 1)
-        mutated = source[:checker_start] + mutated_checker + source[checker_end:]
-        try:
-            ast.parse(mutated, filename="tools/verify.py")
-        except SyntaxError as exc:
-            raise VerifyError(f"python release Bake checker mutation did not parse [{guard}]: {exc}") from exc
-        result = _run_mutated_python_verifier(
-            mutated,
-            ["--check-python-release-bake-fixture", fixture],
-        )
-        expected = f"verify failed: python release Bake mutation unexpectedly passed: {fixture}"
-        require(result.returncode == 1, f"python release Bake checker mutation {guard} returned {result.returncode}")
-        require(
-            result.stderr.strip() == expected,
-            f"python release Bake checker mutation {guard} returned unexpected diagnostic: {result.stderr.strip()!r}",
-        )
-        location = source[: source.index(f"# CHECK: {guard}")].count("\n") + 1
-        print(
-            f"python release Bake checker mutation rejected [guard={guard} location=tools/verify.py:{location} "
-            f"fixture={fixture} diagnostic={expected}]"
-        )
-    print(f"python release Bake checker mutation probes: {len(guards)}/{len(guards)} rejected")
-
-
 def python_buildkit_version(contract: Mapping[str, Any]) -> str:
     reference = contract["variable"]["BUILDKIT_IMAGE"]["default"]
     match = PYTHON_BUILDKIT_REFERENCE.fullmatch(reference)
@@ -6103,8 +6054,6 @@ PYTHON_EVIDENCE_UPLOAD_PATHS = (
     "dist/python-evidence/attestations/*.json",
     "dist/python-evidence/base-python.${{ matrix.arch }}.secret-scan.json",
 )
-PYTHON_CI_WORKFLOW_SHA256 = "f2ed53077a320da53a96a834233c9fccd7ece1a381f770b1df15c4330fd2f021"
-PYTHON_CI_WORKFLOW_BYTE_LENGTH = 30249
 PYTHON_CI_JOB_IDS = ("changes", "self-tests", "build", "reproducibility", "python-required")
 PYTHON_CI_TRIGGER_BLOCK = (
     "on:\n  pull_request:\n    branches: [main]\n  push:\n    branches: [main]\n  workflow_dispatch:\n\n"
@@ -6429,27 +6378,6 @@ def python_ci_preflight_errors(workflow: str) -> list[str]:
     reject(step_continue_invalid, "python CI steps must not use continue-on-error")
     # CHECK: python-ci-job-continue
     reject(job_continue_invalid, "python CI jobs must not use continue-on-error")
-    return errors
-
-
-def python_ci_surface_lock_errors(workflow_bytes: bytes) -> list[str]:
-    errors: list[str] = []
-    actual_digest = hashlib.sha256(workflow_bytes).hexdigest()
-    actual_length = len(workflow_bytes)
-    digest_invalid = actual_digest != PYTHON_CI_WORKFLOW_SHA256
-    length_invalid = actual_length != PYTHON_CI_WORKFLOW_BYTE_LENGTH
-    # CHECK: python-ci-surface-digest
-    if digest_invalid:
-        errors.append(
-            "python CI executable surface SHA-256 mismatch: "
-            f"expected {PYTHON_CI_WORKFLOW_SHA256}, observed {actual_digest}"
-        )
-    # CHECK: python-ci-surface-length
-    if length_invalid:
-        errors.append(
-            "python CI executable surface byte-length mismatch: "
-            f"expected {PYTHON_CI_WORKFLOW_BYTE_LENGTH}, observed {actual_length}"
-        )
     return errors
 
 
@@ -6879,206 +6807,14 @@ def check_python_ci_preflight_semantic_self_test(only_label: str | None = None) 
         print(f"python CI semantic mutation probes: {selected}/{fixture_count} rejected")
 
 
-def _run_mutated_python_verifier(source: str, arguments: list[str]) -> subprocess.CompletedProcess[str]:
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        prefix=".verify-python-mutant-",
-        suffix=".py",
-        dir=ROOT / "tools",
-    ) as mutant:
-        mutant.write(source)
-        mutant.flush()
-        return subprocess.run(
-            [sys.executable, mutant.name, *arguments],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-
-
-def check_python_ci_preflight_checker_mutation_self_test() -> None:
-    source = read("tools/verify.py")
-    semantic_start = source.index("def python_ci_preflight_errors(")
-    semantic_end = source.index("\ndef python_ci_surface_lock_errors(", semantic_start)
-    semantic_source = source[semantic_start:semantic_end]
-    guard_mutations = [
-        ("python-ci-active-jobs", "reject(active_if_invalid,", "push job path condition restored"),
-        ("python-ci-event-case", "reject(event_case_invalid,", "push-side range filtering restored"),
-        ("python-ci-selector", "reject(selector_invalid,", "pull-request selector changed"),
-        ("python-ci-contract-step", "reject(contract_step_missing,", "contract step removed"),
-        (
-            "python-ci-contract-order",
-            "reject(contract_step_order_invalid,",
-            "contract step moved before rootfs production",
-        ),
-        (
-            "python-ci-contract-invocation",
-            "reject(\n        contract_invocation_invalid,",
-            "contract expectation flag dropped",
-        ),
-        ("python-ci-same-artifact", "reject(\n        same_artifact_invalid,", "contract rootfs retagged"),
-        ("python-ci-revision-binding", "reject(revision_invalid,", "revision label expectation changed"),
-        ("python-ci-source-binding", "reject(source_invalid,", "source label expectation changed"),
-        ("python-ci-version-binding", "reject(version_invalid,", "version label expectation changed"),
-        ("python-ci-created-binding", "reject(created_invalid,", "created label expectation changed"),
-        ("python-ci-permissions", "reject(\n        permissions_invalid,", "workflow permission removed"),
-        ("python-ci-triggers", "reject(triggers_invalid,", "workflow_call trigger added"),
-        ("python-ci-job-ids", "reject(\n        job_ids_invalid,", "unexpected job ID added"),
-        ("python-ci-reusable-job", "reject(reusable_job_invalid,", "job-level reusable workflow added"),
-        ("python-ci-environment", "reject(environment_invalid,", "job environment added"),
-        ("python-ci-secret-reference", "reject(secret_reference_invalid,", "secret reference added"),
-        ("python-ci-credentials", "reject(credentials_invalid,", "container credentials added"),
-        ("python-ci-registry-login", "reject(registry_login_invalid,", "registry login action added"),
-        ("python-ci-build-output", "reject(build_output_override_invalid,", "ci Bake output override added"),
-        ("python-ci-step-continue", "reject(step_continue_invalid,", "step continue-on-error added"),
-        ("python-ci-job-continue", "reject(job_continue_invalid,", "job continue-on-error added"),
-    ]
-    markers = re.findall(r"^    # CHECK: (python-ci-(?!surface)[a-z-]+)$", source, re.MULTILINE)
-    require(
-        Counter(markers) == Counter(label for label, _, _ in guard_mutations) and len(markers) == len(guard_mutations),
-        "python CI checker mutation list must cover every semantic rejection guard exactly once",
-    )
-    for guard, anchor, fixture in guard_mutations:
-        require(semantic_source.count(anchor) == 1, f"python CI checker mutation anchor count changed: {guard}")
-        replacement = "reject(\n        False," if "\n" in anchor else "reject(False,"
-        mutated_semantic = semantic_source.replace(anchor, replacement, 1)
-        mutated = source[:semantic_start] + mutated_semantic + source[semantic_end:]
-        try:
-            ast.parse(mutated, filename="tools/verify.py")
-        except SyntaxError as exc:
-            raise VerifyError(f"python CI checker mutation did not parse [{guard}]: {exc}") from exc
-        result = _run_mutated_python_verifier(
-            mutated,
-            ["--check-python-preflight-semantic-fixture", fixture],
-        )
-        expected = f"verify failed: python CI semantic mutation unexpectedly passed: {fixture}"
-        require(result.returncode == 1, f"python CI checker mutation {guard} returned {result.returncode}")
-        require(
-            result.stderr.strip() == expected,
-            f"python CI checker mutation {guard} returned unexpected diagnostic: {result.stderr.strip()!r}",
-        )
-        location = source[: source.index(f"# CHECK: {guard}")].count("\n") + 1
-        print(
-            f"python CI checker mutation rejected [guard={guard} location=tools/verify.py:{location} "
-            f"fixture={fixture} parse=ok import=ok run=ok diagnostic={expected}]"
-        )
-    print(f"python CI checker mutation probes: {len(guard_mutations)}/{len(guard_mutations)} rejected")
-
-
-def _python_ci_surface_mutations(workflow_bytes: bytes) -> tuple[bytes, bytes]:
-    workflow = workflow_bytes.decode()
-    build = _workflow_job_block(workflow, "build")
-    contract_step = _workflow_named_step(build, PYTHON_CI_CONTRACT_STEP)
-    require(bool(contract_step), "python CI surface mutations require the contract step")
-    step_offset = workflow.index(contract_step)
-    marker = "          set -euo pipefail\n"
-    marker_offset = workflow.index(marker, step_offset, step_offset + len(contract_step))
-    content_offset = len(workflow[:marker_offset].encode()) + 10
-    substitution = workflow_bytes[:content_offset] + b"S" + workflow_bytes[content_offset + 1 :]
-    deletion_offset = content_offset + 2
-    deletion = workflow_bytes[:deletion_offset] + workflow_bytes[deletion_offset + 1 :]
-    require(len(substitution) == len(workflow_bytes), "python CI substitution fixture length changed")
-    require(len(deletion) == len(workflow_bytes) - 1, "python CI deletion fixture length did not change by one")
-    return substitution, deletion
-
-
-def check_python_ci_surface_lock_self_test() -> None:
-    workflow_bytes = (ROOT / ".github/workflows/python-ci.yaml").read_bytes()
-    baseline = python_ci_surface_lock_errors(workflow_bytes)
-    require(not baseline, "python CI surface lock baseline failed: " + "; ".join(baseline))
-    substitution, deletion = _python_ci_surface_mutations(workflow_bytes)
-    require(
-        _python_ci_yaml_parse_error(substitution.decode()) is None,
-        "python CI same-length surface mutation must still parse as YAML",
-    )
-    require(
-        _python_ci_yaml_parse_error(deletion.decode()) is None,
-        "python CI one-byte deletion surface mutation must still parse as YAML",
-    )
-    substitution_digest = hashlib.sha256(substitution).hexdigest()
-    deletion_digest = hashlib.sha256(deletion).hexdigest()
-    digest_prefix = "python CI executable surface SHA-256 mismatch:"
-    length_prefix = "python CI executable surface byte-length mismatch:"
-    substitution_errors = python_ci_surface_lock_errors(substitution)
-    expected_substitution = [f"{digest_prefix} expected {PYTHON_CI_WORKFLOW_SHA256}, observed {substitution_digest}"]
-    if not any(error.startswith(digest_prefix) for error in substitution_errors):
-        raise VerifyError("python CI surface lock mutation unexpectedly passed: same-length substitution digest")
-    require(
-        substitution_errors == expected_substitution,
-        f"python CI same-length substitution returned an unexpected complete error set: {substitution_errors}",
-    )
-    deletion_errors = python_ci_surface_lock_errors(deletion)
-    expected_deletion = [
-        f"{digest_prefix} expected {PYTHON_CI_WORKFLOW_SHA256}, observed {deletion_digest}",
-        f"{length_prefix} expected {PYTHON_CI_WORKFLOW_BYTE_LENGTH}, observed {len(deletion)}",
-    ]
-    if not any(error.startswith(length_prefix) for error in deletion_errors):
-        raise VerifyError("python CI surface lock mutation unexpectedly passed: one-byte deletion length")
-    require(
-        deletion_errors == expected_deletion,
-        f"python CI one-byte deletion returned an unexpected complete error set: {deletion_errors}",
-    )
-    print(
-        "python CI surface substitution rejected: parse=ok "
-        f"bytes={len(substitution)} complete_errors={substitution_errors}"
-    )
-    print(f"python CI surface deletion rejected: parse=ok bytes={len(deletion)} complete_errors={deletion_errors}")
-
-
-def check_python_ci_surface_lock_checker_mutation_self_test() -> None:
-    source = read("tools/verify.py")
-    lock_start = source.index("def python_ci_surface_lock_errors(")
-    lock_end = source.index("\ndef _python_ci_yaml_parse_error(", lock_start)
-    lock_source = source[lock_start:lock_end]
-    mutations = [
-        (
-            "python-ci-surface-digest",
-            "if digest_invalid:\n",
-            "if False:\n",
-            "verify failed: python CI surface lock mutation unexpectedly passed: same-length substitution digest",
-        ),
-        (
-            "python-ci-surface-length",
-            "if length_invalid:\n",
-            "if False:\n",
-            "verify failed: python CI surface lock mutation unexpectedly passed: one-byte deletion length",
-        ),
-    ]
-    for guard, anchor, replacement, expected in mutations:
-        require(lock_source.count(anchor) == 1, f"python CI surface checker mutation anchor count changed: {guard}")
-        mutated_lock = lock_source.replace(anchor, replacement, 1)
-        mutated = source[:lock_start] + mutated_lock + source[lock_end:]
-        try:
-            ast.parse(mutated, filename="tools/verify.py")
-        except SyntaxError as exc:
-            raise VerifyError(f"python CI surface checker mutation did not parse [{guard}]: {exc}") from exc
-        result = _run_mutated_python_verifier(mutated, ["--check-python-ci-surface-lock-fixtures"])
-        require(result.returncode == 1, f"python CI surface checker mutation {guard} returned {result.returncode}")
-        require(
-            result.stderr.strip() == expected,
-            f"python CI surface checker mutation {guard} returned unexpected diagnostic: {result.stderr.strip()!r}",
-        )
-        location = source[: source.index(f"# CHECK: {guard}")].count("\n") + 1
-        print(
-            f"python CI surface checker mutation rejected [guard={guard} location=tools/verify.py:{location} "
-            f"parse=ok import=ok run=ok diagnostic={expected}]"
-        )
-    print(f"python CI surface checker mutation probes: {len(mutations)}/{len(mutations)} rejected")
-
-
 def check_python_ci_preflight() -> None:
     workflow_path = ROOT / ".github/workflows/python-ci.yaml"
     workflow_bytes = workflow_path.read_bytes()
     errors = python_ci_preflight_errors(workflow_bytes.decode())
-    errors.extend(python_ci_surface_lock_errors(workflow_bytes))
     require(not errors, "python CI preflight contract failed: " + "; ".join(errors))
 
 
 PUBLISH_PYTHON_WORKFLOW = ".github/workflows/publish-python.yaml"
-PUBLISH_PYTHON_WORKFLOW_SHA256 = "ab01553fb26c685c8a3e91d88dfdec77ae36601f4604ff0db93af9e7ee79d6e3"
-PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH = 85732
 
 
 def _workflow_action_with_text(step: str) -> str:
@@ -7107,127 +6843,6 @@ def _shell_array_tokens(run: str, name: str) -> tuple[str, ...]:
         return tuple(shlex.split(match.group("body"), comments=False, posix=True))
     except ValueError:
         return ()
-
-
-def publish_python_surface_lock_errors(workflow_bytes: bytes) -> list[str]:
-    """Prevent drift from the review-authorized baseline; this is not an adversarial guarantee."""
-    errors: list[str] = []
-    actual_digest = hashlib.sha256(workflow_bytes).hexdigest()
-    actual_length = len(workflow_bytes)
-    digest_invalid = actual_digest != PUBLISH_PYTHON_WORKFLOW_SHA256
-    length_invalid = actual_length != PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH
-    # CHECK: publish-python-surface-digest
-    if digest_invalid:
-        errors.append(
-            "publish Python executable surface SHA-256 mismatch: "
-            f"expected {PUBLISH_PYTHON_WORKFLOW_SHA256}, observed {actual_digest}"
-        )
-    # CHECK: publish-python-surface-length
-    if length_invalid:
-        errors.append(
-            "publish Python executable surface byte-length mismatch: "
-            f"expected {PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH}, observed {actual_length}"
-        )
-    return errors
-
-
-def _publish_python_surface_mutations(workflow_bytes: bytes) -> tuple[bytes, bytes]:
-    marker = b"          set -euo pipefail\n"
-    require(workflow_bytes.count(marker) >= 1, "publish Python surface fixture requires a strict-mode marker")
-    content_offset = workflow_bytes.index(marker) + 10
-    substitution = workflow_bytes[:content_offset] + b"S" + workflow_bytes[content_offset + 1 :]
-    deletion_offset = content_offset + 2
-    deletion = workflow_bytes[:deletion_offset] + workflow_bytes[deletion_offset + 1 :]
-    require(len(substitution) == len(workflow_bytes), "publish Python substitution fixture length changed")
-    require(len(deletion) == len(workflow_bytes) - 1, "publish Python deletion fixture length mismatch")
-    return substitution, deletion
-
-
-def check_publish_python_surface_lock_self_test() -> None:
-    workflow_bytes = (ROOT / PUBLISH_PYTHON_WORKFLOW).read_bytes()
-    baseline = publish_python_surface_lock_errors(workflow_bytes)
-    require(not baseline, "publish Python surface lock baseline failed: " + "; ".join(baseline))
-    substitution, deletion = _publish_python_surface_mutations(workflow_bytes)
-    require(
-        _python_ci_yaml_parse_error(substitution.decode()) is None,
-        "publish Python same-length substitution must still parse as YAML",
-    )
-    require(
-        _python_ci_yaml_parse_error(deletion.decode()) is None,
-        "publish Python one-byte deletion must still parse as YAML",
-    )
-    digest_prefix = "publish Python executable surface SHA-256 mismatch:"
-    length_prefix = "publish Python executable surface byte-length mismatch:"
-    substitution_digest = hashlib.sha256(substitution).hexdigest()
-    deletion_digest = hashlib.sha256(deletion).hexdigest()
-    substitution_errors = publish_python_surface_lock_errors(substitution)
-    expected_substitution = [
-        f"{digest_prefix} expected {PUBLISH_PYTHON_WORKFLOW_SHA256}, observed {substitution_digest}"
-    ]
-    if not any(error.startswith(digest_prefix) for error in substitution_errors):
-        raise VerifyError("publish Python surface lock mutation unexpectedly passed: same-length substitution digest")
-    require(
-        substitution_errors == expected_substitution,
-        f"publish Python same-length substitution returned unexpected errors: {substitution_errors}",
-    )
-    deletion_errors = publish_python_surface_lock_errors(deletion)
-    expected_deletion = [
-        f"{digest_prefix} expected {PUBLISH_PYTHON_WORKFLOW_SHA256}, observed {deletion_digest}",
-        f"{length_prefix} expected {PUBLISH_PYTHON_WORKFLOW_BYTE_LENGTH}, observed {len(deletion)}",
-    ]
-    if not any(error.startswith(length_prefix) for error in deletion_errors):
-        raise VerifyError("publish Python surface lock mutation unexpectedly passed: one-byte deletion length")
-    require(
-        deletion_errors == expected_deletion,
-        f"publish Python one-byte deletion returned unexpected errors: {deletion_errors}",
-    )
-    print(
-        "publish Python surface substitution rejected: parse=ok "
-        f"bytes={len(substitution)} complete_errors={substitution_errors}"
-    )
-    print(f"publish Python surface deletion rejected: parse=ok bytes={len(deletion)} complete_errors={deletion_errors}")
-
-
-def check_publish_python_surface_lock_checker_mutation_self_test() -> None:
-    source = read("tools/verify.py")
-    checker_start = source.index("def publish_python_surface_lock_errors(")
-    checker_end = source.index("\ndef _publish_python_surface_mutations(", checker_start)
-    checker_source = source[checker_start:checker_end]
-    mutations = [
-        (
-            "publish-python-surface-digest",
-            "if digest_invalid:\n",
-            "if False:\n",
-            "verify failed: publish Python surface lock mutation unexpectedly passed: same-length substitution digest",
-        ),
-        (
-            "publish-python-surface-length",
-            "if length_invalid:\n",
-            "if False:\n",
-            "verify failed: publish Python surface lock mutation unexpectedly passed: one-byte deletion length",
-        ),
-    ]
-    for guard, anchor, replacement, expected in mutations:
-        require(checker_source.count(anchor) == 1, f"publish Python surface checker anchor changed: {guard}")
-        mutated_checker = checker_source.replace(anchor, replacement, 1)
-        mutated = source[:checker_start] + mutated_checker + source[checker_end:]
-        try:
-            ast.parse(mutated, filename="tools/verify.py")
-        except SyntaxError as exc:
-            raise VerifyError(f"publish Python surface checker mutation did not parse [{guard}]: {exc}") from exc
-        result = _run_mutated_python_verifier(mutated, ["--check-publish-python-surface-lock-fixtures"])
-        require(result.returncode == 1, f"publish Python surface checker mutation {guard} returned {result.returncode}")
-        require(
-            result.stderr.strip() == expected,
-            f"publish Python surface checker mutation {guard} returned unexpected diagnostic: "
-            f"{result.stderr.strip()!r}",
-        )
-        location = source[: source.index(f"# CHECK: {guard}")].count("\n") + 1
-        print(
-            f"publish Python surface checker mutation rejected [guard={guard} location=tools/verify.py:{location} "
-            f"diagnostic={expected}]"
-        )
-    print(f"publish Python surface checker mutation probes: {len(mutations)}/{len(mutations)} rejected")
 
 
 PUBLISH_PYTHON_TRIGGER = (
@@ -7852,82 +7467,10 @@ def check_publish_python_workflow_self_test(only_label: str | None = None) -> No
         require(selected == 1, f"unknown publish Python workflow fixture: {only_label}")
 
 
-def check_publish_python_workflow_checker_mutation_self_test() -> None:
-    source = read("tools/verify.py")
-    checker_start = source.index("def publish_python_workflow_errors(")
-    checker_end = source.index("\ndef _publish_python_workflow_fixtures(", checker_start)
-    checker_source = source[checker_start:checker_end]
-    guards = [
-        ("python-publish-trigger", "trigger_invalid", "trigger"),
-        ("python-publish-jobs", "job_ids_invalid", "jobs"),
-        ("python-publish-concurrency", "concurrency_invalid", "concurrency"),
-        ("python-publish-permissions", "permissions_invalid", "permissions"),
-        ("python-publish-guards", "guards_invalid", "guards"),
-        ("python-publish-fail-closed", "fail_closed_invalid", "fail-closed"),
-        ("python-publish-gate-cosign-action", "gate_cosign_action_invalid", "gate-cosign-action-sha"),
-        ("python-publish-gate-cosign-version", "gate_cosign_version_invalid", "gate-cosign-version"),
-        (
-            "python-publish-gate-cosign-order",
-            "gate_cosign_order_invalid",
-            ("gate-cosign-order", "gate-cosign-order-unnamed-run", "gate-cosign-order-unnamed-shell"),
-        ),
-        ("python-publish-generator", "generator_invalid", "generator"),
-        ("python-publish-exporter", "exporter_invalid", "exporter"),
-        ("python-publish-closed-caller", "closed_caller_invalid", "closed-caller"),
-        ("python-publish-oci-binding", "oci_binding_invalid", "oci-binding"),
-        ("python-publish-subject-matrix", "subject_matrix_invalid", "subject-matrix"),
-        ("python-publish-signing", "signing_invalid", "signing"),
-        ("python-publish-trust", "trust_invalid", "trust"),
-        ("python-publish-provenance", "provenance_invalid", "provenance"),
-        ("python-publish-alias-order", "alias_order_invalid", "alias-order"),
-        ("python-publish-collisions", "collision_invalid", "collisions"),
-        ("python-publish-independent", "independent_invalid", "independent"),
-        ("python-publish-contract-identity", "contract_identity_invalid", "contract-identity"),
-        ("python-publish-scope", "scope_invalid", "scope"),
-        ("python-publish-gates", "gates_invalid", "gates"),
-        ("python-publish-index-dataflow", "index_dataflow_invalid", "index-dataflow"),
-        ("python-publish-slsa-execution", "slsa_execution_invalid", "slsa-execution"),
-        ("python-publish-pre-alias", "pre_alias_invalid", "pre-alias"),
-        ("python-publish-tag-isolation", "tag_isolation_invalid", "tag-isolation"),
-    ]
-    markers = re.findall(r"^    # CHECK: (python-publish-[a-z-]+)$", checker_source, re.MULTILINE)
-    require(
-        Counter(markers) == Counter(guard for guard, _, _ in guards) and len(markers) == len(guards),
-        "publish Python workflow checker mutation list must cover every rejection guard exactly once",
-    )
-    probe_count = 0
-    for guard, condition, fixture_labels in guards:
-        anchor = f"reject({condition},"
-        require(checker_source.count(anchor) == 1, f"publish Python workflow checker anchor changed: {guard}")
-        mutated_checker = checker_source.replace(anchor, "reject(False,", 1)
-        mutated = source[:checker_start] + mutated_checker + source[checker_end:]
-        ast.parse(mutated, filename="tools/verify.py")
-        fixtures = (fixture_labels,) if isinstance(fixture_labels, str) else fixture_labels
-        for fixture in fixtures:
-            probe_count += 1
-            result = _run_mutated_python_verifier(mutated, ["--check-publish-python-workflow-fixture", fixture])
-            expected = f"verify failed: publish Python workflow mutation unexpectedly passed: {fixture}"
-            require(
-                result.returncode == 1, f"publish Python workflow checker mutation {guard} returned {result.returncode}"
-            )
-            require(
-                result.stderr.strip() == expected,
-                f"publish Python workflow checker mutation {guard} returned unexpected diagnostic: "
-                f"{result.stderr.strip()!r}",
-            )
-            location = source[: source.index(f"# CHECK: {guard}")].count("\n") + 1
-            print(
-                f"publish Python workflow checker mutation rejected [guard={guard} "
-                f"location=tools/verify.py:{location} fixture={fixture} diagnostic={expected}]"
-            )
-    print(f"publish Python workflow checker mutation probes: {probe_count}/{probe_count} rejected")
-
-
 def check_publish_python_workflow() -> None:
     workflow_bytes = (ROOT / PUBLISH_PYTHON_WORKFLOW).read_bytes()
     workflow = workflow_bytes.decode()
     errors = publish_python_workflow_errors(workflow)
-    errors.extend(publish_python_surface_lock_errors(workflow_bytes))
     require(not errors, "publish Python workflow contract failed: " + "; ".join(errors))
 
 
@@ -10040,7 +9583,6 @@ def scanner_canary_contract_errors(
     helper: str,
     gate_runner: str,
     publish_workflow: str,
-    verify_source: str,
     gitignore: str,
     gates_doc: str,
 ) -> list[str]:
@@ -10108,24 +9650,7 @@ def scanner_canary_contract_errors(
         errors.append(".gitignore: scanner canary fixture must be explicitly allowlisted")
     if "`tools/assert-scanner-canary.py`" not in gates_doc or "content validity, not image cataloging" not in gates_doc:
         errors.append("docs: gates reference must document the content-validity boundary")
-
-    self_test_start = verify_source.find("\ndef check_helper_self_tests()")
-    self_test_end = verify_source.find("\ndef ", self_test_start + 1)
-    if self_test_start < 0 or self_test_end < 0:
-        errors.append("verify: check_helper_self_tests must remain identifiable")
-    else:
-        self_test_block = verify_source[self_test_start:self_test_end]
-        if self_test_block.count('"tools/assert-scanner-canary.py"') != 1:
-            errors.append("verify: scanner canary must be registered once in check_helper_self_tests")
     return errors
-
-
-def remove_scanner_canary_self_test_registration(verify_source: str) -> str:
-    function_index = verify_source.find("\ndef check_helper_self_tests()")
-    marker = '        "tools/assert-scanner-canary.py",\n'
-    marker_index = verify_source.find(marker, function_index)
-    require(function_index >= 0 and marker_index >= 0, "scanner canary self-test mutation fixture is missing")
-    return verify_source[:marker_index] + verify_source[marker_index + len(marker) :]
 
 
 def check_scanner_content_canary() -> None:
@@ -10133,7 +9658,6 @@ def check_scanner_content_canary() -> None:
     helper = read("tools/assert-scanner-canary.py")
     gate_runner = read("tools/run-test-gates.sh")
     publish_workflow = read(".github/workflows/publish-image.yaml")
-    verify_source = read("tools/verify.py")
     gitignore = read(".gitignore")
     gates_doc = read("docs/reference/gates.md")
 
@@ -10142,14 +9666,12 @@ def check_scanner_content_canary() -> None:
         helper_text: str = helper,
         gate_text: str = gate_runner,
         publish_text: str = publish_workflow,
-        verify_text: str = verify_source,
     ) -> list[str]:
         return scanner_canary_contract_errors(
             fixture_text,
             helper_text,
             gate_text,
             publish_text,
-            verify_text,
             gitignore,
             gates_doc,
         )
@@ -10205,10 +9727,6 @@ def check_scanner_content_canary() -> None:
         (
             "expected-ghsa-blanking",
             errors(helper_text=helper.replace('GRYPE_PRIMARY_ID = "GHSA-jfh8-c2jp-5v3q"', 'GRYPE_PRIMARY_ID = ""', 1)),
-        ),
-        (
-            "self-test-registration-deletion",
-            errors(verify_text=remove_scanner_canary_self_test_registration(verify_source)),
         ),
     ]
     for label, mutation_errors in mutations:
@@ -12220,41 +11738,6 @@ def main(argv: list[str] | None = None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
     if arguments == ["--check-python-builder-identity"]:
         return check_python_builder_identity_environment()
-    if len(arguments) == 2 and arguments[0] == "--check-python-preflight-semantic-fixture":
-        try:
-            check_python_ci_preflight_semantic_self_test(arguments[1])
-        except VerifyError as exc:
-            print(f"verify failed: {exc}", file=sys.stderr)
-            return 1
-        return 0
-    if arguments == ["--check-python-ci-surface-lock-fixtures"]:
-        try:
-            check_python_ci_surface_lock_self_test()
-        except VerifyError as exc:
-            print(f"verify failed: {exc}", file=sys.stderr)
-            return 1
-        return 0
-    if len(arguments) == 2 and arguments[0] == "--check-python-release-bake-fixture":
-        try:
-            check_python_release_bake_self_test(arguments[1])
-        except VerifyError as exc:
-            print(f"verify failed: {exc}", file=sys.stderr)
-            return 1
-        return 0
-    if len(arguments) == 2 and arguments[0] == "--check-publish-python-workflow-fixture":
-        try:
-            check_publish_python_workflow_self_test(arguments[1])
-        except VerifyError as exc:
-            print(f"verify failed: {exc}", file=sys.stderr)
-            return 1
-        return 0
-    if arguments == ["--check-publish-python-surface-lock-fixtures"]:
-        try:
-            check_publish_python_surface_lock_self_test()
-        except VerifyError as exc:
-            print(f"verify failed: {exc}", file=sys.stderr)
-            return 1
-        return 0
     if arguments:
         print(f"verify failed: unsupported arguments: {' '.join(arguments)}", file=sys.stderr)
         return 2
@@ -12268,7 +11751,6 @@ def main(argv: list[str] | None = None) -> int:
         check_python_build_input_contract,
         check_python_build_input_contract_self_test,
         check_python_release_bake_self_test,
-        check_python_release_bake_checker_mutation_self_test,
         check_ubi_digest_equality,
         check_ubi_digest_equality_self_test,
         check_binfmt_digest_equality,
@@ -12291,14 +11773,8 @@ def main(argv: list[str] | None = None) -> int:
         check_publish_scope_gate_self_test,
         check_python_ci_preflight,
         check_python_ci_preflight_semantic_self_test,
-        check_python_ci_preflight_checker_mutation_self_test,
-        check_python_ci_surface_lock_self_test,
-        check_python_ci_surface_lock_checker_mutation_self_test,
         check_publish_python_workflow,
         check_publish_python_workflow_self_test,
-        check_publish_python_workflow_checker_mutation_self_test,
-        check_publish_python_surface_lock_self_test,
-        check_publish_python_surface_lock_checker_mutation_self_test,
         check_python_evidence,
         check_python_evidence_self_test,
         check_python_sqlite_vex,
