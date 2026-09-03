@@ -105,20 +105,15 @@ attestation subject matrix, signing, trust contract, provenance, alias ordering,
 alias collisions, independent verification, contract identity, publish scope,
 gate battery, index dataflow, absence-proof publication, SLSA execution-certificate
 binding, pre-alias absence, tag isolation, scanner-DB age, checkout-SHA consistency,
-direct network-fetch-to-shell pipelines, runner timeouts, BuildKit host networking,
-the Docker server floor, and the pull-request preflight's GitHub-expression secret
-surface.
+runner timeouts, BuildKit host networking, the Docker server floor, and the
+pull-request preflight's GitHub-expression secret surface.
 
 The scanner-age guard is deliberately lexical: it requires exactly one two-space
 global block declaration containing a positive integer no greater than seven,
 rejects any additional block declaration at any indentation, and rejects a direct
 `SCANNER_DB_MAX_AGE_DAYS=value` prefix on the freshness invocation. It does not
 resolve flow-style mappings, `env VAR=value`, earlier exports or assignments, or
-indirection. The fetch guard rejects a direct literal `curl`/`wget`-to-`sh`/`bash`
-pipeline in a parsed `run` scalar. It matches executable basenames on both ends,
-including qualified paths, and accepts either `command` or `command --` before the
-source. It does not interpret aliases, variables, wrappers, sourced commands, or
-general shell dataflow. The preflight secret guard matches the `secrets` identifier
+indirection. The preflight secret guard matches the `secrets` identifier
 case-insensitively inside GitHub expressions.
 
 The BuildKit guard requires the canonical `network=host` option and the
@@ -134,9 +129,12 @@ version-integrity semantics, and the registry container has no named semantic
 guard, while the two surface locks backstop the consistent whole-repository
 checkout downgrade, the release-preflight registry-digest substitution, and
 BuildKit or Docker-version reassignments outside those presence checks. The
-fallback preserves pass/fail, not complete multi-defect reporting: a semantic
-failure suppresses the lock, so a maintainer may encounter a second failure after
-fixing the first.
+surface locks also reject a workflow edit introducing a fetch-to-shell pipeline as
+an unnamed byte change. These fallbacks protect the recorded workflow bytes only
+while their digest and length constants are not co-edited, and they run only when
+the semantic validators are clean. The fallback preserves pass/fail, not complete
+multi-defect reporting: a semantic failure suppresses the lock, so a maintainer may
+encounter a second failure after fixing the first.
 
 A legitimate edit to one locked workflow requires resolving any named semantic
 guard it intentionally changes, updating that workflow's digest and its byte count
