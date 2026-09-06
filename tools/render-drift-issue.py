@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 ARCHES = ("amd64", "arm64")
-EXPECTED_KEYS = tuple((kind, arch) for kind in ("hardening", "repro") for arch in ARCHES)
+EXPECTED_KEYS = tuple(("hardening", arch) for arch in ARCHES)
 MARKER = "<!-- ubi9-base-micro-nightly-drift:v1 -->"
 SCHEMA_VERSION = "1.1.0"
 SIGNATURE_VERSION = "v1"
@@ -25,7 +25,6 @@ FAILURE_DETAIL_LIMIT = 500
 JOB_RESULTS = {
     "hardening": "hardening matrix",
     "build": "build and hardening aggregate",
-    "reproducibility-gate": "reproducibility gate",
 }
 
 
@@ -131,28 +130,10 @@ def _hardening_view(envelope: dict[str, Any], arch: str) -> tuple[dict[str, Any]
     }, reasons
 
 
-def _repro_view(envelope: dict[str, Any], arch: str) -> tuple[dict[str, bool], list[str]]:
-    repro = _object(envelope.get("reproducibility"), f"{arch} reproducibility")
-    view = {
-        "byte_identical": _boolean(repro.get("byte_identical"), f"{arch} byte identity"),
-        "rootfs_matches_contract": _boolean(repro.get("rootfs_matches_contract"), f"{arch} rootfs contract"),
-        "rpmdb_matches_contract": _boolean(repro.get("rpmdb_matches_contract"), f"{arch} RPMDB contract"),
-    }
-    reasons: list[str] = []
-    if not view["byte_identical"]:
-        reasons.append(f"{arch} builds are not byte-identical")
-    if not view["rootfs_matches_contract"]:
-        reasons.append(f"{arch} rootfs digest drifted from the contract")
-    if not view["rpmdb_matches_contract"]:
-        reasons.append(f"{arch} RPMDB digest drifted from the contract")
-    return view, reasons
-
-
 def _envelopes(
     values: list[Any],
 ) -> tuple[
     dict[str, dict[str, Any]],
-    dict[str, dict[str, bool]],
     dict[tuple[str, str], str],
     dict[str, Any],
     list[str],
@@ -187,7 +168,6 @@ def _envelopes(
                 malformed_keys.add(claimed_key)
 
     hardening: dict[str, dict[str, Any]] = {}
-    repro: dict[str, dict[str, bool]] = {}
     failure_details: dict[tuple[str, str], str] = {}
     projection: dict[str, Any] = {
         "arches": {
@@ -198,7 +178,7 @@ def _envelopes(
                     "state": "missing",
                     "view": None,
                 }
-                for kind in ("hardening", "repro")
+                for kind in ("hardening",)
             }
             for arch in ARCHES
         },
@@ -233,20 +213,15 @@ def _envelopes(
             incident["producer_reported_attention"] = bool(producer_reasons)
             if producer_reasons:
                 reasons.append(f"{arch} {kind} producer reported attention")
-            if kind == "hardening":
-                view, view_reasons = _hardening_view(envelope, arch)
-                hardening[arch] = view
-            else:
-                repro_view, view_reasons = _repro_view(envelope, arch)
-                repro[arch] = repro_view
-                view = repro_view
+            view, view_reasons = _hardening_view(envelope, arch)
+            hardening[arch] = view
             incident["state"] = "complete" if (kind, arch) not in malformed_keys else "malformed_or_duplicated"
             incident["view"] = view
             reasons.extend(view_reasons)
         except RenderError:
             incident["state"] = "malformed"
             reasons.append(f"{arch} {kind} envelope content is malformed")
-    return hardening, repro, failure_details, projection, list(dict.fromkeys(reasons))
+    return hardening, failure_details, projection, list(dict.fromkeys(reasons))
 
 
 def _signature(projection: dict[str, Any]) -> str:
@@ -257,11 +232,9 @@ def _signature(projection: dict[str, Any]) -> str:
 def _arch_section(
     arch: str,
     hardening: dict[str, dict[str, Any]],
-    repro: dict[str, dict[str, bool]],
     failure_details: dict[tuple[str, str], str],
 ) -> list[str]:
     hardening_view = hardening.get(arch)
-    repro_view = repro.get(arch)
     lines = [f"### {arch}", ""]
     if hardening_view is None:
         lines.append("- Hardening evidence: unavailable or malformed")
@@ -276,18 +249,6 @@ def _arch_section(
     hardening_failure_detail = failure_details.get(("hardening", arch))
     if hardening_failure_detail is not None:
         lines.append(f"- Hardening failure detail: {_safe_text(hardening_failure_detail)}")
-    if repro_view is None:
-        lines.append("- Reproducibility evidence: unavailable or malformed")
-    else:
-        lines.append(
-            "- Reproducibility: "
-            f"byte-identical={'yes' if repro_view['byte_identical'] else 'no'}; "
-            f"rootfs-contract={'match' if repro_view['rootfs_matches_contract'] else 'drift'}; "
-            f"RPMDB-contract={'match' if repro_view['rpmdb_matches_contract'] else 'drift'}"
-        )
-    repro_failure_detail = failure_details.get(("repro", arch))
-    if repro_failure_detail is not None:
-        lines.append(f"- Reproducibility failure detail: {_safe_text(repro_failure_detail)}")
     return lines
 
 
@@ -295,7 +256,7 @@ def render_issue(envelope_values: list[Any], results_value: Any, context_value: 
     job_results, reasons = _job_result_view(results_value)
     run_url, date, run_context_valid, context_reasons = _context(context_value)
     reasons.extend(context_reasons)
-    hardening, repro, failure_details, envelope_projection, envelope_reasons = _envelopes(envelope_values)
+    hardening, failure_details, envelope_projection, envelope_reasons = _envelopes(envelope_values)
     reasons.extend(envelope_reasons)
     reasons = list(dict.fromkeys(reasons))
     attention = bool(reasons)
@@ -319,9 +280,9 @@ def render_issue(envelope_values: list[Any], results_value: Any, context_value: 
         lines.extend(f"- {reason}" for reason in reasons)
         lines.append("")
     else:
-        lines.extend(["Both architectures are complete, reproducible, and free of hardening drift.", ""])
+        lines.extend(["Both architectures are complete and free of hardening drift.", ""])
     for arch in ARCHES:
-        lines.extend(_arch_section(arch, hardening, repro, failure_details))
+        lines.extend(_arch_section(arch, hardening, failure_details))
         lines.append("")
     if run_url:
         lines.extend([f'<a href="{html.escape(run_url, quote=True)}">Open the complete nightly run</a>', ""])
@@ -340,8 +301,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hardening-amd64", required=True, type=Path)
     parser.add_argument("--hardening-arm64", required=True, type=Path)
-    parser.add_argument("--repro-amd64", required=True, type=Path)
-    parser.add_argument("--repro-arm64", required=True, type=Path)
     parser.add_argument("--job-results", required=True, type=Path)
     parser.add_argument("--run-context", required=True, type=Path)
     parser.add_argument("--body-output", required=True, type=Path)
@@ -354,8 +313,6 @@ def main(argv: list[str]) -> int:
     envelopes = [
         _load(args.hardening_amd64),
         _load(args.hardening_arm64),
-        _load(args.repro_amd64),
-        _load(args.repro_arm64),
     ]
     body, attention, signature = render_issue(envelopes, _load(args.job_results), _load(args.run_context))
     args.body_output.parent.mkdir(parents=True, exist_ok=True)

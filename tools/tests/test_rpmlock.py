@@ -300,7 +300,7 @@ def test_crypto_policies_filename_is_derived_from_fixture_identity() -> None:
 def test_cli_fips_filename_selection_rejects_cross_lock_evr_mismatch(tmp_path: Path) -> None:
     fips_path = tmp_path / "fips-verify.amd64.txt"
     fips_path.write_text(
-        _fips_lock_text().replace("5.el9_8", "4.el9_8"),
+        _fips_lock_text().replace("6.el9_8", "5.el9_8"),
         encoding="utf-8",
         newline="\n",
     )
@@ -712,8 +712,8 @@ def test_fips_lock_requires_package_field_to_match_nevra(tmp_path: Path) -> None
     path = _write_lock(
         tmp_path,
         _fips_lock_text().replace(
+            "openssl-1:3.5.5-6.el9_8.x86_64",
             "openssl-1:3.5.5-5.el9_8.x86_64",
-            "openssl-1:3.5.5-4.el9_8.x86_64",
         ),
     )
 

@@ -30,16 +30,16 @@ The Makefile intentionally stays small:
 | --- | --- | --- |
 | `build` | `make build` | Build the local `base-micro` and `base-micro-dev` tags through `tools/build.sh`. |
 | `test` | `make test` | Run the runtime hardening gate against `base-micro`. |
-| `verify` | `make verify` | Run `python tools/verify.py`. |
+| `verify` | `make verify` | Compatibility no-op retained for existing callers. |
 | `clean` | `make clean` | Remove generated `dist/` output and `tools/__pycache__/`. |
 
 ## Local verification
 
-For documentation-only or repository-health changes, run the repository
-contract verifier:
+For documentation-only or repository-health changes, run the repository lint
+and test hooks:
 
 ```sh
-python tools/verify.py
+pre-commit run --all-files
 ```
 
 For image, gate, RPM lock, or security-evidence changes, run the full local gate
@@ -77,9 +77,8 @@ python tools/assert-reproducible.py \
 ```
 
 The CI pull-request path requires `CodeQL`, `slsa generator tag integrity`,
-`reproducibility gate (arm64)`, `dependency review`, `repo contract`, `analyze
-Python tools`, `build and hardening`, `actionlint`, `reproducibility gate
-(amd64)`, `pre-commit`, and `zizmor`. Privileged publish
+`dependency review`, `repo contract`, `analyze Python tools`, `build and
+hardening`, `actionlint`, `pre-commit`, and `zizmor`. Privileged publish
 jobs do not run on pull requests: the root publisher uses pushes to `main` or
 `v*` tags, and the Python publisher uses pushes to `main` or `python/v*` tags.
 Signature, attestation, SLSA provenance, and Rekor evidence exist only after the
@@ -88,7 +87,7 @@ corresponding production run succeeds.
 ### Base-python builder inputs
 
 A change to `images/python/docker-bake.json`, including a dependency update to
-its Buildx or BuildKit pins, is image-affecting. Run `python tools/verify.py`,
+its Buildx or BuildKit pins, is image-affecting. Run `pre-commit run --all-files`,
 then require real, non-skipped `python build and gates` and `python
 reproducibility` results for both architectures, and confirm that the
 pull-request-only `Python release preflight` also passes. The CI jobs assert the

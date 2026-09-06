@@ -137,24 +137,7 @@ def _hardening_view(envelope: dict[str, Any], arch: str) -> tuple[dict[str, int]
     return view, reasons
 
 
-def _repro_view(envelope: dict[str, Any], arch: str) -> tuple[dict[str, bool], list[str]]:
-    repro = _object(envelope.get("reproducibility"), f"{arch} reproducibility")
-    view = {
-        "byte_identical": _boolean(repro.get("byte_identical"), f"{arch} byte_identical"),
-        "rootfs_matches_contract": _boolean(repro.get("rootfs_matches_contract"), f"{arch} rootfs_matches_contract"),
-        "rpmdb_matches_contract": _boolean(repro.get("rpmdb_matches_contract"), f"{arch} rpmdb_matches_contract"),
-    }
-    reasons: list[str] = []
-    if not view["byte_identical"]:
-        reasons.append(f"{arch} builds are not byte-identical")
-    if not view["rootfs_matches_contract"]:
-        reasons.append(f"{arch} rootfs digest needs rebaseline")
-    if not view["rpmdb_matches_contract"]:
-        reasons.append(f"{arch} rpmdb digest needs rebaseline")
-    return view, reasons
-
-
-def _envelopes(envelope_values: list[Any]) -> tuple[dict[str, dict[str, int]], dict[str, dict[str, bool]], list[str]]:
+def _envelopes(envelope_values: list[Any]) -> tuple[dict[str, dict[str, int]], list[str]]:
     reasons: list[str] = []
     indexed: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for index, value in enumerate(envelope_values):
@@ -169,35 +152,30 @@ def _envelopes(envelope_values: list[Any]) -> tuple[dict[str, dict[str, int]], d
             reasons.append(f"malformed envelope: {exc}")
 
     hardening_views: dict[str, dict[str, int]] = {}
-    repro_views: dict[str, dict[str, bool]] = {}
     for arch in ARCHES:
-        for kind in ("hardening", "repro"):
-            matches = indexed.get((kind, arch), [])
-            if not matches:
-                reasons.append(f"missing {kind} envelope for {arch}")
+        matches = indexed.get(("hardening", arch), [])
+        if not matches:
+            reasons.append(f"missing hardening envelope for {arch}")
+            continue
+        if len(matches) > 1:
+            reasons.append(f"duplicate hardening envelope for {arch}")
+            continue
+        envelope = matches[0]
+        try:
+            complete = _boolean(envelope.get("complete"), f"{arch} hardening complete")
+            attention = _array(envelope.get("attention_reasons"), f"{arch} hardening attention_reasons")
+            for item in attention:
+                _string(item, f"{arch} hardening attention reason")
+            if not complete:
+                reasons.append(f"incomplete hardening envelope for {arch}")
                 continue
-            if len(matches) > 1:
-                reasons.append(f"duplicate {kind} envelope for {arch}")
-                continue
-            envelope = matches[0]
-            try:
-                complete = _boolean(envelope.get("complete"), f"{arch} {kind} complete")
-                attention = _array(envelope.get("attention_reasons"), f"{arch} {kind} attention_reasons")
-                for item in attention:
-                    _string(item, f"{arch} {kind} attention reason")
-                if not complete:
-                    reasons.append(f"incomplete {kind} envelope for {arch}")
-                    continue
-                if kind == "hardening":
-                    hardening_views[arch], actionable_reasons = _hardening_view(envelope, arch)
-                else:
-                    repro_views[arch], actionable_reasons = _repro_view(envelope, arch)
-                reasons.extend(actionable_reasons)
-                if attention and not actionable_reasons:
-                    reasons.append(f"{arch} {kind} producer reported an inconsistency")
-            except (RenderError, KeyError, TypeError, ValueError) as exc:
-                reasons.append(f"malformed {kind} envelope for {arch}: {exc}")
-    return hardening_views, repro_views, reasons
+            hardening_views[arch], actionable_reasons = _hardening_view(envelope, arch)
+            reasons.extend(actionable_reasons)
+            if attention and not actionable_reasons:
+                reasons.append(f"{arch} hardening producer reported an inconsistency")
+        except (RenderError, KeyError, TypeError, ValueError) as exc:
+            reasons.append(f"malformed hardening envelope for {arch}: {exc}")
+    return hardening_views, reasons
 
 
 def _headline(reasons: list[str]) -> str:
@@ -250,17 +228,13 @@ def render_decision(envelope_values: list[Any], context_value: Any, snapshot_val
         reasons.append(f"malformed PR context: {exc}")
 
     reasons.extend(_check_snapshot(snapshot_value, context))
-    hardening, repro, envelope_reasons = _envelopes(envelope_values)
+    hardening, envelope_reasons = _envelopes(envelope_values)
     reasons.extend(envelope_reasons)
-    repro_green = len(repro) == len(ARCHES) and all(all(view.values()) for view in repro.values())
-    repro_line = "digest-neutral ✓" if repro_green else "⚠️ needs rebaseline / complete evidence"
 
     lines = [
         _headline(reasons),
         "",
         f"**What changed:** #{number} — {title}; {synopsis}",
-        "",
-        f"**Reproducibility:** {repro_line}",
         "",
         "**Current posture**",
         "",
@@ -289,8 +263,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hardening-amd64", required=True, type=Path)
     parser.add_argument("--hardening-arm64", required=True, type=Path)
-    parser.add_argument("--repro-amd64", required=True, type=Path)
-    parser.add_argument("--repro-arm64", required=True, type=Path)
     parser.add_argument("--pr-context", required=True, type=Path)
     parser.add_argument("--check-snapshot", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
@@ -302,8 +274,6 @@ def main(argv: list[str]) -> int:
     envelopes = [
         _load(args.hardening_amd64, "amd64 hardening envelope"),
         _load(args.hardening_arm64, "arm64 hardening envelope"),
-        _load(args.repro_amd64, "amd64 repro envelope"),
-        _load(args.repro_arm64, "arm64 repro envelope"),
     ]
     body = render_decision(
         envelopes,

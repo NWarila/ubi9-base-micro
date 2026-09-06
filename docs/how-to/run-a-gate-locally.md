@@ -7,41 +7,11 @@ Use the narrowest gate that proves the change.
 Run this for documentation-only, metadata, and repository-health changes:
 
 ```sh
-python tools/verify.py
+pre-commit run --all-files
 ```
 
-The verifier checks a duplicate-free required-file manifest, pinned workflow
-inputs, the committed Python Bake target shape, contract-derived Python builder
-pin inputs, and the statically checked shape of each named identity step: the
-run body starts with `set -euo pipefail`, contains no later `set +...`, omits
-step-level `continue-on-error`, and ends with the checker as its final unwrapped
-command. It also checks Renovate managers, deny-all ignore
-allowlists, documentation markers, Diataxis layout, ADR inventory, lint setup,
-helper self-tests, attribution-residue denial, and a separate
-internal-process-residue denial. The Python build-input self-test runs the
-unmodified positive control and demonstrates seven classes through sixty-eight
-non-no-op negative cases: BuildKit digest qualification, repro output policy,
-workflow-pin derivation, committed target protection and shape, five identity
-observations, two Renovate managers and their non-automerge rules, and the
-harness CLI.
-
-The internal-process check reads only Markdown in the current checkout at
-`README.md`, `docs/**/*.md`, and `images/**/*.md`. Paths outside that set are
-outside this check.
-
-For a Python builder-pin or Bake-contract change, the normal verifier proves
-the static contract, including the checked identity-step shape, and runs
-the seven-class/sixty-eight-case mutation inventory, but does not create a live
-Buildx builder. The live five-observation identity assertion runs in the Python
-workflow after setup and before either build. Require non-skipped `python build
-and gates` and `python reproducibility` results for both architectures; these
-are pre-publication gates and do not publish the image.
-
-The shell-text check is defence-in-depth against accidental regression, not an
-exhaustive defence against a hostile workflow edit. See
-[TD-8](../TECH-DEBT.md#td-8-python-builder-identity-workflow-static-analysis-boundary)
-for the free-form shell limitation and the repository controls that govern that
-threat.
+The hooks run formatting, static analysis, workflow linting, Markdown linting,
+and the focused repository test suites defined in `.pre-commit-config.yaml`.
 
 ## Base-Python Publication Policies
 

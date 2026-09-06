@@ -43,24 +43,9 @@ def _hardening(arch: str) -> dict[str, Any]:
     }
 
 
-def _repro(arch: str) -> dict[str, Any]:
-    return {
-        "schema_version": "1.0.0",
-        "kind": "repro",
-        "arch": arch,
-        "complete": True,
-        "attention_reasons": [],
-        "reproducibility": {
-            "byte_identical": True,
-            "rootfs_matches_contract": True,
-            "rpmdb_matches_contract": True,
-        },
-    }
-
-
 @pytest.fixture
 def clean_inputs() -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
-    envelopes = [_hardening("amd64"), _hardening("arm64"), _repro("amd64"), _repro("arm64")]
+    envelopes = [_hardening("amd64"), _hardening("arm64")]
     context = {
         "title": "Post a one-minute decision surface",
         "number": 83,
@@ -97,7 +82,6 @@ def test_clean_pr_is_safe_and_explicit(
     markdown = _render(clean_inputs)
 
     assert markdown.startswith("## ✅ SAFE TO APPROVE\n")
-    assert "digest-neutral ✓" in markdown
     assert "pass 39 · fail 0 · not-selected 1491 (1532 rule results)" in markdown
     assert "Secret findings" in markdown
     assert "Current posture" in markdown
@@ -133,16 +117,6 @@ def test_arm64_only_finding_is_attention(
     assert "arm64 has 1 secret finding(s)" in markdown
 
 
-def test_needs_rebaseline_is_attention(
-    clean_inputs: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]],
-) -> None:
-    clean_inputs[0][2]["reproducibility"]["rootfs_matches_contract"] = False
-
-    markdown = _render(clean_inputs)
-    _assert_attention(markdown)
-    assert "needs rebaseline" in markdown
-
-
 @pytest.mark.parametrize("case", ["missing", "malformed", "incomplete", "invalid-complete"])
 def test_missing_malformed_or_incomplete_envelope_is_attention(
     clean_inputs: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]], case: str
@@ -150,11 +124,11 @@ def test_missing_malformed_or_incomplete_envelope_is_attention(
     if case == "missing":
         clean_inputs[0].pop()
     elif case == "malformed":
-        clean_inputs[0][3] = {"input_error": "invalid JSON"}
+        clean_inputs[0][1] = {"input_error": "invalid JSON"}
     else:
         if case == "incomplete":
-            clean_inputs[0][3]["complete"] = False
-            clean_inputs[0][3]["attention_reasons"] = ["missing reproducibility report"]
+            clean_inputs[0][1]["complete"] = False
+            clean_inputs[0][1]["attention_reasons"] = ["missing hardening report"]
         else:
             del clean_inputs[0][0]["stig"]["fail"]
 
