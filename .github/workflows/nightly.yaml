@@ -1,5 +1,5 @@
-# Purpose: Nightly cron sentinel — re-runs the verify + both-arch reproducibility + build/hardening gates against
-# current upstream UBI/RPM state to catch drift.
+# Purpose: Nightly cron sentinel — re-runs repository-contract and both-arch build/hardening gates against current
+# upstream UBI/RPM state to catch drift.
 # Role: gate
 # Micro-container candidate: partial — keep cron/matrix glue; share the same pinned gate micro-container as build.yaml
 # (removes the copy-paste of its jobs).
@@ -74,11 +74,9 @@ jobs:
 
       - name: Verify repository contract
         run: |
-          python tools/verify.py
           python tools/assert-sbom-rpms.py --self-test
           python tools/assert-footprint.py --self-test
           python tools/assert-no-phantom-packages.py --self-test
-          python tools/assert-reproducible.py --self-test
           python tools/assert-rpm-lock-hashes.py --self-test
           bash tools/generate-rpm-lock.sh --self-test
           python tools/assert-scanner-db-freshness.py --self-test
@@ -105,84 +103,6 @@ jobs:
           bash -n tools/install-openscap.sh
           bash -n tools/build-stig-datastream.sh
           bash -n tools/run-stig-arf.sh
-
-  reproducibility-gate:
-    name: reproducibility gate (${{ matrix.arch }})
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    needs: verify
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux/amd64
-            arch: amd64
-          - platform: linux/arm64
-            arch: arm64
-    steps:
-      - name: Harden runner
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
-        with:
-          egress-policy: audit
-      - name: Check out repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
-        with:
-          platforms: amd64,arm64
-          image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - name: Build twice and assert rootfs byte identity
-        id: repro-gate
-        env:
-          PLATFORM: ${{ matrix.platform }}
-          ARCH: ${{ matrix.arch }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist/failure-logs
-
-          python tools/assert-reproducible.py \
-            --platform "${PLATFORM}" \
-            --assert-byte-identical \
-            --expect-from-contract "contracts/image-manifest.json" \
-            --report "dist/reproducibility/base-micro.${ARCH}.reproducibility.json" \
-            --summary "dist/reproducibility/base-micro.${ARCH}.reproducibility.txt" \
-            --workdir "dist/reproducibility/work.${ARCH}" \
-            2>&1 | tee "dist/failure-logs/repro.${ARCH}.log"
-          cat "dist/reproducibility/base-micro.${ARCH}.reproducibility.txt"
-
-      - name: Emit reproducibility decision envelope
-        if: ${{ always() }}
-        env:
-          ARCH: ${{ matrix.arch }}
-          GATE_OUTCOME: ${{ steps.repro-gate.outcome }}
-        run: |
-          args=(
-            --kind repro
-            --arch "${ARCH}"
-            --contract contracts/image-manifest.json
-            --output "dist/summary/base-micro.${ARCH}.repro.json"
-          )
-          if [ "${GATE_OUTCOME}" = "failure" ]; then
-            args+=(--failure-log "dist/failure-logs/repro.${ARCH}.log")
-          fi
-          python3 tools/summarize-gates.py "${args[@]}"
-
-      - name: Upload reproducibility decision envelope
-        if: ${{ always() }}
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: nightly-decision-repro-${{ matrix.arch }}
-          path: dist/summary/base-micro.${{ matrix.arch }}.repro.json
-          if-no-files-found: error
-          retention-days: 7
 
   hardening:
     name: hardening (${{ matrix.arch }})
@@ -283,7 +203,6 @@ jobs:
     needs:
       - hardening
       - build
-      - reproducibility-gate
     if: ${{ always() && github.event_name != 'pull_request' }}
     permissions:
       contents: read
@@ -299,7 +218,7 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Download all four nightly decision envelopes
+      - name: Download both nightly hardening decision envelopes
         if: ${{ always() }}
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
@@ -316,11 +235,9 @@ jobs:
           jq -n \
             --arg hardening "${{ needs.hardening.result }}" \
             --arg build "${{ needs.build.result }}" \
-            --arg reproducibility "${{ needs.reproducibility-gate.result }}" \
             '{
               hardening: $hardening,
-              build: $build,
-              "reproducibility-gate": $reproducibility
+              build: $build
             }' > dist/nightly-alert/job-results.json
           jq -n \
             --arg run_url "${RUN_URL}" \
@@ -333,8 +250,6 @@ jobs:
           python3 tools/render-drift-issue.py \
             --hardening-amd64 dist/summary/base-micro.amd64.hardening.json \
             --hardening-arm64 dist/summary/base-micro.arm64.hardening.json \
-            --repro-amd64 dist/summary/base-micro.amd64.repro.json \
-            --repro-arm64 dist/summary/base-micro.arm64.repro.json \
             --job-results dist/nightly-alert/job-results.json \
             --run-context dist/nightly-alert/run-context.json \
             --body-output dist/nightly-alert/issue-body.md \

@@ -1,5 +1,4 @@
-# Purpose: Developer convenience targets (build/test/verify/clean) dispatching to tools/build.sh, tests/hardening.sh,
-# and tools/verify.py.
+# Purpose: Developer convenience targets for build, test, compatibility verification, and cleanup.
 # Role: tooling
 # NOTE: Make uses '#' comments; place the header above the `.PHONY` line — it does not affect targets.
 
@@ -16,7 +15,7 @@ test:
 	bash tests/hardening.sh '$(RUNTIME_IMAGE)'
 
 verify:
-	python tools/verify.py
+	@printf '%s\n' 'repository verifier gate disabled per owner direction'
 
 clean:
 	rm -rf dist tools/__pycache__

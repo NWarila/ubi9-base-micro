@@ -26,7 +26,7 @@ esac
 Validate the manifest and read the expected FIPS status:
 
 ```sh
-python tools/verify.py
+pre-commit run --all-files
 python - "${MANIFEST}" "${ARCH}" <<'PY'
 import json
 import sys

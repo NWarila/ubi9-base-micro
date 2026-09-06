@@ -207,10 +207,10 @@ Run the runtime hardening gate against `base-micro`:
 make test
 ```
 
-Run the repository contract verifier:
+Run the repository lint and test hooks:
 
 ```sh
-python tools/verify.py
+pre-commit run --all-files
 ```
 
 The published root-image namespace is:

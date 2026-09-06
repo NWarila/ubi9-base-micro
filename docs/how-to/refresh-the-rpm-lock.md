@@ -31,10 +31,10 @@ one-row FIPS lock must pin `openssl` at exactly the epoch, version, release, and
 RPM architecture of the runtime lock's unique `openssl-libs` row; never stage
 or commit only one side of a pair.
 
-Run the repository verifier:
+Run the repository lint and test hooks:
 
 ```sh
-python tools/verify.py
+pre-commit run --all-files
 ```
 
 For a real lock refresh, run the affected image gates before opening the pull

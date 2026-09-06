@@ -70,6 +70,6 @@ body:
     attributes:
       label: Acceptance evidence
       description: Which local or CI gates should prove this is complete?
-      placeholder: python tools/verify.py; bash tools/run-test-gates.sh; both-arch reproducibility gates
+      placeholder: pre-commit run --all-files; bash tools/run-test-gates.sh
     validations:
       required: false

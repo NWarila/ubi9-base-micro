@@ -44,25 +44,10 @@ def _hardening(arch: str) -> dict[str, Any]:
     }
 
 
-def _repro(arch: str) -> dict[str, Any]:
-    return {
-        "schema_version": "1.1.0",
-        "kind": "repro",
-        "arch": arch,
-        "complete": True,
-        "attention_reasons": [],
-        "reproducibility": {
-            "byte_identical": True,
-            "rootfs_matches_contract": True,
-            "rpmdb_matches_contract": True,
-        },
-    }
-
-
 @pytest.fixture
 def clean_inputs() -> tuple[list[dict[str, Any]], dict[str, str], dict[str, str]]:
-    envelopes = [_hardening("amd64"), _hardening("arm64"), _repro("amd64"), _repro("arm64")]
-    results = {"hardening": "success", "build": "success", "reproducibility-gate": "success"}
+    envelopes = [_hardening("amd64"), _hardening("arm64")]
+    results = {"hardening": "success", "build": "success"}
     context = {
         "run_url": "https://github.com/NWarila/ubi9-base-micro/actions/runs/123",
         "date": "2026-07-13",
@@ -88,7 +73,7 @@ def test_clean_is_explicitly_no_attention(
     assert attention is False
     assert body.startswith("## ✅ Nightly base-micro sentinel clean\n")
     assert "STIG failures: 0" in body
-    assert "byte-identical=yes; rootfs-contract=match; RPMDB-contract=match" in body
+    assert "Footprint: passed" in body
     assert body.count(RENDERER.MARKER) == 1
 
 
@@ -112,12 +97,12 @@ def test_missing_malformed_duplicate_or_incomplete_envelope_is_attention(
     if case == "missing":
         clean_inputs[0].pop()
     elif case == "malformed":
-        clean_inputs[0][3] = {"input_error": "invalid JSON"}
+        clean_inputs[0][1] = {"input_error": "invalid JSON"}
     elif case == "duplicate":
-        clean_inputs[0].append(copy.deepcopy(clean_inputs[0][3]))
+        clean_inputs[0].append(copy.deepcopy(clean_inputs[0][1]))
     else:
-        clean_inputs[0][3]["complete"] = False
-        clean_inputs[0][3]["attention_reasons"] = ["producer detail must not be trusted"]
+        clean_inputs[0][1]["complete"] = False
+        clean_inputs[0][1]["attention_reasons"] = ["producer detail must not be trusted"]
 
     body, attention = _render(clean_inputs)
 
@@ -125,7 +110,7 @@ def test_missing_malformed_duplicate_or_incomplete_envelope_is_attention(
     assert "## ⚠️ Action needed" in body
 
 
-@pytest.mark.parametrize("job", ["hardening", "build", "reproducibility-gate"])
+@pytest.mark.parametrize("job", ["hardening", "build"])
 @pytest.mark.parametrize("result", ["failure", "skipped", "cancelled", "timed_out", "unknown"])
 def test_every_non_success_gate_result_is_attention(
     clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]], job: str, result: str
@@ -160,21 +145,21 @@ def test_raw_secret_material_is_never_rendered(
 def test_failure_detail_is_markdown_safe(
     clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]],
 ) -> None:
-    clean_inputs[0][2]["complete"] = False
-    clean_inputs[0][2]["failure_detail"] = "rootfs_digest mismatch for left: expected a, actual b"
-    clean_inputs[1]["reproducibility-gate"] = "failure"
+    clean_inputs[0][0]["complete"] = False
+    clean_inputs[0][0]["failure_detail"] = "hardening_gate failed for left: expected a, actual b"
+    clean_inputs[1]["hardening"] = "failure"
 
     body, attention = _render(clean_inputs)
 
     assert attention is True
-    assert r"rootfs\_digest mismatch for left" in body
+    assert r"hardening\_gate failed for left" in body
 
 
 def test_malformed_failure_detail_is_not_rendered(
     clean_inputs: tuple[list[dict[str, Any]], dict[str, str], dict[str, str]],
 ) -> None:
-    clean_inputs[0][2]["complete"] = False
-    clean_inputs[0][2]["failure_detail"] = ["ERROR: unvalidated detail"]
+    clean_inputs[0][0]["complete"] = False
+    clean_inputs[0][0]["failure_detail"] = ["ERROR: unvalidated detail"]
 
     body, attention = _render(clean_inputs)
 
@@ -201,7 +186,7 @@ def test_signature_is_canonical_across_envelope_and_job_order(
     signature = _signature(clean_inputs)
     clean_inputs[0].reverse()
     clean_inputs[1].clear()
-    clean_inputs[1].update({"reproducibility-gate": " SUCCESS ", "build": " SUCCESS ", "hardening": " SUCCESS "})
+    clean_inputs[1].update({"build": " SUCCESS ", "hardening": " SUCCESS "})
 
     assert _signature(clean_inputs) == signature
 
@@ -239,10 +224,6 @@ def test_cli_writes_body_and_machine_decision(
             str(paths[0]),
             "--hardening-arm64",
             str(paths[1]),
-            "--repro-amd64",
-            str(paths[2]),
-            "--repro-arm64",
-            str(paths[3]),
             "--job-results",
             str(results),
             "--run-context",

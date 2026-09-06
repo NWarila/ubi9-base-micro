@@ -61,7 +61,7 @@ body:
       description: Provide exact commands when possible.
       render: shell
       placeholder: |
-        python tools/verify.py
+        pre-commit run --all-files
         bash tools/run-test-gates.sh
     validations:
       required: true

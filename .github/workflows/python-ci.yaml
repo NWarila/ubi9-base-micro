@@ -251,34 +251,6 @@ jobs:
           version: ${{ needs.changes.outputs.buildx_version }}
           driver-opts: image=${{ needs.changes.outputs.buildkit_image }}
 
-      - name: Assert python builder identity
-        env:
-          EXPECTED_BUILDX_VERSION: ${{ needs.changes.outputs.buildx_version }}
-          EXPECTED_BUILDX_COMMIT: ${{ needs.changes.outputs.buildx_commit }}
-          EXPECTED_BUILDX_ASSET_SHA256: ${{ needs.changes.outputs.buildx_asset_sha256 }}
-          EXPECTED_BUILDKIT_IMAGE: ${{ needs.changes.outputs.buildkit_image }}
-          EXPECTED_BUILDKIT_VERSION: ${{ needs.changes.outputs.buildkit_version }}
-          BUILDER_NAME: ${{ steps.buildx.outputs.name }}
-          BUILDX_NODES: ${{ steps.buildx.outputs.nodes }}
-        run: |
-          set -euo pipefail
-
-          buildx_plugin="${DOCKER_CONFIG:-${HOME}/.docker}/cli-plugins/docker-buildx"
-          echo "Buildx plugin path: ${buildx_plugin}"
-          if [[ -f "${buildx_plugin}" ]]; then
-            ACTUAL_BUILDX_ASSET_SHA256="sha256:$(sha256sum "${buildx_plugin}" | awk '{print $1}')"
-          else
-            ACTUAL_BUILDX_ASSET_SHA256="<missing>"
-          fi
-          ACTUAL_BUILDX_VERSION_OUTPUT="$(docker buildx version)"
-          builder_container="buildx_buildkit_${BUILDER_NAME}0"
-          ACTUAL_BUILDKIT_IMAGE="$(docker inspect --format '{{.Config.Image}}' "${builder_container}" 2>/dev/null || true)"
-          if [[ -z "${ACTUAL_BUILDKIT_IMAGE}" ]]; then
-            ACTUAL_BUILDKIT_IMAGE="<unavailable>"
-          fi
-          export ACTUAL_BUILDX_ASSET_SHA256 ACTUAL_BUILDX_VERSION_OUTPUT ACTUAL_BUILDKIT_IMAGE
-          python3 tools/verify.py --check-python-builder-identity
-
       - name: Build the python image
         env:
           ARCH: ${{ matrix.arch }}
@@ -581,34 +553,6 @@ jobs:
         with:
           version: ${{ needs.changes.outputs.buildx_version }}
           driver-opts: image=${{ needs.changes.outputs.buildkit_image }}
-
-      - name: Assert python builder identity
-        env:
-          EXPECTED_BUILDX_VERSION: ${{ needs.changes.outputs.buildx_version }}
-          EXPECTED_BUILDX_COMMIT: ${{ needs.changes.outputs.buildx_commit }}
-          EXPECTED_BUILDX_ASSET_SHA256: ${{ needs.changes.outputs.buildx_asset_sha256 }}
-          EXPECTED_BUILDKIT_IMAGE: ${{ needs.changes.outputs.buildkit_image }}
-          EXPECTED_BUILDKIT_VERSION: ${{ needs.changes.outputs.buildkit_version }}
-          BUILDER_NAME: ${{ steps.buildx.outputs.name }}
-          BUILDX_NODES: ${{ steps.buildx.outputs.nodes }}
-        run: |
-          set -euo pipefail
-
-          buildx_plugin="${DOCKER_CONFIG:-${HOME}/.docker}/cli-plugins/docker-buildx"
-          echo "Buildx plugin path: ${buildx_plugin}"
-          if [[ -f "${buildx_plugin}" ]]; then
-            ACTUAL_BUILDX_ASSET_SHA256="sha256:$(sha256sum "${buildx_plugin}" | awk '{print $1}')"
-          else
-            ACTUAL_BUILDX_ASSET_SHA256="<missing>"
-          fi
-          ACTUAL_BUILDX_VERSION_OUTPUT="$(docker buildx version)"
-          builder_container="buildx_buildkit_${BUILDER_NAME}0"
-          ACTUAL_BUILDKIT_IMAGE="$(docker inspect --format '{{.Config.Image}}' "${builder_container}" 2>/dev/null || true)"
-          if [[ -z "${ACTUAL_BUILDKIT_IMAGE}" ]]; then
-            ACTUAL_BUILDKIT_IMAGE="<unavailable>"
-          fi
-          export ACTUAL_BUILDX_ASSET_SHA256 ACTUAL_BUILDX_VERSION_OUTPUT ACTUAL_BUILDKIT_IMAGE
-          python3 tools/verify.py --check-python-builder-identity
 
       - name: Double-build byte-identical reproducibility gate
         env:

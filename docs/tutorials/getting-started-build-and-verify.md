@@ -31,12 +31,12 @@ make test
 The hardening test verifies the no-shell, no-package-manager, non-root, rpmdb,
 and CA-bundle runtime expectations.
 
-## Run the Repository Verifier
+## Run the Repository Checks
 
 Run the repository contract checks:
 
 ```sh
-python tools/verify.py
+pre-commit run --all-files
 ```
 
 For image-affecting changes, continue with the full local gates in
