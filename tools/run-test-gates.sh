@@ -215,7 +215,7 @@ esac
 runtime_image="${RUNTIME_IMAGE:-ghcr.io/nwarila/ubi9-base-micro:base-micro}"
 platform="${PLATFORM:-linux/amd64}"
 arch="${platform#linux/}"
-ubi_micro_image="${UBI_MICRO_IMAGE:-registry.access.redhat.com/ubi9/ubi-micro@sha256:35de56a9413112f1474e392ebc35e0cf6f0fb484c8e8877bbae59b513694b41f}"
+ubi_micro_image="${UBI_MICRO_IMAGE:-registry.access.redhat.com/ubi9/ubi-micro@sha256:f332c99eb8f798a8486821c91937f10ad64ee83d7e739303be2df051040918f6}"
 source_uri="github.com/${GITHUB_REPOSITORY:-NWarila/ubi9-base-micro}"
 revision="${GITHUB_SHA:-$(git rev-parse HEAD 2> /dev/null)}"
 revision="${revision:-local}"
