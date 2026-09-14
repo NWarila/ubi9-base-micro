@@ -22,10 +22,10 @@ repos:
     rev: v0.15.18
     hooks:
       - id: ruff
-        files: ^(tools|images/python/tools)/.*\.py$
+        files: ^(tools|images/python/(tools|runtime))/.*\.py$
         args: [--fix]
       - id: ruff-format
-        files: ^(tools|images/python/tools)/.*\.py$
+        files: ^(tools|images/python/(tools|runtime))/.*\.py$
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v2.1.0

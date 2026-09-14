@@ -97,6 +97,8 @@
 !/images/python/README.md
 !/images/python/VERSION
 !/images/python/docker-bake.json
+!/images/python/runtime/
+!/images/python/runtime/*.py
 !/images/python/contracts/
 !/images/python/contracts/*.json
 !/images/python/rpm-lock/

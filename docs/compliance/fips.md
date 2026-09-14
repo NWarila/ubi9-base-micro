@@ -30,7 +30,7 @@ pinned SHA-256 values before local install.
 Python-specific `hashlib` boundaries belong to `base-python`'s own gates; see the
 [canonical publication evidence contract](../reference/verification-contract.md#image-family-publication-evidence-contract).
 The Python path requires approved mode, SHA-2 operation, and MD5 refusal without
-making a Python interpreter-wide validation claim. `base-micro` itself does not
+making a Python interpreter-wide validation claim. The interpreter's `hashlib` import is silent under approved mode because `base-python` pre-imports it at startup with a transient null log handler; MD5 and BLAKE2 remain unavailable. `base-micro` itself does not
 ship Python.
 
 ## Out-of-scope certificates

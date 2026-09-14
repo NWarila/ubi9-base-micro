@@ -81,6 +81,14 @@ RUN set -eux; \
       --requires-exceptions /tmp/requires-exceptions.json \
       --retained-payload-trim /tmp/retained-payload-trim.json
 
+# Interpreter-startup policy file. Added AFTER the pinned transaction and its parent-invariance proof
+# (it is not RPM content), then pinned to SOURCE_DATE_EPOCH together with its parent directory so the
+# canonical rootfs digest is build-independent (the ci exporter does not rewrite timestamps).
+COPY --chown=0:0 --chmod=0644 runtime/sitecustomize.py /rootfs/usr/lib/python3.12/site-packages/sitecustomize.py
+RUN touch -h -d "@${SOURCE_DATE_EPOCH}" \
+      /rootfs/usr/lib/python3.12/site-packages/sitecustomize.py \
+      /rootfs/usr/lib/python3.12/site-packages
+
 # Shipped image: the assembled combined rootfs as one layer. FROM scratch inherits nothing, so the
 # full runtime configuration is restated here and asserted against the committed config contract.
 FROM scratch AS runtime-common

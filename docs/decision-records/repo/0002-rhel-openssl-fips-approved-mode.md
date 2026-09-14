@@ -30,6 +30,7 @@ then fails closed unless the runtime provider NEVRA, `openssl-libs` NEVRA, and
   provider activation and MD5 refusal.
 - The FIPS claim remains module-scoped and approved-mode-scoped.
 - Any provider, library, or config drift fails the build before publish.
+- CPython's `hashlib` probes non-approved constructors at import; with no `default` provider those probes fail and would be logged to stderr. `base-python` pre-imports `hashlib` at interpreter startup (`sitecustomize`) with a transient null log handler so the import is silent; the root handler list is restored and root logging remains unconfigured; `python3.12 -S` bypasses this by design.
 
 ## References
 

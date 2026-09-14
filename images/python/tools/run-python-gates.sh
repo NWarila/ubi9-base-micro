@@ -96,23 +96,32 @@ openssl req -x509 -newkey rsa:2048 -keyout "${workdir}/tls.key" -out "${workdir}
   -days 2 -nodes -subj "/CN=localhost" > /dev/null 2>&1
 chmod a+r "${workdir}/tls.key" "${workdir}/tls.crt"
 
-echo "gate F: characterized FIPS import behavior"
-"${engine}" run --rm --platform "${platform}" "${image}" -c "import hashlib, random, ssl" \
-  > "${workdir}/import.out" 2> "${workdir}/import.err" \
-  || {
-    echo "import hashlib/random/ssl failed" >&2
+echo "gate F: clean stdlib import under approved mode (sitecustomize pre-import)"
+for flags in "-I -X utf8 -B" ""; do
+  # shellcheck disable=SC2086
+  "${engine}" run --rm --platform "${platform}" "${image}" ${flags} -c \
+    'import sys; pre = "hashlib" in sys.modules
+import hashlib, random, ssl, logging, sitecustomize
+assert pre, "sitecustomize did not pre-import hashlib"
+assert sitecustomize.__file__ == "/usr/lib/python3.12/site-packages/sitecustomize.py", sitecustomize.__file__
+assert logging.getLogger().handlers == [], logging.getLogger().handlers
+print("clean-import ok")' > "${workdir}/import.out" 2> "${workdir}/import.err" \
+    || {
+      echo "stdlib import failed (flags: '${flags}')" >&2
+      cat "${workdir}/import.err" >&2
+      exit 1
+    }
+  if [[ -s "${workdir}/import.err" ]]; then
+    echo "stderr is not empty on stdlib import (flags: '${flags}'):" >&2
+    cat "${workdir}/import.err" >&2
+    exit 1
+  fi
+  grep -q '^clean-import ok$' "${workdir}/import.out" || {
+    echo "clean-import marker missing" >&2
     exit 1
   }
-grep_status=0
-grep -q -v -E \
-  "^(ERROR:root:code for hash (md5|blake2b|blake2s|sha3_[0-9]+|shake_[0-9]+) was not found\\.|Traceback \\(most recent call last\\):|  File .*|    .*|_hashlib\\.UnsupportedDigestmodError: .*|ValueError: unsupported hash type .*|During handling of the above exception, another exception occurred:|^$)$" \
-  "${workdir}/import.err" || grep_status=$?
-if [[ "${grep_status}" -ne 1 ]]; then
-  echo "uncharacterized stderr on stdlib import, or pattern-match error (status ${grep_status}):" >&2
-  cat "${workdir}/import.err" >&2
-  exit 1
-fi
-echo "import noise matches the characterized approved-mode pattern set"
+done
+echo "stdlib import is silent and leaves root logging unconfigured"
 
 echo "gate B/O/R: in-image hardening + ownership + functional battery"
 "${engine}" run --rm -i --platform "${platform}" \
