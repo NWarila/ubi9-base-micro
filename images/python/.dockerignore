@@ -4,6 +4,8 @@
 
 **
 !Dockerfile
+!runtime/
+!runtime/sitecustomize.py
 !rpm-lock/builder.amd64.txt
 !rpm-lock/builder.arm64.txt
 !rpm-lock/python.amd64.txt

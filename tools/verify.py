@@ -1198,6 +1198,7 @@ def check_required_files() -> None:
         "images/python/README.md",
         "images/python/VERSION",
         "images/python/docker-bake.json",
+        "images/python/runtime/sitecustomize.py",
         "images/python/contracts/image-manifest.json",
         "images/python/contracts/image-manifest.schema.json",
         "images/python/rpm-lock/builder.amd64.txt",

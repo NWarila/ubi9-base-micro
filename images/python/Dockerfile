@@ -31,6 +31,7 @@ COPY tools/retained_payload_trim.py /tmp/retained_payload_trim.py
 COPY tools/rpmlock.py /tmp/rpmlock.py
 
 COPY --from=micro-base / /rootfs
+COPY --chown=0:0 --chmod=0644 runtime/sitecustomize.py /rootfs/usr/lib/python3.12/site-packages/sitecustomize.py
 
 # Bootstrap the locked builder python closure (micro's proven pattern), guarding the rpmdb-writing
 # toolchain across it; the same five-package writer floor is re-asserted against micro-floor.json's

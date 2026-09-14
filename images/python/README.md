@@ -6,6 +6,10 @@ truthful combined rpmdb, strips build-support packages behind ldd-ownership
 guards, and ships as a single reproducible layer running as `nonroot` (65532)
 with `/usr/bin/python3.12` as the entrypoint.
 
+## Interpreter startup
+
+The image ships `/usr/lib/python3.12/site-packages/sitecustomize.py`. It imports `hashlib` once with a transient null handler on the root logger so that the approved-mode provider set (no MD5/BLAKE2) does not emit constructor-probe tracebacks during startup, then removes the handler. The root handler list is restored and root logging remains unconfigured. `python3.12 -S` skips it.
+
 ## SQLite is intentionally unavailable
 
 This image omits the Python `sqlite3` standard-library package, the native
