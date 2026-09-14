@@ -3,9 +3,9 @@
 # columns: package|final_rpmdb|name|epoch|version|release|arch|sha256_header|sigmd5
 # direct_rpm: bash-5.1.8-9.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/b/bash-5.1.8-9.el9.aarch64.rpm|7dc1febec9c2fb184ed4407f8a188ab267b7e46b3534866f702c6266008ababa
 # direct_rpm: bzip2-libs-1.0.8-11.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/b/bzip2-libs-1.0.8-11.el9.aarch64.rpm|8267a866b9289ac4e4a92cb4642adcdeff97c2ed816ddda87ed5d5e9d9431a2f
-# direct_rpm: coreutils-8.32-41.el9_8.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/c/coreutils-8.32-41.el9_8.aarch64.rpm|ee2de9f5fbc5e83bad920a353c45d3446997aa0e4023436528b2d6f817bd6f50
-# direct_rpm: coreutils-common-8.32-41.el9_8.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/c/coreutils-common-8.32-41.el9_8.aarch64.rpm|cd79ca65bba152b9ccadcb9780ec78e3d06ce538b693078fd14459d038ab5c0c
-# direct_rpm: expat-2.5.0-6.el9_8.1.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/e/expat-2.5.0-6.el9_8.1.aarch64.rpm|7cc4e533f63bdec0ead003d176cb262b8d4d2583dfd57b2e9cfeeed4ead13475
+# direct_rpm: coreutils-8.32-41.el9_8.1.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/c/coreutils-8.32-41.el9_8.1.aarch64.rpm|22827aedd764c1ab706086965859e7f8fef0d719ac0b3d8735f6b8e53b0a13e9
+# direct_rpm: coreutils-common-8.32-41.el9_8.1.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/c/coreutils-common-8.32-41.el9_8.1.aarch64.rpm|b449955249a6d2da7369522a5ac2759919d36633e129ba88924057814906d5f5
+# direct_rpm: expat-2.5.0-6.el9_8.3.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/e/expat-2.5.0-6.el9_8.3.aarch64.rpm|df004398da989f75bae9267cfb0ad402ada6e6db46ebef0932c869894c013c08
 # direct_rpm: gawk-5.1.0-6.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/g/gawk-5.1.0-6.el9.aarch64.rpm|a4b7202ac90653a7d3e072c2444bde6a9270d6a818eb6f2ffcfcaa50774f1fad
 # direct_rpm: gdbm-libs-1:1.23-1.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/g/gdbm-libs-1.23-1.el9.aarch64.rpm|74fffe15dd7f5a41c7d1990c2804defa1b45fb845da29465b73a81d5866e8a72
 # direct_rpm: gmp-1:6.2.0-13.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/g/gmp-6.2.0-13.el9.aarch64.rpm|df01d909e4613514b1844d6ca26d0bcdff8a659762e507188d04ed046fb0cec4
@@ -41,9 +41,9 @@
 # direct_rpm: xz-libs-5.2.5-8.el9_0.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/x/xz-libs-5.2.5-8.el9_0.aarch64.rpm|06931afb372ed4a6893e51558beaa6b0eab7adda0af93456fd99a081a8b80779
 bash-5.1.8-9.el9.aarch64|no|bash|0|5.1.8|9.el9|aarch64|996ce808b6eb731274148030b26301f50975c0daaa48762c7c45f4530f8b7f5f|261c46470d2574cd4e5b8ca47be757a0
 bzip2-libs-1.0.8-11.el9.aarch64|yes|bzip2-libs|0|1.0.8|11.el9|aarch64|6b61121df2707fb92d11b2a5eb94b0f7edf90f532a8b626b498a28805bb0ddba|8d27605473318a9793b4f18d2a8a63a1
-coreutils-8.32-41.el9_8.aarch64|no|coreutils|0|8.32|41.el9_8|aarch64|94584360f5bf9cb022012dde75042d5e02fc6769cd6c4e2bb7e48d9806e47e45|b3220f7c6db8be448542a92c1bd12626
-coreutils-common-8.32-41.el9_8.aarch64|no|coreutils-common|0|8.32|41.el9_8|aarch64|3216fbcb35713c8c4f96af03fa49003465794e4f052a3766b4f73ec0bdedead5|158a080e53c942b1dd88e159c6d2f57c
-expat-2.5.0-6.el9_8.1.aarch64|yes|expat|0|2.5.0|6.el9_8.1|aarch64|55ef3f83d33fec8c54ec04b91597c11737c20a679d9652364a84306d2da048f7|1970bf9f8ee9dab2624a82637f130186
+coreutils-8.32-41.el9_8.1.aarch64|no|coreutils|0|8.32|41.el9_8.1|aarch64|ace69188057853dda04f4a8723f18cc5afff112c4301373b708704d7ecb6e85a|5718727b7aadd6e5efbaf8dc22a0d910
+coreutils-common-8.32-41.el9_8.1.aarch64|no|coreutils-common|0|8.32|41.el9_8.1|aarch64|8881cb90633aa43f382af4d3b8e1923f98b1151000b2e589614f8488540801f8|113c6953a4f613ba86e36f706edab853
+expat-2.5.0-6.el9_8.3.aarch64|yes|expat|0|2.5.0|6.el9_8.3|aarch64|5b54fd40d5f0e88d0d290191565955a2e5ffdf4c5aa120f8adcd4f7ef3f691b9|8f5962533c4c4eac50f72779d23ec496
 gawk-5.1.0-6.el9.aarch64|no|gawk|0|5.1.0|6.el9|aarch64|6ae8954312f53e61dbb5bf8cc9a2885ff98c7ab472ca7671864ff7927a42821f|d963e93e1a96745ec92442568a4c3ddb
 gdbm-libs-1:1.23-1.el9.aarch64|yes|gdbm-libs|1|1.23|1.el9|aarch64|d6e5f4f774b610764cccfb7ede751c867e7285e7d5f328e9a43a1949620ed242|1fedb550b38aa17f9a1cb80c421e73f7
 gmp-1:6.2.0-13.el9.aarch64|no|gmp|1|6.2.0|13.el9|aarch64|508dd5dd5eac727f7b7d92df4f6baa0501da19d06fe760be72867e950c73f403|33e22316bc3ff9fc2dd584d7f10e7e19
