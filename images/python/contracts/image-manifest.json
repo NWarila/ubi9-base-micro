@@ -15,7 +15,7 @@
     "shipped": {
       "amd64": [
         "bzip2-libs-1.0.8-11.el9.x86_64",
-        "expat-2.5.0-6.el9_8.1.x86_64",
+        "expat-2.5.0-6.el9_8.3.x86_64",
         "gdbm-libs-1:1.23-1.el9.x86_64",
         "keyutils-libs-1.6.3-1.el9.x86_64",
         "krb5-libs-1.21.1-10.el9_8.x86_64",
@@ -41,7 +41,7 @@
       ],
       "arm64": [
         "bzip2-libs-1.0.8-11.el9.aarch64",
-        "expat-2.5.0-6.el9_8.1.aarch64",
+        "expat-2.5.0-6.el9_8.3.aarch64",
         "gdbm-libs-1:1.23-1.el9.aarch64",
         "keyutils-libs-1.6.3-1.el9.aarch64",
         "krb5-libs-1.21.1-10.el9_8.aarch64",
