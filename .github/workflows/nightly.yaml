@@ -33,7 +33,7 @@ env:
   STIG_ARF_PREDICATE_TYPE: "https://nwarila.dev/attestations/stig-arf/v1"
   SOURCE_DATE_EPOCH: "1704067200"
   OCI_CREATED: "2024-01-01T00:00:00Z"
-  UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:35de56a9413112f1474e392ebc35e0cf6f0fb484c8e8877bbae59b513694b41f
+  UBI_MICRO_IMAGE: registry.access.redhat.com/ubi9/ubi-micro@sha256:7a0454cbd9bd847e8f6a63b6f0254a6efbeb6e0ed71a5d824a4f6cccbe626650
 
 jobs:
   actionlint:
