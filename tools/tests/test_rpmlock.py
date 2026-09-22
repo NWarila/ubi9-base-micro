@@ -5,9 +5,12 @@
 
 from __future__ import annotations
 
+import ast
 import json
+import re
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -171,6 +174,232 @@ def _first_direct_line(text: str) -> str:
     raise AssertionError("fixture has no direct RPM line")
 
 
+def _lock_row_line(row: rpmlock.LockRow) -> str:
+    return "|".join(
+        (
+            row.package,
+            row.final_rpmdb,
+            row.name,
+            row.epoch,
+            row.version,
+            row.release,
+            row.arch,
+            row.sha256_header,
+            row.sigmd5,
+        )
+    )
+
+
+def _direct_rpm_line(entry: rpmlock.DirectRpm) -> str:
+    return f"{rpmlock.DIRECT_PREFIX}{entry.package}|{entry.url}|{entry.sha256}"
+
+
+def _replace_once(text: str, needle: str, replacement: str) -> str:
+    return text.replace(needle, replacement, 1)
+
+
+def _mutate_lock_fields(
+    tmp_path: Path,
+    original_text: str,
+    *,
+    filename: str,
+    field_name: str,
+    replacements: tuple[tuple[str, str], ...],
+    field_value: Callable[[rpmlock.Lockfile], object],
+    expected_value: object,
+    replace_once: Callable[[str, str, str], str] = _replace_once,
+) -> tuple[str, rpmlock.Lockfile, rpmlock.Lockfile]:
+    original_path = tmp_path / f"original-{filename}"
+    original_path.write_text(original_text, encoding="utf-8", newline="\n")
+    original = rpmlock.parse(original_path)
+    original_value = field_value(original)
+
+    mutated_text = original_text
+    for needle, replacement in replacements:
+        mutated_text = replace_once(mutated_text, needle, replacement)
+
+    mutated_path = tmp_path / filename
+    mutated_path.write_text(mutated_text, encoding="utf-8", newline="\n")
+    mutated = rpmlock.parse(mutated_path)
+    actual_value = field_value(mutated)
+    if actual_value == original_value:
+        raise AssertionError(f"{field_name} field mutation did not change the original value {original_value!r}")
+    if actual_value != expected_value:
+        raise AssertionError(f"{field_name} field mutation produced {actual_value!r}; expected {expected_value!r}")
+    return mutated_text, original, mutated
+
+
+def _only_fips_row(lockfile: rpmlock.Lockfile) -> rpmlock.LockRow:
+    assert len(lockfile.rows) == 1
+    return lockfile.rows[0]
+
+
+def _only_direct_entry(lockfile: rpmlock.Lockfile) -> rpmlock.DirectRpm:
+    assert len(lockfile.direct_entries) == 1
+    return lockfile.direct_entries[0]
+
+
+def _fips_identity_fields(lockfile: rpmlock.Lockfile) -> tuple[str, str, str, str]:
+    row = _only_fips_row(lockfile)
+    direct = _only_direct_entry(lockfile)
+    return (row.release, row.package, direct.package, direct.url.rsplit("/", 1)[-1])
+
+
+def _mutate_fips_release(
+    tmp_path: Path,
+    original_text: str,
+    *,
+    replace_once: Callable[[str, str, str], str] = _replace_once,
+) -> tuple[str, rpmlock.Lockfile, rpmlock.Lockfile]:
+    source_path = tmp_path / "fips-release-source.txt"
+    source_path.write_text(original_text, encoding="utf-8", newline="\n")
+    source = rpmlock.parse(source_path)
+    source_row = _only_fips_row(source)
+    source_direct = _only_direct_entry(source)
+
+    mutated_release = f"{source_row.release}.fixture"
+    mutated_row = replace(source_row, release=mutated_release)
+    mutated_package = rpmlock.lock_nevra(mutated_row)
+    mutated_row = replace(mutated_row, package=mutated_package)
+    source_filename = rpmlock.rpm_filename(source_row)
+    assert source_direct.url.endswith(f"/{source_filename}")
+    mutated_url = source_direct.url.removesuffix(source_filename) + rpmlock.rpm_filename(mutated_row)
+    mutated_direct = replace(source_direct, package=mutated_package, url=mutated_url)
+
+    mutated_text, original, mutated = _mutate_lock_fields(
+        tmp_path,
+        original_text,
+        filename="fips-release-fixture.txt",
+        field_name="FIPS release identity",
+        replacements=(
+            (_direct_rpm_line(source_direct), _direct_rpm_line(mutated_direct)),
+            (_lock_row_line(source_row), _lock_row_line(mutated_row)),
+        ),
+        field_value=_fips_identity_fields,
+        expected_value=(
+            mutated_release,
+            mutated_package,
+            mutated_package,
+            rpmlock.rpm_filename(mutated_row),
+        ),
+        replace_once=replace_once,
+    )
+
+    original_row = _only_fips_row(original)
+    original_direct = _only_direct_entry(original)
+    assert mutated.headers == original.headers
+    assert _only_fips_row(mutated) == replace(
+        original_row,
+        package=mutated_package,
+        release=mutated_release,
+    )
+    assert _only_direct_entry(mutated) == replace(
+        original_direct,
+        package=mutated_package,
+        url=mutated_url,
+    )
+    assert mutated.terminal_lf == original.terminal_lf
+    return mutated_text, original, mutated
+
+
+def _mutate_fips_package_nevra(
+    tmp_path: Path,
+    original_text: str,
+) -> tuple[rpmlock.Lockfile, rpmlock.Lockfile]:
+    source_path = tmp_path / "fips-package-source.txt"
+    source_path.write_text(original_text, encoding="utf-8", newline="\n")
+    source = rpmlock.parse(source_path)
+    source_row = _only_fips_row(source)
+    source_direct = _only_direct_entry(source)
+
+    mismatched_package = rpmlock.lock_nevra(replace(source_row, release=f"{source_row.release}.fixture"))
+    mutated_row = replace(source_row, package=mismatched_package)
+    mutated_direct = replace(source_direct, package=mismatched_package)
+    _, original, mutated = _mutate_lock_fields(
+        tmp_path,
+        original_text,
+        filename="fips-package-fixture.txt",
+        field_name="FIPS package NEVRA",
+        replacements=(
+            (_direct_rpm_line(source_direct), _direct_rpm_line(mutated_direct)),
+            (_lock_row_line(source_row), _lock_row_line(mutated_row)),
+        ),
+        field_value=lambda lockfile: (
+            _only_fips_row(lockfile).package,
+            _only_direct_entry(lockfile).package,
+        ),
+        expected_value=(mismatched_package, mismatched_package),
+    )
+
+    original_row = _only_fips_row(original)
+    original_direct = _only_direct_entry(original)
+    assert mutated.headers == original.headers
+    assert _only_fips_row(mutated) == replace(original_row, package=mismatched_package)
+    assert _only_direct_entry(mutated) == replace(original_direct, package=mismatched_package)
+    assert mutated.terminal_lf == original.terminal_lf
+    return original, mutated
+
+
+def _assert_cross_lock_evr_mismatch(
+    fips_lockfile: rpmlock.Lockfile,
+    runtime_lockfile: rpmlock.Lockfile,
+) -> None:
+    rpmlock.validate_fips(fips_lockfile, arch="amd64")
+    expected = f"{fips_lockfile.path}: openssl EVR does not match {runtime_lockfile.path} openssl-libs EVR"
+    with pytest.raises(rpmlock.LockError, match=rf"^{re.escape(expected)}$") as exc:
+        rpmlock.fips_verification_filenames(fips_lockfile, runtime_lockfile)
+    assert str(exc.value) == expected
+
+
+def _mutation_literal_needles(source: str) -> list[str]:
+    needles: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "replace"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            needles.append(node.args[0].value)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_mutate_lock_fields":
+            replacements = next((item.value for item in node.keywords if item.arg == "replacements"), None)
+            if replacements is not None:
+                needles.extend(
+                    child.value
+                    for child in ast.walk(replacements)
+                    if isinstance(child, ast.Constant) and isinstance(child.value, str)
+                )
+    return needles
+
+
+def _committed_mutation_values() -> set[str]:
+    values: set[str] = set()
+    for path in (AMD64_LOCK, ARM64_LOCK, FIPS_AMD64_LOCK, FIPS_ARM64_LOCK):
+        lockfile = rpmlock.parse(path)
+        source_date_epoch = lockfile.headers.get("source_date_epoch")
+        if source_date_epoch is not None:
+            values.add(f"# source_date_epoch: {source_date_epoch}")
+        for row in lockfile.rows:
+            if not row.name.startswith("openssl"):
+                continue
+            values.update(
+                {
+                    row.package,
+                    row.version,
+                    row.release,
+                    row.sha256_header,
+                    row.sigmd5,
+                    f"{row.epoch}:{row.version}",
+                }
+            )
+        for entry in lockfile.direct_entries:
+            if entry.package.startswith("openssl"):
+                values.update({entry.package, entry.sha256})
+    return values
+
+
 @pytest.mark.parametrize(("arch", "path"), [("amd64", AMD64_LOCK), ("arm64", ARM64_LOCK)])
 def test_committed_lockfiles_parse_and_validate(arch: str, path: Path) -> None:
     lockfile = rpmlock.parse(path)
@@ -298,23 +527,82 @@ def test_crypto_policies_filename_is_derived_from_fixture_identity() -> None:
 
 
 def test_cli_fips_filename_selection_rejects_cross_lock_evr_mismatch(tmp_path: Path) -> None:
-    fips_path = tmp_path / "fips-verify.amd64.txt"
-    fips_path.write_text(
-        _fips_lock_text().replace("6.el9_8", "5.el9_8"),
-        encoding="utf-8",
-        newline="\n",
+    _, _, fips_lockfile = _mutate_fips_release(tmp_path, _fips_lock_text())
+    runtime_lockfile = rpmlock.parse(AMD64_LOCK)
+
+    _assert_cross_lock_evr_mismatch(fips_lockfile, runtime_lockfile)
+
+
+def test_fips_release_mutation_derives_from_synthetic_generation(tmp_path: Path) -> None:
+    source_path = tmp_path / "synthetic-source.txt"
+    source_path.write_text(_fips_lock_text(), encoding="utf-8", newline="\n")
+    source = rpmlock.parse(source_path)
+    source_row = _only_fips_row(source)
+    source_direct = _only_direct_entry(source)
+    synthetic_release = "42.preview_el9"
+    assert synthetic_release != source_row.release
+
+    synthetic_row = replace(source_row, release=synthetic_release)
+    synthetic_package = rpmlock.lock_nevra(synthetic_row)
+    synthetic_row = replace(synthetic_row, package=synthetic_package)
+    source_filename = rpmlock.rpm_filename(source_row)
+    assert source_direct.url.endswith(f"/{source_filename}")
+    synthetic_url = source_direct.url.removesuffix(source_filename) + rpmlock.rpm_filename(synthetic_row)
+    synthetic_direct = replace(source_direct, package=synthetic_package, url=synthetic_url)
+    synthetic_text = _fips_lock_text()
+    synthetic_text = _replace_once(
+        synthetic_text,
+        _direct_rpm_line(source_direct),
+        _direct_rpm_line(synthetic_direct),
+    )
+    synthetic_text = _replace_once(
+        synthetic_text,
+        _lock_row_line(source_row),
+        _lock_row_line(synthetic_row),
     )
 
-    result = subprocess.run(
-        _fips_rpm_filenames_command(fips_path, AMD64_LOCK, "amd64", rpmlock.LockPolicy.from_repo()),
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
+    _, original, mutated = _mutate_fips_release(tmp_path, synthetic_text)
+
+    assert _only_fips_row(original).release == synthetic_release
+    assert _only_fips_row(mutated).release == f"{synthetic_release}.fixture"
+
+
+def test_cross_lock_guard_binding_rejects_wrong_guard(tmp_path: Path) -> None:
+    mutated_text, _, release_mutated = _mutate_fips_release(tmp_path, _fips_lock_text())
+    release_row = _only_fips_row(release_mutated)
+    wrong_guard_row = replace(release_row, final_rpmdb="yes")
+    _, _, wrong_guard = _mutate_lock_fields(
+        tmp_path,
+        mutated_text,
+        filename="openssl EVR does not match.txt",
+        field_name="FIPS final_rpmdb",
+        replacements=((_lock_row_line(release_row), _lock_row_line(wrong_guard_row)),),
+        field_value=lambda lockfile: _only_fips_row(lockfile).final_rpmdb,
+        expected_value="yes",
+    )
+    expected = f"{wrong_guard.path}: FIPS verification RPM must use final_rpmdb=no for {wrong_guard_row.package}"
+
+    with pytest.raises(rpmlock.LockError, match=rf"^{re.escape(expected)}$") as exc:
+        _assert_cross_lock_evr_mismatch(wrong_guard, rpmlock.parse(AMD64_LOCK))
+    assert str(exc.value) == expected
+
+
+def test_fips_release_mutation_rejects_noop_replacement(tmp_path: Path) -> None:
+    def no_op(text: str, _needle: str, _replacement: str) -> str:
+        return text
+
+    with pytest.raises(AssertionError, match="FIPS release identity field mutation did not change"):
+        _mutate_fips_release(tmp_path, _fips_lock_text(), replace_once=no_op)
+
+
+def test_mutation_needles_do_not_pin_committed_values() -> None:
+    source = Path(__file__).read_text(encoding="utf-8")
+    needles = _mutation_literal_needles(source)
+    violations = sorted(
+        (needle, value) for needle in needles for value in _committed_mutation_values() if value in needle
     )
 
-    assert result.returncode == 1
-    assert "openssl EVR does not match" in result.stderr
+    assert not violations, f"committed lock value used as a mutation needle: {violations}"
 
 
 def test_cli_fips_filename_selection_rejects_wrong_arch(tmp_path: Path) -> None:
@@ -534,10 +822,6 @@ def test_rejects_empty_file(tmp_path: Path) -> None:
     ("mutated_text", "message"),
     [
         (_lock_text().replace("# arch: amd64", "# arch: arm64", 1), "invalid arch header"),
-        (
-            _lock_text().replace("# source_date_epoch: 1704067200", "# source_date_epoch: 1", 1),
-            "invalid source_date_epoch header",
-        ),
         (_lock_text().replace(rpmlock.COLUMNS, "package|final_rpmdb", 1), "invalid columns header"),
         (
             _replace_first_data_row(
@@ -576,6 +860,31 @@ def test_rejects_empty_file(tmp_path: Path) -> None:
 def test_rejects_other_mirrored_validator_failures(tmp_path: Path, mutated_text: str, message: str) -> None:
     with pytest.raises(rpmlock.LockError, match=message):
         _validate_text(tmp_path, mutated_text)
+
+
+def test_rejects_source_date_epoch_mismatch(tmp_path: Path) -> None:
+    committed = rpmlock.parse(AMD64_LOCK)
+    source_date_epoch = committed.headers["source_date_epoch"]
+    mutated_epoch = f"{source_date_epoch}0"
+    _, _, mutated = _mutate_lock_fields(
+        tmp_path,
+        _lock_text(),
+        filename="source-date-epoch-fixture.txt",
+        field_name="source_date_epoch header",
+        replacements=(
+            (
+                f"# source_date_epoch: {source_date_epoch}",
+                f"# source_date_epoch: {mutated_epoch}",
+            ),
+        ),
+        field_value=lambda lockfile: lockfile.headers.get("source_date_epoch"),
+        expected_value=mutated_epoch,
+    )
+    expected = f"{mutated.path}: invalid source_date_epoch header"
+
+    with pytest.raises(rpmlock.LockError, match=rf"^{re.escape(expected)}$") as exc:
+        rpmlock.validate(mutated, arch="amd64")
+    assert str(exc.value) == expected
 
 
 def test_rejects_arch_header_at_eof(tmp_path: Path) -> None:
@@ -645,14 +954,31 @@ def test_rejects_unsorted_and_duplicate_rows(tmp_path: Path) -> None:
 
 
 def test_rejects_provider_pin_mismatch(tmp_path: Path) -> None:
-    mutated = _lock_text().replace(
-        "bbf25303def8e1270675531c47bdad432f6ad8ef4c327556ae65bd6abaf8edb5",
-        "0" * 64,
-        1,
+    committed = rpmlock.parse(AMD64_LOCK)
+    provider_row = next(row for row in committed.rows if row.name == "openssl-fips-provider")
+    provider_direct = next(entry for entry in committed.direct_entries if entry.package == provider_row.package)
+    replacement_prefix = "0" if provider_direct.sha256[0] != "0" else "1"
+    mutated_digest = replacement_prefix + provider_direct.sha256[1:]
+    mutated_direct = replace(provider_direct, sha256=mutated_digest)
+    _, original, mutated = _mutate_lock_fields(
+        tmp_path,
+        _lock_text(),
+        filename="provider-digest-fixture.txt",
+        field_name="OpenSSL FIPS provider direct RPM sha256",
+        replacements=((_direct_rpm_line(provider_direct), _direct_rpm_line(mutated_direct)),),
+        field_value=lambda lockfile: lockfile.direct_map[provider_row.package][1],
+        expected_value=mutated_digest,
     )
+    assert mutated.headers == original.headers
+    assert mutated.rows == original.rows
+    assert mutated.direct_entries == tuple(
+        mutated_direct if entry.package == provider_row.package else entry for entry in original.direct_entries
+    )
+    expected = f"{mutated.path}: FIPS provider package direct pin mismatch for {provider_row.package}"
 
-    with pytest.raises(rpmlock.LockError, match="FIPS provider package direct pin mismatch"):
-        _validate_text(tmp_path, mutated)
+    with pytest.raises(rpmlock.LockError, match=rf"^{re.escape(expected)}$") as exc:
+        rpmlock.validate(mutated, arch="amd64")
+    assert str(exc.value) == expected
 
 
 def test_builder_lock_rejects_degenerate_runtime_grammar(tmp_path: Path) -> None:
@@ -709,16 +1035,21 @@ def test_fips_lock_requires_terminal_lf(tmp_path: Path) -> None:
 
 
 def test_fips_lock_requires_package_field_to_match_nevra(tmp_path: Path) -> None:
-    path = _write_lock(
-        tmp_path,
-        _fips_lock_text().replace(
-            "openssl-1:3.5.5-6.el9_8.x86_64",
-            "openssl-1:3.5.5-5.el9_8.x86_64",
-        ),
-    )
+    original, mutated = _mutate_fips_package_nevra(tmp_path, _fips_lock_text())
+    original_row = _only_fips_row(original)
+    mutated_row = _only_fips_row(mutated)
+    original_direct = _only_direct_entry(original)
+    mutated_direct = _only_direct_entry(mutated)
 
-    with pytest.raises(rpmlock.LockError, match="does not match FIPS verification row NEVRA"):
-        rpmlock.validate_fips(rpmlock.parse(path), arch="amd64")
+    rpmlock.validate_common(mutated, mode=rpmlock.CommonValidationMode.STRICT)
+    assert mutated_row.package != rpmlock.lock_nevra(mutated_row)
+    assert mutated_row.release == original_row.release
+    assert mutated_direct.url == original_direct.url
+    expected = f"{mutated.path}: package field does not match FIPS verification row NEVRA: {mutated_row.package}"
+
+    with pytest.raises(rpmlock.LockError, match=rf"^{re.escape(expected)}$") as exc:
+        rpmlock.validate_fips(mutated, arch="amd64")
+    assert str(exc.value) == expected
 
 
 def test_cli_validate_and_summary() -> None:
