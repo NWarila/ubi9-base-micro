@@ -5,8 +5,8 @@
 # direct_rpm: basesystem-11-13.el9.noarch|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/b/basesystem-11-13.el9.noarch.rpm|f498b0813fa1a825d550e8e3a9e42255eabfa18e6fc96adfc6cc8fa7e16dd513
 # direct_rpm: bash-5.1.8-9.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/b/bash-5.1.8-9.el9.aarch64.rpm|7dc1febec9c2fb184ed4407f8a188ab267b7e46b3534866f702c6266008ababa
 # direct_rpm: ca-certificates-2025.2.80_v9.0.305-91.el9.noarch|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/c/ca-certificates-2025.2.80_v9.0.305-91.el9.noarch.rpm|0554bf65d573950e7d550a07bf7d0b3def85ca3b45a7fbde4cce7cadd9a476a7
-# direct_rpm: coreutils-8.32-41.el9_8.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/c/coreutils-8.32-41.el9_8.aarch64.rpm|ee2de9f5fbc5e83bad920a353c45d3446997aa0e4023436528b2d6f817bd6f50
-# direct_rpm: coreutils-common-8.32-41.el9_8.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/c/coreutils-common-8.32-41.el9_8.aarch64.rpm|cd79ca65bba152b9ccadcb9780ec78e3d06ce538b693078fd14459d038ab5c0c
+# direct_rpm: coreutils-8.32-41.el9_8.1.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/c/coreutils-8.32-41.el9_8.1.aarch64.rpm|22827aedd764c1ab706086965859e7f8fef0d719ac0b3d8735f6b8e53b0a13e9
+# direct_rpm: coreutils-common-8.32-41.el9_8.1.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/c/coreutils-common-8.32-41.el9_8.1.aarch64.rpm|b449955249a6d2da7369522a5ac2759919d36633e129ba88924057814906d5f5
 # direct_rpm: crypto-policies-20260224-1.gitea0f072.el9_8.noarch|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/c/crypto-policies-20260224-1.gitea0f072.el9_8.noarch.rpm|a9ad86b8df75a7c9c29c6f6dd4b8f78cfa1f42b492eff0d11b82c457d37a7f9f
 # direct_rpm: filesystem-3.16-5.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/f/filesystem-3.16-5.el9.aarch64.rpm|484bc41109c49066cf350344150abe144e63263e0fafa0bf12c5a47f853e6a49
 # direct_rpm: findutils-1:4.8.0-7.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/f/findutils-4.8.0-7.el9.aarch64.rpm|158af4d5ecbd8b87f0da762ea1655bd4c86512071a95d8307eda3e0b3991105d
@@ -28,7 +28,7 @@
 # direct_rpm: ncurses-libs-6.2-12.20210508.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/n/ncurses-libs-6.2-12.20210508.el9.aarch64.rpm|b5dd452392d2f97bb050c9f5e5376998652c567dcbd8f035d26659b1b551b5c9
 # direct_rpm: openssl-fips-provider-3.0.7-8.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/o/openssl-fips-provider-3.0.7-8.el9.aarch64.rpm|0cfe7b281ae2ca3cb0ceaa1a0b84f8c087c4ac16662ebb9c19b5681cf39f99a9
 # direct_rpm: openssl-fips-provider-so-3.0.7-8.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/o/openssl-fips-provider-so-3.0.7-8.el9.aarch64.rpm|18c77b9b37e7abf0e8cf1dac4b3de770efe895547bdcab8aea8d8d8592954947
-# direct_rpm: openssl-libs-1:3.5.5-6.el9_8.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/o/openssl-libs-3.5.5-6.el9_8.aarch64.rpm|9af799c6be853cb42999a1228a2768da20a21895b7dcac111dba3be13a397b67
+# direct_rpm: openssl-libs-1:3.5.8-1.el9_8.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/o/openssl-libs-3.5.8-1.el9_8.aarch64.rpm|23134af6ea097b94d8261367db01f91604ef3b508654caf4f7399e5c142abcc8
 # direct_rpm: p11-kit-0.26.4-1.el9_8.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/p/p11-kit-0.26.4-1.el9_8.aarch64.rpm|b9391ea6618098782c9325ccda3c9ca8bc0f3b035bd4f113a793cea18026c75e
 # direct_rpm: p11-kit-trust-0.26.4-1.el9_8.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/p/p11-kit-trust-0.26.4-1.el9_8.aarch64.rpm|a57761123cd5836faf3d40251d16124557ffb452443bfa14cf59ac16e6c99970
 # direct_rpm: pcre-8.44-4.el9.aarch64|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/aarch64/baseos/os/Packages/p/pcre-8.44-4.el9.aarch64.rpm|099feef7e71b82cf0234e37d824fc81353d51dee55694e05181fa686ab50efae
@@ -43,8 +43,8 @@ alternatives-1.24-2.el9.aarch64|no|alternatives|0|1.24|2.el9|aarch64|b33a0e174b7
 basesystem-11-13.el9.noarch|yes|basesystem|0|11|13.el9|noarch|01a59a06e36f02ce2d63c3ec66655bcf6c484e308f106d2ade807009f4b9215d|16605e0013938a5e21ffdf777cfa86ce
 bash-5.1.8-9.el9.aarch64|no|bash|0|5.1.8|9.el9|aarch64|996ce808b6eb731274148030b26301f50975c0daaa48762c7c45f4530f8b7f5f|261c46470d2574cd4e5b8ca47be757a0
 ca-certificates-2025.2.80_v9.0.305-91.el9.noarch|yes|ca-certificates|0|2025.2.80_v9.0.305|91.el9|noarch|7faef89b97f69ec4949eb5e6a173acc050237cf455ff961e54c55548634eae53|16d4164be9d1b01f2de4f9a84fc86152
-coreutils-8.32-41.el9_8.aarch64|no|coreutils|0|8.32|41.el9_8|aarch64|94584360f5bf9cb022012dde75042d5e02fc6769cd6c4e2bb7e48d9806e47e45|b3220f7c6db8be448542a92c1bd12626
-coreutils-common-8.32-41.el9_8.aarch64|no|coreutils-common|0|8.32|41.el9_8|aarch64|3216fbcb35713c8c4f96af03fa49003465794e4f052a3766b4f73ec0bdedead5|158a080e53c942b1dd88e159c6d2f57c
+coreutils-8.32-41.el9_8.1.aarch64|no|coreutils|0|8.32|41.el9_8.1|aarch64|ace69188057853dda04f4a8723f18cc5afff112c4301373b708704d7ecb6e85a|5718727b7aadd6e5efbaf8dc22a0d910
+coreutils-common-8.32-41.el9_8.1.aarch64|no|coreutils-common|0|8.32|41.el9_8.1|aarch64|8881cb90633aa43f382af4d3b8e1923f98b1151000b2e589614f8488540801f8|113c6953a4f613ba86e36f706edab853
 crypto-policies-20260224-1.gitea0f072.el9_8.noarch|yes|crypto-policies|0|20260224|1.gitea0f072.el9_8|noarch|da81d7746eb8c31dbd5aec626c7bf34440bd4d4f2bce24135b36195d616cd2a7|cda426910254e4ba6902d3fdf44c53fa
 filesystem-3.16-5.el9.aarch64|yes|filesystem|0|3.16|5.el9|aarch64|a0b9fe77691ee7d0a10ac9f5990fe8d96c2893e633ffaa3978f18df687a8b401|1c2ee5604dae11d9c7fb15b4129a8dbc
 findutils-1:4.8.0-7.el9.aarch64|no|findutils|1|4.8.0|7.el9|aarch64|0374539afa76ec4159c8d757d4f2e17a74d42b6fc152d69bc927760a757c9ffa|b7c32e72aa3ebca3ae2868f78432274a
@@ -66,7 +66,7 @@ ncurses-base-6.2-12.20210508.el9.noarch|no|ncurses-base|0|6.2|12.20210508.el9|no
 ncurses-libs-6.2-12.20210508.el9.aarch64|no|ncurses-libs|0|6.2|12.20210508.el9|aarch64|25f48673dbde40c26484abd6908d772906d0abe7f33788d6162e40555ebafea0|52ad50b5c1cdafe307f12aab17811583
 openssl-fips-provider-3.0.7-8.el9.aarch64|yes|openssl-fips-provider|0|3.0.7|8.el9|aarch64|be2ed40694dfea73b4c0542a65c812c40edcd3b398a9305747b8980d7040bcec|0173567143b5eb53df9d87748f181a71
 openssl-fips-provider-so-3.0.7-8.el9.aarch64|yes|openssl-fips-provider-so|0|3.0.7|8.el9|aarch64|93387b3c841e3c601275d58176f009eefdb01551e5d951d48be3a55b856e0449|52e52ea8cc9d2471f61b31892c7abfec
-openssl-libs-1:3.5.5-6.el9_8.aarch64|yes|openssl-libs|1|3.5.5|6.el9_8|aarch64|1c9f162817340f5874dd049abfe941fb0625c1fb00898dbc252eceb56817b922|0c16955b4a76a1371ebb61147b42272c
+openssl-libs-1:3.5.8-1.el9_8.aarch64|yes|openssl-libs|1|3.5.8|1.el9_8|aarch64|bf50f5a4cdf8f22395e75dce8abb365a08a55cf20c993e4ea9fbab109d525b70|4f45addaaf22d10c4ab8f8c80597aacf
 p11-kit-0.26.4-1.el9_8.aarch64|no|p11-kit|0|0.26.4|1.el9_8|aarch64|6b5cf754d722d7fdafde310400a8dc98328c5278e517190d31613aea4338686a|1064aeca06ddb765e5e2acd543551fe5
 p11-kit-trust-0.26.4-1.el9_8.aarch64|no|p11-kit-trust|0|0.26.4|1.el9_8|aarch64|7a24e512ca994059d36762d3ffb8a7c69831c1c6d3df627c43b4e210c25d406a|8f962e01d1cee568d35bd0c2089922b0
 pcre-8.44-4.el9.aarch64|no|pcre|0|8.44|4.el9|aarch64|5c5dea6e27a1a8c57302680532bb191a6f0c5271a92894a359f99daddc71ab21|ef703cee6b8f70649c3a083941d2c77c
