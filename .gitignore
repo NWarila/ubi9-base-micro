@@ -115,6 +115,12 @@
 !/images/python/vex/*.json
 !/images/python/vex/README.md
 
+!/images/java21/
+!/images/java21/tools/
+!/images/java21/tools/*.py
+!/images/java21/tools/tests/
+!/images/java21/tools/tests/*.py
+
 !/stig/
 !/stig/*.json
 !/stig/*.xml
