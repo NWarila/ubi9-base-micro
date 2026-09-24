@@ -47,6 +47,7 @@
 !/.github/workflows/nightly.yaml
 !/.github/workflows/publish-image.yaml
 !/.github/workflows/publish-python.yaml
+!/.github/workflows/publish-java21.yaml
 !/.github/workflows/python-ci.yaml
 !/.github/workflows/rpm-lock-refresh.yaml
 
@@ -114,6 +115,11 @@
 !/images/python/vex/
 !/images/python/vex/*.json
 !/images/python/vex/README.md
+!/images/java21/
+!/images/java21/Dockerfile
+!/images/java21/README.md
+!/images/java21/strip.txt
+!/images/java21/unsatisfied-requirements.txt
 
 !/stig/
 !/stig/*.json

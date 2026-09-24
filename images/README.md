@@ -3,7 +3,7 @@
 Base-image variants live here, one tree per variant under `images/<variant>/`.
 Current and historical `base-python` publication evidence is in the
 [canonical publication evidence contract](../docs/reference/verification-contract.md#image-family-publication-evidence-contract).
-Node and Java variants remain planned. Each variant must publish through its own
+The Java variant (`java21/`) is built and smoke-tested but not published; the Node variant remains planned. Each variant must publish through its own
 path-scoped workflow
 and carry the full evidence set — Cosign signature, SPDX and CycloneDX SBOMs,
 OpenVEX, NIST SP 800-190 evidence, a tailored STIG ARF, SLSA provenance, and an

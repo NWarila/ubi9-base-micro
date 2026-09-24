@@ -1,0 +1,70 @@
+# Purpose: Build the java21 image and smoke-test its FIPS-mode provider on pull requests and main pushes; nothing is published.
+# Role: workflow
+# Micro-container candidate: no - repository workflow control plane.
+
+name: java21 image
+
+on:
+  pull_request:
+    paths:
+      - images/java21/**
+      - .github/workflows/publish-java21.yaml
+  push:
+    branches: [main]
+    paths:
+      - images/java21/**
+      - .github/workflows/publish-java21.yaml
+
+permissions: {}
+
+env:
+  LOCAL_TAG: local/ubi9-base-java:ci
+
+jobs:
+  build:
+    name: java21 build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Build java21 image
+        run: |
+          set -euo pipefail
+          docker build --pull --platform linux/amd64 --file images/java21/Dockerfile --tag "${LOCAL_TAG}" images/java21
+
+      - name: Smoke-test version and FIPS provider
+        run: |
+          set -euo pipefail
+          version_file="${RUNNER_TEMP}/java-version.txt"
+          providers_file="${RUNNER_TEMP}/java-providers.txt"
+          rc=0
+          docker run --rm --user 65532:65532 --read-only --tmpfs /tmp:rw,mode=1777 "${LOCAL_TAG}" \
+            -XX:-UsePerfData -version > "${version_file}" 2>&1 || rc=$?
+          version_line="$(head -n 1 "${version_file}")"
+          if [[ "${rc}" -ne 0 || "${version_line}" != 'openjdk version "21.0.12.1" 2026-08-18 LTS' ]]; then
+            cat "${version_file}"
+            printf 'SMOKE VERSION FAILED: exit %s: %s\n' "${rc}" "${version_line}" >&2
+            exit 1
+          fi
+          printf 'SMOKE VERSION OK: %s\n' "${version_line}"
+          rc=0
+          docker run --rm --user 65532:65532 --read-only --tmpfs /tmp:rw,mode=1777 --env NSS_FIPS=1 "${LOCAL_TAG}" \
+            -XX:-UsePerfData -XshowSettings:security:providers -version > "${providers_file}" 2>&1 || rc=$?
+          first_provider="$(awk '/Provider name:/ {print $3; exit}' "${providers_file}")"
+          if [[ "${rc}" -ne 0 || "${first_provider}" != "SunPKCS11-NSS-FIPS" ]]; then
+            cat "${providers_file}"
+            printf 'SMOKE FIPS PROVIDER FAILED: exit %s: %s\n' "${rc}" "${first_provider:-none}" >&2
+            exit 1
+          fi
+          printf 'SMOKE FIPS PROVIDER OK: %s\n' "${first_provider}"

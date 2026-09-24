@@ -1,0 +1,29 @@
+# RPM-declared requirements the java21 strip is reviewed to leave unsatisfied: "install-time" = scriptlet tooling, "omission" = declared server-profile omission (README.md).
+install-time /bin/sh|glibc-common
+install-time /bin/sh|java-21-openjdk-headless
+install-time /bin/sh|krb5-libs
+install-time /bin/sh|nss-sysinit
+install-time /usr/bin/bash|crypto-policies
+install-time /usr/bin/bash|glibc-common
+install-time /usr/bin/bash|nss-softokn-freebl
+install-time /usr/bin/sh|ca-certificates
+install-time /usr/bin/sh|glibc-common
+install-time /usr/bin/sh|nss-sysinit
+install-time /usr/bin/update-crypto-policies|nss
+install-time /usr/sbin/alternatives|java-21-openjdk-headless
+install-time bash|ca-certificates
+install-time copy-jdk-configs >= 4.0|java-21-openjdk-headless
+install-time coreutils|krb5-libs
+install-time coreutils|openssl-fips-provider-so
+install-time gawk|krb5-libs
+install-time grep|ca-certificates
+install-time grep|krb5-libs
+install-time sed|ca-certificates
+install-time sed|krb5-libs
+omission cups-libs|java-21-openjdk-headless
+omission libasound.so.2()(64bit)|java-21-openjdk-headless
+omission libasound.so.2(ALSA_0.9)(64bit)|java-21-openjdk-headless
+omission libasound.so.2(ALSA_0.9.0rc4)(64bit)|java-21-openjdk-headless
+omission lksctp-tools(x86-64)|java-21-openjdk-headless
+omission p11-kit-trust >= 0.24|ca-certificates
+omission p11-kit-trust|nss

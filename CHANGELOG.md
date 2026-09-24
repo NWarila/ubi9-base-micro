@@ -85,6 +85,12 @@ and this project adheres to
 
 ### Added
 
+- Added the `images/java21` server-profile build definition and the
+  `publish-java21.yaml` pull-request and `main` build with a FIPS-mode smoke
+  test: the OpenJDK 21 headless JRE on the pinned `base-micro` floor with the
+  NSS FIPS runtime retained and Java Sound, CUPS printing and SCTP omitted
+  (declared in `images/java21/README.md`). The Java workflow does not push or
+  sign the Java image.
 - `images/python/` evidence machinery: a python STIG tailoring and justification
   ledger, forked SBOM, NIST SP 800-190 and rootfs-secret gates, an OpenVEX
   disclosure, and the image contract's record of the identity the production
