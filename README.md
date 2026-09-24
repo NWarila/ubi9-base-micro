@@ -164,14 +164,14 @@ RHEL9 STIG ARF attestation, and a fail-closed byte-for-byte digest gate.
 `ubi9-base-micro` is the root image. `base-python` has its own two-phase
 publication workflow. Its current and historical publication evidence is in the
 [canonical publication evidence contract](docs/reference/verification-contract.md#image-family-publication-evidence-contract).
-The remaining language variants are planned as `images/<variant>/` trees.
+`base-java` is built and smoke-tested from `images/java21/` but not published; the remaining language variants are planned as `images/<variant>/` trees.
 
 | Image | Status | Base relationship | Runtime scope |
 | --- | --- | --- | --- |
 | `base-micro` | Current repository | Root image | glibc, CA trust, rpmdb, OpenSSL #4857 provider |
 | `base-python` | Dedicated publisher | `FROM base-micro@sha256:<digest>` | CPython runtime on the micro floor |
 | `base-node` | Planned | `FROM base-micro@sha256:<digest>` | Node.js runtime on the micro floor |
-| `base-java` | Planned | `FROM base-micro@sha256:<digest>` | OpenJDK runtime on the micro floor |
+| `base-java` | Built, not published | `FROM base-micro@sha256:<digest>` | OpenJDK 21 headless server JRE on the micro floor ([declared omissions](images/java21/README.md)) |
 
 The common evidence floor is a cosign keyless signature, SLSA L3 provenance,
 rpmdb-derived SPDX and CycloneDX SBOMs, Trivy and Grype fixable-CVE gates,

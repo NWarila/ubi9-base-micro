@@ -59,7 +59,7 @@ repos:
       - id: hadolint-docker
         name: hadolint
         entry: ghcr.io/hadolint/hadolint@sha256:27086352fd5e1907ea2b934eb1023f217c5ae087992eb59fde121dce9c9ff21e hadolint
-        files: ^(containers/Dockerfile|images/python/Dockerfile)$
+        files: ^(containers/Dockerfile|images/[^/]+/Dockerfile)$
         args: [--config, .hadolint.yaml]
 
   - repo: https://github.com/rhysd/actionlint
