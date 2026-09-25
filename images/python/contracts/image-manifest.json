@@ -5,10 +5,10 @@
   },
   "parent": {
     "repository": "ghcr.io/nwarila/ubi9-base-micro",
-    "digest": "sha256:f1ad33e69ac71564a9a51f905772daacaf827aeef20dcdeedd1a10a27be80b88",
+    "digest": "sha256:81e604e496e11289f662610a8da60a4dcfa206b14f1d3d4e0239a35ff60b21f6",
     "children": {
-      "amd64": "sha256:ef5ca60a9d956eb86e10989b33a46b29d3078d296d5ffa2cee8cb14c12cd3406",
-      "arm64": "sha256:3d1dd235ca2a9ce803846b83abd16fce05a79f35b790ade4b838fc8e8014065d"
+      "amd64": "sha256:3ffa06746e82c3a6046d6a4bf9aeb1770a5982a8a94b39fc907ea70e27b17472",
+      "arm64": "sha256:d8fa331e87dcf46f775ac399d4345f75e2c43af76d654f0618239f24c8206506"
     }
   },
   "runtime": {
@@ -103,12 +103,12 @@
   },
   "reproducibility": {
     "canonical_rootfs_digest": {
-      "amd64": "51e84f0860dae469d587406bd5c39fa45044a748613c7b1c4e1a480af7c4bd7d",
-      "arm64": "1f7fa64c97443ea27c784021a7b39f37a357f878b1fc4e1bd5a9af3800e4a17b"
+      "amd64": "2954728e40d6037a198bec59577baa3ad2d0e357d66f43677ae2917718d4578d",
+      "arm64": "69890b1af584c83a84ae81ce7d4af5a12cd9bfa90642be987434446e83f0d8d5"
     },
     "rpmdb_sha256": {
-      "amd64": "265db59b86ed18d161ff02c38b8c818d9aac5a69ff4a16f0400cff87629677c5",
-      "arm64": "944abcba198cdc816a78db6372fcb35eed77940858ddf588b31cb6a11e9bdd3b"
+      "amd64": "5b7e4a621ddfe217c18c5f2e0eda869987f30736bfa04e8f0b0271f5268a2627",
+      "arm64": "8cb454b4508e570c259df96f16636b1e502b2b61f8bfea6954a3e2af5fbe1094"
     }
   },
   "provenance": {
