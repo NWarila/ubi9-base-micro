@@ -1,4 +1,4 @@
-# Purpose: Build the java21 image and smoke-test its FIPS-mode provider on pull requests and main pushes; nothing is published.
+# Purpose: Build the java21 image and smoke-test its FIPS-mode provider on pull requests and main pushes; main pushes also publish and sign it.
 # Role: workflow
 # Micro-container candidate: no - repository workflow control plane.
 
@@ -68,3 +68,140 @@ jobs:
             exit 1
           fi
           printf 'SMOKE FIPS PROVIDER OK: %s\n' "${first_provider}"
+
+  publish:
+    name: java21 publish
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    env:
+      IMAGE: ghcr.io/nwarila/ubi9-base-java
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: |
+          printf '%s' "${GHCR_TOKEN}" \
+            | docker login ghcr.io \
+                --username "${REGISTRY_USER}" \
+                --password-stdin
+
+      - name: Install Crane
+        env:
+          CRANE_VERSION: "v0.21.7"
+        run: |
+          bash tools/install-crane.sh
+          printf '%s\n' "${PWD}/dist/tools" >> "${GITHUB_PATH}"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v2.5.2
+
+      - name: Build and push candidate
+        id: push
+        run: |
+          set -euo pipefail
+          candidate="${IMAGE}:base-java-${GITHUB_SHA::12}"
+          docker build --pull --platform linux/amd64 --file images/java21/Dockerfile --tag "${candidate}" images/java21
+          docker push "${candidate}"
+          digest="$(crane digest "${candidate}")"
+          if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            printf 'REGISTRY DIGEST FAILED: %s\n' "${digest}" >&2
+            exit 1
+          fi
+          printf 'digest=%s\nref=%s@%s\n' "${digest}" "${IMAGE}" "${digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Readback smoke-test the pushed digest
+        env:
+          IMAGE_REF: ${{ steps.push.outputs.ref }}
+        run: |
+          set -euo pipefail
+          docker pull "${IMAGE_REF}"
+          version_file="${RUNNER_TEMP}/java-version.txt"
+          providers_file="${RUNNER_TEMP}/java-providers.txt"
+          rc=0
+          docker run --rm --user 65532:65532 --read-only --tmpfs /tmp:rw,mode=1777 "${IMAGE_REF}" \
+            -XX:-UsePerfData -version > "${version_file}" 2>&1 || rc=$?
+          version_line="$(head -n 1 "${version_file}")"
+          if [[ "${rc}" -ne 0 || "${version_line}" != 'openjdk version "21.0.12.1" 2026-08-18 LTS' ]]; then
+            cat "${version_file}"
+            printf 'SMOKE VERSION FAILED: exit %s: %s\n' "${rc}" "${version_line}" >&2
+            exit 1
+          fi
+          printf 'SMOKE VERSION OK: %s\n' "${version_line}"
+          rc=0
+          docker run --rm --user 65532:65532 --read-only --tmpfs /tmp:rw,mode=1777 --env NSS_FIPS=1 "${IMAGE_REF}" \
+            -XX:-UsePerfData -XshowSettings:security:providers -version > "${providers_file}" 2>&1 || rc=$?
+          first_provider="$(awk '/Provider name:/ {print $3; exit}' "${providers_file}")"
+          if [[ "${rc}" -ne 0 || "${first_provider}" != "SunPKCS11-NSS-FIPS" ]]; then
+            cat "${providers_file}"
+            printf 'SMOKE FIPS PROVIDER FAILED: exit %s: %s\n' "${rc}" "${first_provider:-none}" >&2
+            exit 1
+          fi
+          printf 'SMOKE FIPS PROVIDER OK: %s\n' "${first_provider}"
+          printf 'READBACK SMOKE OK: %s\n' "${IMAGE_REF}"
+
+      - name: Sign the pushed digest
+        env:
+          COSIGN_YES: "true"
+          IMAGE_REF: ${{ steps.push.outputs.ref }}
+        run: cosign sign "${IMAGE_REF}"
+
+      - name: Verify the signature
+        env:
+          IMAGE_REF: ${{ steps.push.outputs.ref }}
+        run: |
+          cosign verify "${IMAGE_REF}" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish-java21.yaml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+
+      - name: Apply the base-java alias unless main has a newer java21 change
+        env:
+          IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE_REF: ${{ steps.push.outputs.ref }}
+        run: |
+          set -euo pipefail
+          if ! git fetch --no-tags origin main; then
+            printf 'FRESHNESS FAILED: cannot fetch main\n' >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" FETCH_HEAD; then
+            printf 'FRESHNESS FAILED: %s is not an ancestor of main\n' "${GITHUB_SHA}" >&2
+            exit 1
+          fi
+          rc=0
+          git diff --quiet --no-renames "${GITHUB_SHA}" FETCH_HEAD -- \
+            images/java21/ .github/workflows/publish-java21.yaml || rc=$?
+          if [[ "${rc}" -eq 1 ]]; then
+            printf 'ALIAS SKIPPED: newer java21 input change on main\n'
+            exit 0
+          fi
+          if [[ "${rc}" -ne 0 ]]; then
+            printf 'FRESHNESS FAILED: diff error\n' >&2
+            exit 1
+          fi
+          crane tag "${IMAGE_REF}" base-java
+          alias_digest="$(crane digest "${IMAGE}:base-java")"
+          if [[ "${alias_digest}" != "${IMAGE_DIGEST}" ]]; then
+            printf 'ALIAS READBACK FAILED: %s != %s\n' "${alias_digest}" "${IMAGE_DIGEST}" >&2
+            exit 1
+          fi
+          printf 'PUBLISHED: %s:base-java = %s\n' "${IMAGE}" "${IMAGE_DIGEST}"

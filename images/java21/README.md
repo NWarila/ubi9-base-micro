@@ -3,7 +3,9 @@
 `images/java21` builds a hardened OpenJDK 21 headless **server** JRE on the
 pinned `ubi9-base-micro` floor, as the base for Keycloak-class Java servers.
 `.github/workflows/publish-java21.yaml` is configured to build and smoke-test
-it on pull requests and `main`; it is not published yet.
+it on pull requests and `main`; `base-java` is configured to publish
+signature-only from `main` (see the [README's Image Family
+section](../../README.md#image-family)).
 
 ## Runtime
 

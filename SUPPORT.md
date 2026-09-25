@@ -27,7 +27,8 @@ support unless the question is security-sensitive.
 - Vulnerability reports filed publicly.
 - Publication-status support for `base-python`; use the
   [canonical publication evidence contract](docs/reference/verification-contract.md#image-family-publication-evidence-contract).
-  `base-java` is built but not published; `base-node` remains planned.
+  For `base-java`, see the root README's
+  [Image Family](README.md#image-family) section; `base-node` remains planned.
 - Third-party dependency vulnerabilities that need to be reported upstream.
 - Private consulting or production operations outside this repository.
 

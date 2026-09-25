@@ -41,6 +41,11 @@ but the workflow's presence is not evidence of a completed publish, signature,
 or published digest. Future variants use `images/<variant>/` trees. Each variant
 needs its own path-scoped publish workflow and evidence set before publication.
 
+Exception: owner ruling R6 (2026-09-23, "Just what we need to get keycloak &
+gitlab containers built") lets `base-java` publish signature-only before its
+evidence set and the per-image trust contract below, which arrive with the
+shared `workflow-*` add-back. The rule stands for every other variant.
+
 The root micro publisher has its own conservative, closed scope decision. On a
 `main` push with an available, non-empty diff against the currently published
 revision, it skips micro publication only when every changed path is under
