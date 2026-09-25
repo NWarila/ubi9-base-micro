@@ -23,8 +23,8 @@ immutable digest rather than inferred from that declarative manifest.
 | Boundary | Runs on | Proves | Does not prove |
 | --- | --- | --- | --- |
 | Pull request | `pull_request` to `main` | Repository contract, lint, local build, hardening, FIPS artifact checks, SBOM and native fixable scanner gates, complete report-only vulnerability evidence, NIST predicate validation, tailored STIG ARF, byte-for-byte rootfs reproducibility, and the Python release exporter exercised against a loopback-bound ephemeral registry. | Project or external publication, published signatures or attestations, SLSA provenance over a consumer-resolvable digest, Rekor roll-up, or anonymous GHCR pull. |
-| Publish | `push` to `main`, root-image `v*` tags, and Python `python/v*` tags | After a successful image-specific run: multi-arch publish, Cosign keyless signature, Syft rpmdb-derived SPDX and CycloneDX attestations, NIST SP 800-190 and STIG ARF predicates, sealed JSON/SARIF vulnerability evidence, SLSA L3 provenance, and Rekor roll-up. Python additionally requires its absence-proof OpenVEX documents and the index-only trust contract. | A tag's later resolution, later package visibility, later anonymous accessibility, or the continued presence of signatures and attestations. Those mutable service properties require a dated observation bound to an immutable digest. |
-| Post-publish audit | Clean unauthenticated verifier | Anonymous pull by digest and the full image-specific `cosign` plus `slsa-verifier` contract in [`verify.md`](verify.md) or [`../how-to/verify-a-published-image.md`](../how-to/verify-a-published-image.md#verify-base-python). | Future rebuild currency or downstream family-coherence status. |
+| Publish | `push` to `main`, root-image `v*` tags, and Python `python/v*` tags | After a successful image-specific run: multi-arch publish, Cosign keyless signature, Syft rpmdb-derived SPDX and CycloneDX attestations, NIST SP 800-190 and STIG ARF predicates, sealed JSON/SARIF vulnerability evidence, SLSA L3 provenance, and Rekor roll-up. Python additionally requires its absence-proof OpenVEX documents and the index-only trust contract. `base-java` has only the [base-java publish boundary](#base-java-publish-boundary). | A tag's later resolution, later package visibility, later anonymous accessibility, or the continued presence of signatures and attestations. Those mutable service properties require a dated observation bound to an immutable digest. |
+| Post-publish audit | Clean verifier | For `base-micro` and `base-python`, anonymous pull by digest and the full image-specific `cosign` plus `slsa-verifier` contract in [`verify.md`](verify.md) or the [base-python procedure](../how-to/verify-a-published-image.md#verify-base-python). For `base-java`, pull by digest plus `cosign verify` with identity `https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-java21.yaml@refs/heads/main`, with no SLSA or attestation requirement, using the [base-java procedure](../how-to/verify-a-published-image.md#verify-base-java). | Future rebuild currency or downstream family-coherence status. |
 
 ## Micro publish scope
 
@@ -155,6 +155,18 @@ https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-python.yaml
 https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0
 https://token.actions.githubusercontent.com
 ```
+
+## base-java publish boundary
+
+The boundary is the `java21 publish` job in `publish-java21.yaml`, on pushes to
+`main`. A successful run proves: the per-commit candidate push; the
+registry-observed digest; a readback smoke test of that digest; a Cosign keyless
+signature verified at the exact identity
+`https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-java21.yaml@refs/heads/main`;
+and, after that verification, the `base-java` alias, skipped when `main` has a
+newer Java input change. It proves no other evidence-floor item: no SBOM,
+fixable-CVE gate, SLSA provenance, NIST SP 800-190, STIG ARF, reproducibility,
+or trust contract.
 
 ## Image family publication evidence contract
 

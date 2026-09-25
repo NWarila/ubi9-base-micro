@@ -47,9 +47,12 @@ These are targets, not guarantees.
 
 ## Verifying a release
 
-The verification contract is maintained in
+The `base-micro` verification contract is maintained in
 [`docs/reference/verify.md`](docs/reference/verify.md). Use that document as the
-source of truth for published digest verification.
+source of truth for `base-micro` published digest verification. Use the
+image-specific procedures in
+[`docs/how-to/verify-a-published-image.md`](docs/how-to/verify-a-published-image.md)
+for `base-python` and `base-java`.
 
 At a high level, verification requires:
 
@@ -59,6 +62,12 @@ At a high level, verification requires:
 - `slsa-verifier verify-image` for the SLSA L3 provenance.
 - Exact certificate identities and the GitHub Actions OIDC issuer documented in
   the verification contract.
+
+`base-java` requires only `cosign verify` with certificate identity
+`https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-java21.yaml@refs/heads/main`
+and the GitHub Actions OIDC issuer. The attestation, SLSA, and `slsa-verifier`
+bullets above do not apply to it; see
+[Verify base-java](docs/how-to/verify-a-published-image.md#verify-base-java).
 
 The `base-python` publisher also requires its index-only trust-contract
 predicate; see the

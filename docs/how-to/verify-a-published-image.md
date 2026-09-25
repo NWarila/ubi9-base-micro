@@ -281,3 +281,17 @@ These commands verify only the digest and publishing identity supplied above.
 They do not claim that any Python image currently exists. For a release, the
 publishing ref must be in the `python/v*` namespace; top-level `v*` tags belong
 to the root-image publisher.
+
+## Verify base-java
+
+A digest published by a successful `java21 publish` run carries a Cosign keyless
+signature only; see the [Image Family](../../README.md#image-family) section of
+the README. Verify its signature, then pull by that digest:
+
+```sh
+IMAGE_REF="ghcr.io/nwarila/ubi9-base-java@<digest>"
+cosign verify "${IMAGE_REF}" \
+  --certificate-identity "https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-java21.yaml@refs/heads/main" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+docker pull "${IMAGE_REF}"
+```
