@@ -218,6 +218,11 @@ jobs:
                 --username "${REGISTRY_USER}" \
                 --password-stdin
 
+      - name: Install Crane
+        run: |
+          bash tools/install-crane.sh
+          printf '%s\n' "${PWD}/dist/tools" >> "${GITHUB_PATH}"
+
       - name: Build and push runtime image
         id: image
         run: |
@@ -237,7 +242,7 @@ jobs:
             test -n "${ref_tag}"
             tags+=(--tag "${image}:${ref_tag}")
           elif [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
-            tags+=(--tag "${image}:base-micro")
+            :
           else
             printf 'Unexpected publish ref: %s\n' "${GITHUB_REF}" >&2
             exit 1
@@ -277,7 +282,17 @@ jobs:
             "${tags[@]}" \
             .
 
-          digest="$(python -c 'import json; print(json.load(open("dist/image-metadata.json"))["containerimage.digest"])')"
+          pushed_digest="$(python -c 'import json; print(json.load(open("dist/image-metadata.json"))["containerimage.digest"])')"
+          digest="$(crane digest "${image}:base-micro-${short_sha}")"
+          if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            printf 'REGISTRY DIGEST FAILED: invalid readback %s\n' "${digest}" >&2
+            exit 1
+          fi
+          if [[ "${digest}" != "${pushed_digest}" ]]; then
+            printf 'REGISTRY DIGEST FAILED: pushed %s, read back %s\n' "${pushed_digest}" "${digest}" >&2
+            exit 1
+          fi
+          printf 'CANDIDATE: %s:base-micro-%s = %s\n' "${image}" "${short_sha}" "${digest}"
           {
             printf 'image=%s\n' "${image}"
             printf 'digest=%s\n' "${digest}"
@@ -331,6 +346,23 @@ jobs:
           cosign verify "${IMAGE_REF}" \
             --certificate-identity "${CERTIFICATE_IDENTITY}" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+
+      - name: Apply base-micro alias
+        if: ${{ github.ref == 'refs/heads/main' }}
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          crane tag "${IMAGE_REF}" base-micro
+          observed="$(crane digest "${IMAGE}:base-micro")"
+          if [[ "${observed}" != "${DIGEST}" ]]; then
+            printf 'ALIAS READBACK FAILED: %s != %s\n' "${observed}" "${DIGEST}" >&2
+            exit 1
+          fi
+          printf 'PUBLISHED: %s:base-micro = %s\n' "${IMAGE}" "${DIGEST}"
 
       - name: Install Syft for SBOM attestations
         run: bash tools/install-syft.sh
