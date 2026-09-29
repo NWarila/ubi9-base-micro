@@ -100,12 +100,13 @@ content digests recorded in each image contract, including `rpmdb_sha256` and
 
 The Python build path now pins Buildx, its expected commit and Linux-amd64 asset
 SHA-256, and a versioned digest-qualified BuildKit driver image in
-`images/python/docker-bake.json`. Eight non-Python setup sites remain unpinned:
-two each in `.github/workflows/build.yaml`, `publish-image.yaml`, `nightly.yaml`,
-and `rpm-lock-refresh.yaml`. Those sites still allow the setup action to select
-Buildx `latest` and the moving default BuildKit driver image. A future toolchain
-change at a build-serving site can move `canonical_rootfs_digest` and make its
-gate red without a real baseline content move. The later setup site in
+`images/python/docker-bake.json`. Six non-Python setup sites remain unpinned: one
+each in `.github/workflows/build.yaml` and `nightly.yaml`, and two each in
+`publish-image.yaml` and `rpm-lock-refresh.yaml`. Those sites still allow the
+setup action to select Buildx `latest` and the moving default BuildKit driver
+image. A future toolchain change at a build-serving site can move
+`canonical_rootfs_digest` and make its gate red without a real baseline content
+move. The later setup site in
 `publish-image.yaml` serves imagetools rather than a rootfs build; it remains an
 unpinned toolchain surface but cannot directly change the built rootfs. A
 builder-driven digest failure is a fail-safe false red, not a release-quality
@@ -144,16 +145,16 @@ current assertion as complete verification of all retained RPM payloads.
 
 ## TD-8: Python builder identity workflow static-analysis boundary
 
-The `Assert python builder identity` steps in the Python build and
-reproducibility jobs run the identity assertion before building. Repository
-verification statically requires each step to contain only its environment and
-multiline run body, start with the exact `set -euo pipefail` preamble, contain no
-later `set +...`, omit step-level `continue-on-error`, and place
+The `Assert python builder identity` steps no longer exist in the Python build
+and reproducibility jobs. The dormant repository verifier still requires each
+named step to contain only its environment and multiline run body, start with
+the exact `set -euo pipefail` preamble, contain no later `set +...`, omit
+step-level `continue-on-error`, and place
 `python3 tools/verify.py --check-python-builder-identity` as the final unwrapped
-command. In CI, that assertion compares the contracted Buildx version, commit,
-installed plugin SHA-256, BuildKit driver image, and BuildKit node version with
-the five live observations. A mismatch returns failure and, under the current
-workflow configuration, fails the job before its build.
+command. When run directly with the expected environment, that identity checker
+compares the contracted Buildx version, commit, installed plugin SHA-256,
+BuildKit driver image, and BuildKit node version with the five observations. A
+mismatch returns failure, but no workflow currently invokes the checker.
 
 Static analysis of a free-form `run:` block cannot detect every
 status-swallowing construct. Function shadowing (`python3() { return 0; }`), an
@@ -162,11 +163,11 @@ that pass the text checks. Enumerating more shell spellings would not close this
 open-ended class and would give the workflow checker a misleading security
 scope.
 
-This is an accepted trust boundary. A committer able to insert one of those
-constructs can, in the same change, alter the verifier or remove the identity
-step. The workflow checks are therefore defence-in-depth against accidental
-regression, not an adversarial control over a hostile committer. Code review,
-CODEOWNERS, and required status checks are the controls for that threat.
+This remains an accepted boundary of the dormant verifier. A committer able to
+insert one of those constructs can, in the same change, alter the verifier. The
+workflow checks are therefore defence-in-depth against accidental regression,
+not an adversarial control over a hostile committer. Code review, CODEOWNERS,
+and required status checks are the controls for that threat.
 
 ## TD-10: Base-python create-once alias external-writer race
 

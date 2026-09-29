@@ -1,14 +1,11 @@
 # Reproducibility
 
-`base-micro` enforces the F3 byte-for-byte rootfs gate in CI. The
-`reproducibility-gate` job builds the runtime target twice from identical inputs
-for both `linux/amd64` and `linux/arm64`, exports each image rootfs, and runs
+`base-micro` no longer runs the F3 byte-for-byte rootfs gate in CI; the workflow
+gate was retired on 2026-09-05 (#128). When run directly,
 `tools/assert-reproducible.py --assert-byte-identical --expect-from-contract
-contracts/image-manifest.json`. Any content, metadata, mtime, ownership, type,
-or presence difference in the exported rootfs fails the build. The same gate
-also asserts the per-architecture `canonical_rootfs_digest` and `rpmdb_sha256`
-recorded in `contracts/image-manifest.json` on every pull request, push to
-`main`, and nightly run.
+contracts/image-manifest.json` still compares exported rootfs trees and checks
+the per-architecture `canonical_rootfs_digest` and `rpmdb_sha256` values.
+`base-python` still runs a two-architecture byte-for-byte gate, described below.
 
 The canonical rootfs digest is not a tarball hash. The helper flattens the image
 layers into normalized rootfs entries, sorts those entries by path, then hashes
@@ -52,11 +49,12 @@ the identity checker as its final unwrapped command. These static shape checks
 catch accidental changes such as disabling strict mode, wrapping the assertion,
 or following it with another command; they are not exhaustive analysis of the
 free-form shell body. Function shadowing, an `ERR` trap, and a job-level shell
-wrapper can still swallow status while passing the text checks. The live
-assertion compares the Buildx version, commit, installed plugin SHA-256, BuildKit
-container image, and BuildKit node version, and any mismatch fails the CI job
-before building. [TD-8](../TECH-DEBT.md#td-8-python-builder-identity-workflow-static-analysis-boundary)
-records why this is an accepted trust boundary and the compensating controls.
+wrapper can still swallow status while passing the text checks. The identity
+checker compares the Buildx version, commit, installed plugin SHA-256, BuildKit
+container image, and BuildKit node version when invoked directly; no workflow
+currently invokes it.
+[TD-8](../TECH-DEBT.md#td-8-python-builder-identity-workflow-static-analysis-boundary)
+records the dormant static-analysis boundary and its compensating controls.
 The verifier does not interpret arbitrary caller command-line overrides or
 discover and count every possible build caller. It does, however, lock the
 production publisher's exact `release` invocation and resolved destination,
@@ -100,14 +98,13 @@ exporter's behavior without creating an external or project publication,
 signature, SLSA or Rekor record, or consumer-resolvable digest.
 
 Renovate has two non-automerge Python builder surfaces. The Buildx manager
-updates the release version only; the independently owned expected commit and
-Linux-amd64 asset SHA-256 must be paired with that version before the pre-build
-identity gate can pass. The BuildKit manager updates the version-plus-digest
-driver reference together, and the expected BuildKit version is derived from
-that reference. Either update still has to pass all five live identity
-observations and the both-architecture byte gates. These managers update only
-the pinned builder inputs; they do not configure the release destination or
-production publication.
+updates the release version only; the Bake contract records the expected commit
+and Linux-amd64 asset SHA-256 separately, but no live workflow compares those
+fields with the installed executable. The BuildKit manager updates the
+version-plus-digest driver reference together, and the expected BuildKit version
+is derived from that reference. Either update still has to pass the
+both-architecture byte gates. These managers update only the pinned builder
+inputs; they do not configure the release destination or production publication.
 
 The arm64 proof intentionally uses QEMU on the GitHub-hosted amd64 runner because
 that is the same architecture path used by the publish workflow. Native arm64
@@ -226,8 +223,8 @@ if any of the four files drifts. When Red Hat has published patched RPMs, the
 refresh workflow opens a normal pull request titled
 `Refresh runtime and FIPS RPM lockfiles`. That PR is not a
 publish path and is not auto-merged; the repository PR gates must pass first,
-including the fixable-CVE gates, both-architecture byte-for-byte reproducibility
-gates, whole-RPM direct-CDN SHA-256 and `rpm -K` verification, and
+including the fixable-CVE gates, whole-RPM direct-CDN SHA-256 and `rpm -K`
+verification, and
 `%{SHA256HEADER}`/`%{SIGMD5}` RPM content-hash enforcement. Merging the gated PR
 re-establishes the reproducible floor at the new NEVRA, URL, and SHA-256 pins.
 

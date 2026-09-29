@@ -20,7 +20,6 @@ replayed individually without a registry write:
 
 ```sh
 python3 tools/decide-python-publish-scope.py --self-test
-python3 tools/resolve-python-index.py --self-test
 python3 tools/assert-python-alias-policy.py --self-test
 python3 tools/python-trust-contract.py --self-test
 python3 tools/assert-python-attestation.py --self-test

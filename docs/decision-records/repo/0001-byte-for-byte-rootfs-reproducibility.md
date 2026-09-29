@@ -1,6 +1,6 @@
 # ADR-0001: Enforce Byte-For-Byte Rootfs Reproducibility
 
-- Status: Accepted
+- Status: Accepted for base-python; retired for base-micro on 2026-09-05 (#128)
 - Date: 2026-06-21
 - Last reviewed: 2026-08-16
 - Scope: repo
@@ -20,16 +20,16 @@ contract.
 
 ## Decision
 
-`ubi9-base-micro` enforces a build-failing, per-architecture exported-rootfs
-byte-identity gate with `tools/assert-reproducible.py --assert-byte-identical`.
-The comparison includes file content, metadata, ownership, type, presence, and
-`/var/lib/rpm`. The runtime RPM lockfiles pin NEVRA plus `%{SHA256HEADER}` and
-`%{SIGMD5}` so same-NEVRA content drift fails before the strip stage.
+`ubi9-base-micro` no longer enforces the exported-rootfs byte-identity gate in
+CI; the workflow gate was retired on 2026-09-05 (#128). When run directly,
+`tools/assert-reproducible.py --assert-byte-identical` still compares file
+content, metadata, ownership, type, presence, and `/var/lib/rpm`. The runtime
+RPM lockfiles pin NEVRA plus `%{SHA256HEADER}` and `%{SIGMD5}` so same-NEVRA
+content drift fails before the strip stage.
 
-`linux/amd64` is checked natively. `linux/arm64` is checked through the publish
-workflow's QEMU/binfmt path, with both the setup action SHA and the binfmt index
-digest immutably pinned, so its current proof is emulator-relative to those
-pinned inputs.
+The retired gate checked `linux/amd64` natively and `linux/arm64` through its
+QEMU/binfmt path. Both the setup action SHA and the binfmt index digest were
+immutably pinned, so the arm64 proof was emulator-relative to those inputs.
 
 The built-and-gated `base-python` path additionally defines its
 build graph in `images/python/docker-bake.json`. That native Bake contract owns
@@ -37,11 +37,11 @@ the context, Dockerfile, runtime target, platforms, fixed timestamp arguments,
 and the distinct CI, release, and double-build exporter policies. It pins
 Buildx by version, expected commit, and independently verified Linux-amd64 release-asset
 SHA-256, and pins the BuildKit driver by a versioned digest-qualified image
-reference. Both Python CI builder jobs assert those identities before building.
-`tools/verify.py` requires exactly the `base`, `ci`, `release`, and `repro`
-targets; the three non-base targets must inherit the shared target without
-redeclaring protected graph inputs. It also requires both builder jobs to derive
-their setup and identity inputs from that file. Each named identity step must keep strict shell
+reference. `tools/verify.py` requires exactly the `base`, `ci`, `release`, and
+`repro` targets; the three non-base targets must inherit the shared target
+without redeclaring protected graph inputs. It also requires both builder jobs
+to derive their setup and identity inputs from that file. Each named identity
+step must keep strict shell
 mode enabled, omit `continue-on-error`, and finish with the identity checker as
 its final unwrapped command. The both-architecture byte gates retain the
 committed rootfs and rpmdb values. The workflow and double-build harness use the
@@ -66,11 +66,9 @@ and are not made reproducible by the Python contract.
 - Any image-input change must preserve the both-architecture byte-identity proof
   or be treated as an image change requiring a fresh proof.
 - Renovate tracks the Python Buildx release version and the BuildKit
-  version-plus-digest reference through separate, non-automerge managers. A
-  Buildx version update cannot pass until its expected commit and asset SHA-256
-  are updated to the same release identity.
-- A Python Buildx or BuildKit update fails closed until its executable or image
-  identity and both-architecture byte gates pass together.
+  version-plus-digest reference through separate, non-automerge managers. The
+  contract records the Buildx expected commit and asset SHA-256 separately.
+- A Python Buildx or BuildKit update must pass the both-architecture byte gates.
 
 ## References
 

@@ -13,14 +13,14 @@ Documentation for this repository follows the Diataxis framework.
 
 ## Tutorials
 
-- [`getting-started-build-and-verify.md`](tutorials/getting-started-build-and-verify.md) - build the local runtime and run the repository verifier.
+- [`getting-started-build-and-verify.md`](tutorials/getting-started-build-and-verify.md) - build the local runtime and run the repository checks.
 
 ## How-to
 
 - [`verify-a-published-image.md`](how-to/verify-a-published-image.md) - verify signatures, attestations, SBOMs, and provenance for a published digest.
 - [`reproduce-a-build-byte-for-byte.md`](how-to/reproduce-a-build-byte-for-byte.md) - run the rootfs reproducibility gate locally.
 - [`refresh-the-rpm-lock.md`](how-to/refresh-the-rpm-lock.md) - regenerate locked direct-CDN RPM inputs for controlled CVE absorption.
-- [`run-a-gate-locally.md`](how-to/run-a-gate-locally.md) - choose and run the local verifier, hardening gate, or full gate harness.
+- [`run-a-gate-locally.md`](how-to/run-a-gate-locally.md) - choose and run publication-policy self-tests, the hardening gate, or the full gate harness.
 - [`consume-base-micro-as-from-base.md`](how-to/consume-base-micro-as-from-base.md) - consume a published digest as a downstream `FROM` base.
 
 ## Reference
