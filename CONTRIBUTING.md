@@ -90,13 +90,13 @@ A change to `images/python/docker-bake.json`, including a dependency update to
 its Buildx or BuildKit pins, is image-affecting. Run `pre-commit run --all-files`,
 then require real, non-skipped `python build and gates` and `python
 reproducibility` results for both architectures, and confirm that the
-pull-request-only `Python release preflight` also passes. The CI jobs assert the
-five builder identities before building and re-prove the rootfs and rpmdb
-baselines. The release preflight exercises the registry exporter only against a
-loopback-bound ephemeral registry; it does not create an external or project
-publication. The `python / required` reducer is evidence aggregation, not a
-required repository status context. The pull-request preflight is not a
-production run. Current and historical publication evidence is maintained in the
+pull-request-only `Python release preflight` also passes. The CI jobs re-prove
+the rootfs and rpmdb baselines. The release preflight exercises the registry
+exporter only against a loopback-bound ephemeral registry; it does not create an
+external or project publication. The `python / required` reducer is evidence
+aggregation, not a required repository status context. The pull-request
+preflight is not a production run. Current and historical publication evidence
+is maintained in the
 [canonical publication evidence contract](docs/reference/verification-contract.md#image-family-publication-evidence-contract).
 
 Repository verification also requires each named builder-identity step to keep
@@ -107,8 +107,7 @@ command, and step-level `continue-on-error`.
 Renovate proposes the Buildx release version and the BuildKit
 version-plus-digest reference through separate managers; neither manager
 automerge is enabled. A Buildx version proposal must be paired with the matching
-expected commit and independently established Linux-amd64 asset SHA-256. An
-unpaired change is expected to fail the pre-build identity gate.
+expected commit and independently established Linux-amd64 asset SHA-256.
 
 ## Pull requests
 

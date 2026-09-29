@@ -57,11 +57,11 @@ fields. `tools/verify.py` does not enforce an annotation schema.
 
 The test layout follows the same ownership rule: `tests/*.sh` are external
 black-box gate drivers against a built image, while `tools/tests/test_*.py` are
-unit tests for repository Python helpers. The one remaining shell gate and six
-current Python unit suites are named in the required-files manifest in
-`tools/verify.py`, and the Python suites are wired independently by the pytest
-hooks in `.pre-commit-config.yaml`. This describes the current semantic split; it
-does not constrain every future test to those directories.
+unit tests for repository Python helpers. The two remaining shell gates and nine
+current Python test files are named in the required-files manifest in
+`tools/verify.py`, and the Python tests are wired independently by the pytest
+hooks in `.pre-commit-config.yaml`. This describes the current semantic split;
+it does not constrain every future test to those directories.
 
 The current-state ledger is:
 

@@ -1,6 +1,6 @@
 # Getting Started: Build and Verify
 
-This walkthrough builds the local runtime tags and runs the repository verifier.
+This walkthrough builds the local runtime tags and runs the repository checks.
 
 ## Prerequisites
 
