@@ -79,7 +79,12 @@ RUN mapfile -t T < <(awk '$1 == "tool" {print $2}' /strip.txt); \
     rpm --root=/rootfs -e --nodeps --noscripts "${S[@]}"; \
     for p in "${S[@]}"; do if rpm --root=/rootfs -q "$p" > /dev/null; then echo "STRIP POSTCONDITION FAILED: $p still installed"; exit 1; fi; done; \
     for p in ca-certificates java-21-openjdk-headless nss nss-softokn nss-softokn-freebl nss-sysinit nss-util nspr sqlite-libs; do rpm --root=/rootfs -q "$p" > /dev/null || { echo "PROTECTED PACKAGE MISSING: $p"; exit 1; }; done; \
-    for s in /rootfs/usr/bin/sh /rootfs/usr/bin/bash; do if [ -e "$s" ] || [ -L "$s" ]; then echo "SHELL PRESENT: $s"; exit 1; fi; done; \
+    for n in sh bash dash ash busybox ksh zsh tcsh csh dnf microdnf rpm yum; do \
+      for d in bin sbin usr/bin usr/sbin; do \
+        s="/rootfs/${d}/${n}"; \
+        if [ -e "$s" ] || [ -L "$s" ]; then echo "SHELL PRESENT: $s"; exit 1; fi; \
+      done; \
+    done; \
     rc=0; rpm --root=/rootfs -Va --nofiles --nodigest --nosignature > /tmp/va.txt 2>&1 || rc=$?; \
     awk '!/^Unsatisfied dependencies for .+:$/ && !/^[[:space:]]+.+ is needed by \(installed\) .+$/ {print "DEPENDENCY GATE FAILED: unexpected rpm -Va output: " $0; bad=1} END {exit bad}' /tmp/va.txt; \
     awk '/ is needed by \(installed\) / {sub(/^[[:space:]]+/, ""); print}' /tmp/va.txt | LC_ALL=C sort -u > /tmp/needs.txt; \
