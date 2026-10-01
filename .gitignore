@@ -59,3 +59,5 @@
 !/docs/decision-records/repo/
 !/docs/decision-records/repo/.gitkeep
 !/docs/decision-records/repo/0001-rebuild-the-image-family-from-zero.md
+!/docs/decision-records/repo/0002-structure-the-repository-as-an-image-monorepo.md
+!/docs/decision-records/repo/0003-name-images-with-red-hat-vocabulary.md
