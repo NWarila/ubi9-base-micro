@@ -60,7 +60,7 @@ mechanisms nobody had yet run.
 Chosen option: **Option 3, remove the existing pipeline from `main` and rebuild from an empty tree.**
 
 `main` keeps only the organization baseline files and this record. The prior tree is preserved at the
-signed tag `legacy-final` and on the branch `legacy`. Decision records 0001 through 0016 of the
+signed tag `legacy-final`. Decision records 0001 through 0016 of the
 previous pipeline are not carried forward; they remain readable at the tag, and decision numbering
 for this repository restarts with this record.
 

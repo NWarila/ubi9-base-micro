@@ -6,7 +6,7 @@ toolchain images, each published as its own package.
 ## Status: being rebuilt from zero
 
 On 2026-10-01 the previous build pipeline was removed from `main`. It is preserved unchanged at the
-`legacy-final` tag and on the `legacy` branch, including its workflows, tooling, lockfiles, and
+`legacy-final` tag, including its workflows, tooling, lockfiles, and
 documentation. The reasons are recorded in
 [ADR-0001](docs/decision-records/repo/0001-rebuild-the-image-family-from-zero.md).
 
