@@ -15,7 +15,7 @@
     "shipped": {
       "amd64": [
         "bzip2-libs-1.0.8-11.el9.x86_64",
-        "expat-2.5.0-6.el9_8.3.x86_64",
+        "expat-2.5.0-6.el9_8.5.x86_64",
         "gdbm-libs-1:1.23-1.el9.x86_64",
         "keyutils-libs-1.6.3-1.el9.x86_64",
         "krb5-libs-1.21.1-10.el9_8.x86_64",
@@ -41,7 +41,7 @@
       ],
       "arm64": [
         "bzip2-libs-1.0.8-11.el9.aarch64",
-        "expat-2.5.0-6.el9_8.3.aarch64",
+        "expat-2.5.0-6.el9_8.5.aarch64",
         "gdbm-libs-1:1.23-1.el9.aarch64",
         "keyutils-libs-1.6.3-1.el9.aarch64",
         "krb5-libs-1.21.1-10.el9_8.aarch64",
@@ -103,12 +103,12 @@
   },
   "reproducibility": {
     "canonical_rootfs_digest": {
-      "amd64": "2954728e40d6037a198bec59577baa3ad2d0e357d66f43677ae2917718d4578d",
-      "arm64": "69890b1af584c83a84ae81ce7d4af5a12cd9bfa90642be987434446e83f0d8d5"
+      "amd64": "e035ad2ad40326d75dcc05fc2ecd0aae1955b03a958ab400fe8cc1faa7140ead",
+      "arm64": "5887e3751f7db0a88a2339b469bd8d85312994c0254bc73c13b1eddd8d94d360"
     },
     "rpmdb_sha256": {
-      "amd64": "5b7e4a621ddfe217c18c5f2e0eda869987f30736bfa04e8f0b0271f5268a2627",
-      "arm64": "8cb454b4508e570c259df96f16636b1e502b2b61f8bfea6954a3e2af5fbe1094"
+      "amd64": "0e76c9e6f37ada441a96e9ac2dd7c73b2559291c96cac91f9351d24b1bec117a",
+      "arm64": "1301cd1f6f79404fdbb3387234ad3cd29b87111aaba0c03bc9e7e622944e5de5"
     }
   },
   "provenance": {
