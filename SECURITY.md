@@ -2,81 +2,57 @@
 
 ## Reporting a vulnerability
 
-Do not file public issues for vulnerabilities.
+**Do not file public issues for security vulnerabilities.**
 
-Use GitHub private vulnerability reporting from this repository's Security tab:
+### Preferred: GitHub private vulnerability reporting
 
-<https://github.com/NWarila/ubi9-base-micro/security/advisories/new>
+Use [GitHub's private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability) to report vulnerabilities directly through the affected repository's Security tab.
 
-If private reporting is unavailable, contact the maintainer through GitHub:
+### Fallback contact
 
-<https://github.com/NWarila>
+If private vulnerability reporting is not available on the affected repository, contact the maintainer through their [GitHub profile](https://github.com/NWarila).
 
-Include:
+## What to include
 
-- Affected commit, branch, tag, or image digest.
-- Steps to reproduce or a proof of concept.
-- Expected impact.
-- Whether the finding affects source, workflow permissions, published image
-  verification, SBOM/VEX evidence, STIG evidence, or release provenance.
+- Description of the vulnerability
+- Steps to reproduce or proof of concept
+- Affected repository and version (or "latest default branch" if unsure)
+- Potential impact
+
+## Response timeline
+
+| Stage | Target |
+|-------|--------|
+| Initial acknowledgement | 7 business days |
+| Validation | 14 days |
+| Remediation or mitigation | 90 days when reasonable |
+
+These are targets, not guarantees. Complex issues may take longer. You will be kept informed of progress.
 
 ## Supported versions
 
-The supported line is the latest `v*` release and any published image digest
-built from it.
+Unless a repository documents otherwise, only the latest version on the default branch is supported.
 
-| Version | Supported |
-| --- | --- |
-| `1.0.0` | Yes |
+## Scope
+
+### In scope
+
+- Vulnerabilities in code, dependencies, or configurations maintained in repositories under [NWarila](https://github.com/NWarila)
+- Misconfigurations in GitHub Actions workflows that could lead to secret exposure or privilege escalation
+
+### Out of scope
+
+- Vulnerabilities in third-party dependencies that should be reported upstream
+- Social engineering attacks
+- Denial of service attacks
+- Issues in archived repositories
 
 ## Coordinated disclosure
 
-The maintainer will coordinate investigation and remediation through the private
-reporting thread. Public disclosure should wait until a fix or mitigation is
-available, or until a mutually agreed disclosure date.
+We follow coordinated disclosure practices. We ask that you:
 
-Target response windows:
+- Give us reasonable time to investigate and address the issue before public disclosure
+- Act in good faith and avoid accessing or modifying data that does not belong to you
+- Do not exploit the vulnerability beyond what is necessary to demonstrate it
 
-| Stage | Target |
-| --- | --- |
-| Initial acknowledgement | 7 business days |
-| Validation | 14 business days |
-| Fix, mitigation, or documented non-applicability | 90 days when reasonable |
-
-These are targets, not guarantees.
-
-## Verifying a release
-
-The `base-micro` verification contract is maintained in
-[`docs/reference/verify.md`](docs/reference/verify.md). Use that document as the
-source of truth for `base-micro` published digest verification. Use the
-image-specific procedures in
-[`docs/how-to/verify-a-published-image.md`](docs/how-to/verify-a-published-image.md)
-for `base-python` and `base-java`.
-
-At a high level, verification requires:
-
-- `cosign verify` for the published digest signature.
-- `cosign verify-attestation` for SPDX, CycloneDX, Python absence-proof OpenVEX, NIST
-  SP 800-190, tailored STIG ARF, and SLSA provenance predicates.
-- `slsa-verifier verify-image` for the SLSA L3 provenance.
-- Exact certificate identities and the GitHub Actions OIDC issuer documented in
-  the verification contract.
-
-`base-java` requires only `cosign verify` with certificate identity
-`https://github.com/NWarila/ubi9-base-micro/.github/workflows/publish-java21.yaml@refs/heads/main`
-and the GitHub Actions OIDC issuer. The attestation, SLSA, and `slsa-verifier`
-bullets above do not apply to it; see
-[Verify base-java](docs/how-to/verify-a-published-image.md#verify-base-java).
-
-The `base-python` publisher also requires its index-only trust-contract
-predicate; see the
-[canonical publication evidence contract](docs/reference/verification-contract.md#image-family-publication-evidence-contract).
-Use the image-specific commands in
-[`docs/how-to/verify-a-published-image.md`](docs/how-to/verify-a-published-image.md)
-for the immutable digest recorded there or another digest from a successful
-production publication.
-
-Do not substitute `gh attestation verify` for this repository's release
-contract; the repository uses cosign OCI attestations for the published image
-evidence.
+We will credit researchers who report valid vulnerabilities unless they prefer to remain anonymous.

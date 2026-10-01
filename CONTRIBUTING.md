@@ -1,132 +1,48 @@
 # Contributing
 
-This repository builds the root UBI 9 micro image for the NWarila base-image
-family. Contributions are welcome when they preserve the repository contract:
-image changes must stay reproducible, evidence must remain verifiable, and
-documentation must describe the workflow that actually exists here.
+Thanks for your interest in contributing. This guide applies to repositories under [NWarila](https://github.com/NWarila).
 
-## Prerequisites
+## How to contribute
 
-Use a workstation with:
+### Reporting bugs
 
-- Git with commit signing configured.
-- Python 3.12 or a compatible Python 3 runtime.
-- Bash.
-- Docker with Buildx.
-- Cosign v2.5.2, matching the pinned CI gate.
-- QEMU support when running the arm64 reproducibility gate locally.
-- Network access to download the pinned tool releases used by
-  `tools/run-test-gates.sh`.
+Open an issue using the **Bug Report** template. Include steps to reproduce, expected behavior, and actual behavior.
 
-The gate harness installs its own pinned Syft, Trivy, Grype, and OpenSCAP
-tooling under `dist/tools/`. Do not replace those installers with ambient host
-tools when proving a pull request.
+### Suggesting features
 
-## Make targets
+Open an issue using the **Feature Request** template. Describe the problem you're trying to solve and any alternatives you've considered.
 
-The Makefile intentionally stays small:
+### Reporting documentation issues
 
-| Target | Command | Purpose |
-| --- | --- | --- |
-| `build` | `make build` | Build the local `base-micro` and `base-micro-dev` tags through `tools/build.sh`. |
-| `test` | `make test` | Run the runtime hardening gate against `base-micro`. |
-| `verify` | `make verify` | Compatibility no-op retained for existing callers. |
-| `clean` | `make clean` | Remove generated `dist/` output and `tools/__pycache__/`. |
+Open an issue using the **Documentation** template with the page or section that needs improvement and your suggested change.
 
-## Local verification
+### Asking questions
 
-For documentation-only or repository-health changes, run the repository lint
-and test hooks:
+Open an issue on the [Issues](https://github.com/NWarila/.github/issues/new/choose) tab for questions, ideas, and general conversation; choose the template that best fits, or use the closest one if none matches exactly. For security-sensitive questions, use the private channel described below instead.
 
-```sh
-pre-commit run --all-files
-```
+### Reporting security vulnerabilities
 
-For image, gate, RPM lock, or security-evidence changes, run the full local gate
-harness for the affected platform:
+**Do not file public issues for security vulnerabilities.** See [SECURITY.md](SECURITY.md) for private reporting instructions.
 
-```sh
-bash tools/run-test-gates.sh
-```
+## Submitting changes
 
-That harness builds the runtime image, runs the hardening and FIPS probes,
-checks the footprint gate, runs the tailored STIG ARF scan, derives and checks
-SBOM output, runs Trivy and Grype fixable-vulnerability gates, scans the
-exported rootfs for secrets, and validates
-the NIST SP 800-190 image-control predicate.
+1. Fork the repository and create a branch from the default branch.
+2. Make your changes in focused, well-described commits.
+3. Test your changes.
+4. Open a pull request using the provided template.
+5. Respond to review feedback.
 
-For any image-affecting change, also prove byte-for-byte rootfs
-reproducibility for both supported platforms:
+### What makes a good pull request
 
-```sh
-python tools/assert-reproducible.py \
-  --platform linux/amd64 \
-  --assert-byte-identical \
-  --report dist/reproducibility/base-micro.amd64.reproducibility.json \
-  --summary dist/reproducibility/base-micro.amd64.reproducibility.txt \
-  --workdir dist/reproducibility/work.amd64
-```
+- Focused on a single change or closely related set of changes
+- Includes a clear description of what changed and why
+- Links to a related issue when one exists
+- Includes testing evidence appropriate to the change
 
-```sh
-python tools/assert-reproducible.py \
-  --platform linux/arm64 \
-  --assert-byte-identical \
-  --report dist/reproducibility/base-micro.arm64.reproducibility.json \
-  --summary dist/reproducibility/base-micro.arm64.reproducibility.txt \
-  --workdir dist/reproducibility/work.arm64
-```
+## Code of conduct
 
-The CI pull-request path requires `CodeQL`, `slsa generator tag integrity`,
-`dependency review`, `repo contract`, `analyze Python tools`, `build and
-hardening`, `actionlint`, `pre-commit`, and `zizmor`. Privileged publish
-jobs do not run on pull requests: the root publisher uses pushes to `main` or
-`v*` tags, and the Python publisher uses pushes to `main` or `python/v*` tags.
-Signature, attestation, SLSA provenance, and Rekor evidence exist only after the
-corresponding production run succeeds.
+All contributors are expected to follow the project's code of conduct. See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for details.
 
-### Base-python builder inputs
+## Repository-specific guidance
 
-A change to `images/python/docker-bake.json`, including a dependency update to
-its Buildx or BuildKit pins, is image-affecting. Run `pre-commit run --all-files`,
-then require real, non-skipped `python build and gates` and `python
-reproducibility` results for both architectures, and confirm that the
-pull-request-only `Python release preflight` also passes. The CI jobs re-prove
-the rootfs and rpmdb baselines. The release preflight exercises the registry
-exporter only against a loopback-bound ephemeral registry; it does not create an
-external or project publication. The `python / required` reducer is evidence
-aggregation, not a required repository status context. The pull-request
-preflight is not a production run. Current and historical publication evidence
-is maintained in the
-[canonical publication evidence contract](docs/reference/verification-contract.md#image-family-publication-evidence-contract).
-
-Repository verification also requires each named builder-identity step to keep
-`set -euo pipefail` enabled, omit `continue-on-error`, and end with the
-unwrapped identity checker. It rejects a later `set +...`, a wrapped or trailing
-command, and step-level `continue-on-error`.
-
-Renovate proposes the Buildx release version and the BuildKit
-version-plus-digest reference through separate managers; neither manager
-automerge is enabled. A Buildx version proposal must be paired with the matching
-expected commit and independently established Linux-amd64 asset SHA-256.
-
-## Pull requests
-
-Before opening a pull request:
-
-1. Keep the change focused.
-2. Sign every commit.
-3. Run the applicable gates above and include the command results in the pull
-   request.
-4. Update `docs/` and `docs/decision-records/repo/` when behavior, evidence, or
-   policy changes.
-5. Confirm `.gitignore` allowlists every new tracked path.
-
-Do not file public issues or pull requests for vulnerabilities. Follow
-[SECURITY.md](SECURITY.md) instead.
-
-## Deny-all ignore convention
-
-This repository uses a deny-all `.gitignore`: `**` ignores everything until a
-path is explicitly allowlisted. When adding a tracked file or directory, add the
-narrowest allowlist entry that covers it. Generated outputs stay under ignored
-paths such as `dist/`.
+Repositories that adopt the org drift-gated baseline keep this file byte-identical with `NWarila/.github`. Repository-specific contributor guidance belongs in that repository's Diataxis docs, usually `docs/how-to/develop-this-module.md` or an adjacent how-to guide.
