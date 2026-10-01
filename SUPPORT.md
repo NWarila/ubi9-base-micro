@@ -2,35 +2,19 @@
 
 ## Where to get help
 
-| Need | Use |
-| --- | --- |
-| Bug in the source, docs, local gates, or release-verification instructions | [Bug report](https://github.com/NWarila/ubi9-base-micro/issues/new?template=bug_report.yml) |
-| Feature or repository-contract change | [Feature request](https://github.com/NWarila/ubi9-base-micro/issues/new?template=feature_request.yml) |
-| General question | [Issues](https://github.com/NWarila/ubi9-base-micro/issues) |
-| Vulnerability | [Security policy](SECURITY.md) |
+| Need | Go to |
+|------|-------|
+| Question or general help | [Issues](https://github.com/NWarila/.github/issues/new/choose) (pick the closest template) |
+| Bug report | [Issues](https://github.com/NWarila/.github/issues/new/choose) (Bug Report template) |
+| Feature idea | [Issues](https://github.com/NWarila/.github/issues/new/choose) (Feature Request template) |
+| Security vulnerability | See [SECURITY.md](SECURITY.md) - **do not file public issues** |
 
-GitHub Discussions are not enabled for this repository. Use issues for public
-support unless the question is security-sensitive.
+For repository-specific support, use that repository's Issues tab. The links above are for cross-cutting concerns or when you're unsure where to go.
 
-## Supported topics
+## Response expectations
 
-- Building and testing the `base-micro` and `base-micro-dev` images from this
-  repository.
-- Running `make build`, `make test`, `make verify`, `make clean`,
-  `tools/run-test-gates.sh`, and the byte-for-byte reproducibility harness.
-- Understanding published digest verification through
-  `docs/reference/verify.md`.
-- Repository documentation, decision records, and health files.
+This is a personal project maintained by one person. Responses may take time. Public questions on the Issues tab are preferred over private messages because answers are searchable and help others.
 
-## Not supported here
+## How this policy is used
 
-- Vulnerability reports filed publicly.
-- Publication-status support for `base-python`; use the
-  [canonical publication evidence contract](docs/reference/verification-contract.md#image-family-publication-evidence-contract).
-  For `base-java`, see the root README's
-  [Image Family](README.md#image-family) section; `base-node` remains planned.
-- Third-party dependency vulnerabilities that need to be reported upstream.
-- Private consulting or production operations outside this repository.
-
-Responses may take time. Include commands, outputs, commit SHAs, image digests,
-and environment details where they help reproduce the issue.
+This support policy is provided centrally from the [NWarila/.github](https://github.com/NWarila/.github) repository. Repositories that adopt the org drift-gated baseline keep this file byte-identical with the central copy; repository-specific support details belong in that repository's Diataxis docs. If your question is about a specific repository's code, prefer that repository's own support channels when they exist.

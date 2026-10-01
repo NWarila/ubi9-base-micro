@@ -1,5 +1,0 @@
----
-failure-threshold: info
-trustedRegistries:
-  - registry.access.redhat.com
-  - ghcr.io
