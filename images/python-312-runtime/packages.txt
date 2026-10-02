@@ -1,0 +1,44 @@
+# ubi9-python-312-runtime: the packages this image ships, one name per line.
+# Nothing else is in the finished image.
+# After editing, run build/generate-lock.sh python-312-runtime for each architecture.
+# base — the same fifteen packages as ubi9-micro
+filesystem
+basesystem
+setup
+redhat-release
+glibc
+glibc-common
+glibc-minimal-langpack
+libgcc
+zlib
+ca-certificates
+tzdata
+openssl-libs
+openssl-fips-provider
+openssl-fips-provider-so
+crypto-policies
+# the interpreter and standard library
+python3.12
+python3.12-libs
+# libraries individual standard-library modules link against
+expat
+mpdecimal
+libffi
+bzip2-libs
+xz-libs
+gdbm-libs
+sqlite-libs
+libuuid
+libxcrypt
+readline
+ncurses-libs
+ncurses-base
+# nis module: libnsl2 -> libtirpc -> Kerberos
+libnsl2
+libtirpc
+krb5-libs
+libcom_err
+keyutils-libs
+libverto
+libselinux
+pcre2

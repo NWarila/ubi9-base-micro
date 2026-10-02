@@ -1,0 +1,24 @@
+# ubi9-nodejs-24-runtime: the packages this image ships, one name per line.
+# Nothing else is in the finished image.
+# After editing, run build/generate-lock.sh nodejs-24-runtime for each architecture.
+# base — the same fifteen packages as ubi9-micro
+filesystem
+basesystem
+setup
+redhat-release
+glibc
+glibc-common
+glibc-minimal-langpack
+libgcc
+zlib
+ca-certificates
+tzdata
+openssl-libs
+openssl-fips-provider
+openssl-fips-provider-so
+crypto-policies
+# the runtime (module stream nodejs:24)
+nodejs
+nodejs-libs
+# C++ runtime the node binary links
+libstdc++

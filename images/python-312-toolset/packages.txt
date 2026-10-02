@@ -1,0 +1,36 @@
+# ubi9-python-312-toolset: the packages this toolset is built from, one name per line.
+# The image also ships everything these packages depend on.
+# After editing, run build/generate-lock.sh python-312-toolset for each architecture.
+# base — the same fifteen packages as ubi9-micro
+filesystem
+basesystem
+setup
+redhat-release
+glibc
+glibc-common
+glibc-minimal-langpack
+libgcc
+zlib
+ca-certificates
+tzdata
+openssl-libs
+openssl-fips-provider
+openssl-fips-provider-so
+crypto-policies
+# the interpreter, pip, and the headers C extensions compile against
+python3.12
+python3.12-pip
+python3.12-devel
+# compiler toolchain for packages that build native code
+gcc
+gcc-c++
+make
+# a build environment: shell, core utilities, a package manager so projects can add -devel libraries
+bash
+coreutils
+microdnf
+git-core
+tar
+gzip
+findutils
+which

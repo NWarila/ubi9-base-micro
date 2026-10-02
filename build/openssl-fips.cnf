@@ -1,0 +1,27 @@
+# OpenSSL configuration for the ubi9 image family.
+# The validated FIPS provider is active and FIPS is the DEFAULT property: any algorithm fetch that does not say otherwise
+# gets a FIPS-approved implementation or fails. The default provider is loaded so that code can explicitly ask for a
+# non-approved algorithm for non-security use (for example Python's usedforsecurity=False) — as on RHEL in FIPS mode.
+config_diagnostics = 1
+openssl_conf = openssl_init
+
+[openssl_init]
+providers = provider_sect
+alg_section = algorithm_sect
+
+[provider_sect]
+fips = fips_sect
+base = base_sect
+default = default_sect
+
+[fips_sect]
+activate = 1
+
+[base_sect]
+activate = 1
+
+[default_sect]
+activate = 1
+
+[algorithm_sect]
+default_properties = fips=yes

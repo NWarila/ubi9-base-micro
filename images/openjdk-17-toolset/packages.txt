@@ -1,0 +1,33 @@
+# ubi9-openjdk-17-toolset: the packages this toolset is built from, one name per line.
+# The image also ships everything these packages depend on.
+# After editing, run build/generate-lock.sh openjdk-17-toolset for each architecture.
+# base — the same fifteen packages as ubi9-micro
+filesystem
+basesystem
+setup
+redhat-release
+glibc
+glibc-common
+glibc-minimal-langpack
+libgcc
+zlib
+ca-certificates
+tzdata
+openssl-libs
+openssl-fips-provider
+openssl-fips-provider-so
+crypto-policies
+# the JDK (javac, jar, jlink, …)
+java-17-openjdk-devel
+# a build environment: shell, core utilities, a package manager so projects can add libraries
+bash
+coreutils
+microdnf
+# what build-tool wrappers (mvnw, gradlew) need to fetch and unpack their own tool
+git-core
+curl-minimal
+tar
+gzip
+unzip
+findutils
+which

@@ -1,0 +1,32 @@
+# ubi9-go-toolset: the packages this toolset is built from, one name per line.
+# The image also ships everything these packages depend on.
+# After editing, run build/generate-lock.sh go-toolset for each architecture.
+# base — the same fifteen packages as ubi9-micro
+filesystem
+basesystem
+setup
+redhat-release
+glibc
+glibc-common
+glibc-minimal-langpack
+libgcc
+zlib
+ca-certificates
+tzdata
+openssl-libs
+openssl-fips-provider
+openssl-fips-provider-so
+crypto-policies
+# the toolchain (Red Hat's metapackage: Go, gcc for cgo, the race detector, delve)
+go-toolset
+# a build environment: shell, core utilities, a package manager so projects can add -devel libraries
+bash
+coreutils
+microdnf
+# what Go builds routinely call
+git-core
+make
+tar
+gzip
+findutils
+which
