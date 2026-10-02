@@ -1,0 +1,6 @@
+# The image digest this folder's lock produces, one line per architecture.
+# Written by hand from the build output. build/build-image.sh compares every build
+# against this file and stops on any difference, so a changed lock must come with
+# the new digest, and an unchanged lock can never quietly produce a different image.
+x86_64 sha256:f56ebbc95b8e2d05a5ddd088229aa72457515b34c83ebe442ae0093a3cd2188a
+aarch64 sha256:37acd3014ba2e88be9f9e6246d9ad52d8035999472cb330a91cfee0e99c00e96

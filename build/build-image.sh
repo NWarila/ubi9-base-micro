@@ -22,6 +22,12 @@
 #   dist/ubi9-<image>.<arch>.tar     the image, as an OCI archive
 #   dist/ubi9-<image>.<arch>.json    the build's details, including the image digest
 #
+# WHAT IT CHECKS
+#   images/<image>/digests.txt records the digest each lock is known to produce,
+#   one line per architecture. After the build, the new digest must equal the
+#   recorded one, or the script stops. When the lock changes on purpose, update
+#   the recorded line with the digest this script prints.
+#
 # WHY THE SAME LOCK ALWAYS GIVES THE SAME IMAGE
 #   The lock fixes every RPM file. The only other thing that could differ
 #   between two builds is time: the dates on files the build creates, and the
@@ -89,3 +95,17 @@ digest=$(sed --quiet 's/.*"containerimage.digest": *"\([^"]*\)".*/\1/p' "${metad
 [ -n "${digest}" ] || fail "${metadata_file} contains no image digest"
 echo "Built dist/ubi9-${image}.${arch}.tar"
 echo "Image digest: ${digest}"
+
+# Compare with the recorded digest for this architecture.
+digests_file="images/${image}/digests.txt"
+[ -f "${digests_file}" ] || fail "${digests_file} does not exist; record this line in it:  ${arch} ${digest}"
+recorded=$(sed --quiet "s/^${arch} //p" "${digests_file}")
+[ -n "${recorded}" ] || fail "${digests_file} has no ${arch} line; record this line in it:  ${arch} ${digest}"
+if [ "${digest}" != "${recorded}" ]; then
+  echo "build-image: the image differs from the one recorded in ${digests_file}" >&2
+  echo "  recorded: ${arch} ${recorded}" >&2
+  echo "  built:    ${arch} ${digest}" >&2
+  echo "  If the lock changed on purpose, replace the recorded line with the built one." >&2
+  exit 1
+fi
+echo "Digest matches ${digests_file}."
