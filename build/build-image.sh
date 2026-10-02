@@ -38,6 +38,9 @@ fail() {
   exit 1
 }
 
+[[ "${image}" =~ ^[a-z0-9-]+$ ]] \
+  || fail "image name '${image}' must contain only lower-case letters, digits, and hyphens"
+
 case "${arch}" in
   x86_64)  platform=linux/amd64 ;;
   aarch64) platform=linux/arm64 ;;
@@ -47,11 +50,24 @@ esac
 lock_file="images/${image}/packages.lock.${arch}"
 [ -f "${lock_file}" ] || fail "${lock_file} does not exist; run build/generate-lock.sh for this architecture"
 
-# The fixed date for this build, recorded in the lock by build/generate-lock.sh.
-source_date_epoch=$(sed --quiet 's/^# source-date-epoch: //p' "${lock_file}")
-[ -n "${source_date_epoch}" ] || fail "${lock_file} has no source-date-epoch line; run build/generate-lock.sh again"
+# Match the tag broadly first so duplicate or malformed epoch lines cannot hide.
+mapfile -t source_date_epoch_lines < <(grep '^# source-date-epoch' "${lock_file}" || true)
+[ "${#source_date_epoch_lines[@]}" -eq 1 ] \
+  || fail "${lock_file} must contain exactly one source-date-epoch line"
+
+source_date_epoch_line=${source_date_epoch_lines[0]}
+case "${source_date_epoch_line}" in
+  '# source-date-epoch: '*) source_date_epoch=${source_date_epoch_line#'# source-date-epoch: '} ;;
+  *) fail "${lock_file} has a malformed source-date-epoch line" ;;
+esac
+[[ "${source_date_epoch}" =~ ^[0-9]+$ ]] \
+  || fail "${lock_file} source-date-epoch must contain digits only"
 
 mkdir --parents dist
+metadata_file="dist/ubi9-${image}.${arch}.json"
+
+# Empty old metadata so a successful docker command cannot leave a stale digest.
+: > "${metadata_file}"
 
 # SOURCE_DATE_EPOCH       the fixed date: used for the image's "created" date and
 #                         handed to the Dockerfile's install stage
@@ -65,9 +81,11 @@ SOURCE_DATE_EPOCH="${source_date_epoch}" docker buildx build \
   --provenance=false \
   --sbom=false \
   --output "type=oci,dest=dist/ubi9-${image}.${arch}.tar,rewrite-timestamp=true" \
-  --metadata-file "dist/ubi9-${image}.${arch}.json" \
+  --metadata-file "${metadata_file}" \
   .
 
-digest=$(sed --quiet 's/.*"containerimage.digest": *"\([^"]*\)".*/\1/p' "dist/ubi9-${image}.${arch}.json")
+[ -s "${metadata_file}" ] || fail "the build wrote no image metadata to ${metadata_file}"
+digest=$(sed --quiet 's/.*"containerimage.digest": *"\([^"]*\)".*/\1/p' "${metadata_file}")
+[ -n "${digest}" ] || fail "${metadata_file} contains no image digest"
 echo "Built dist/ubi9-${image}.${arch}.tar"
 echo "Image digest: ${digest}"

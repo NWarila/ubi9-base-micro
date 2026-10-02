@@ -56,7 +56,14 @@ export LC_ALL=C    # the same sort order on every machine, so the lock never reo
 # Settings
 # ---------------------------------------------------------------------------
 
+fail() {
+  echo "generate-lock: $*" >&2
+  exit 1
+}
+
 image=${1:?"usage: build/generate-lock.sh <image>     example: build/generate-lock.sh micro"}
+[[ "${image}" =~ ^[a-z0-9-]+$ ]] \
+  || fail "image name '${image}' must contain only lower-case letters, digits, and hyphens"
 
 arch=$(uname -m)                                  # x86_64 or aarch64
 image_dir="images/${image}"
@@ -86,11 +93,6 @@ microdnf_options=(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-fail() {
-  echo "generate-lock: $*" >&2
-  exit 1
-}
 
 # Print the entries of a list file: no comments, no blank lines, no stray spaces.
 entries_of() {
