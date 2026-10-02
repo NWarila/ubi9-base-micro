@@ -137,3 +137,10 @@
 !/images/python-312-toolset/packages.lock.aarch64
 !/images/python-312-toolset/packages.lock.x86_64
 !/images/python-312-toolset/packages.txt
+
+# Allow the organization staple workflow and the template-drift configuration it reads.
+!/.github/workflows/
+!/.github/workflows/workflow-containers.yaml
+!/.github/.config/
+!/.github/.config/template-drift.lock
+!/.github/.config/template-drift.yaml
