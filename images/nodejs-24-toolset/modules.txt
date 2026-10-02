@@ -1,0 +1,3 @@
+# Module streams to switch on before packages are resolved, one per line.
+# Node.js 24 is published as the module stream nodejs:24.
+nodejs:24

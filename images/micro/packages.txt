@@ -1,0 +1,22 @@
+# ubi9-micro: the packages this image ships, one name per line.
+# Nothing else is in the finished image.
+# After editing, run build/generate-lock.sh micro for each architecture.
+# filesystem skeleton
+filesystem
+basesystem
+setup
+redhat-release
+# C library
+glibc
+glibc-common
+glibc-minimal-langpack
+libgcc
+zlib
+# TLS trust and time
+ca-certificates
+tzdata
+# crypto
+openssl-libs
+openssl-fips-provider
+openssl-fips-provider-so
+crypto-policies

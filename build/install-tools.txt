@@ -1,0 +1,7 @@
+# Install tools: packages needed while an image is being built, in every image.
+# They are locked like everything else and removed before the image is finished.
+#
+# One package name per line.
+
+# Red Hat's tool that writes the system crypto policy (FIPS:STIG).
+crypto-policies-scripts

@@ -1,0 +1,11 @@
+# Held RPM files: packages kept at a fixed version instead of the one Red Hat
+# currently publishes.
+#
+# The OpenSSL FIPS provider below is the exact build covered by FIPS 140-3
+# certificate #4857 (version 3.0.7-8.el9). Red Hat's repository now offers a
+# newer build that the certificate does not cover, so this one is fetched by
+# its address and checked against its checksum.
+#
+# One file per line:  sha256 checksum, two spaces, download address
+bbf25303def8e1270675531c47bdad432f6ad8ef4c327556ae65bd6abaf8edb5  https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/o/openssl-fips-provider-3.0.7-8.el9.x86_64.rpm
+ab48d98504fae6f8636de027a1ee06d21d5e9c27b7beb247017a6fe55567c5e9  https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/o/openssl-fips-provider-so-3.0.7-8.el9.x86_64.rpm

@@ -1,0 +1,38 @@
+# ubi9-openjdk-21-runtime: the packages this image ships, one name per line.
+# Nothing else is in the finished image.
+# After editing, run build/generate-lock.sh openjdk-21-runtime for each architecture.
+# base — the same fifteen packages as ubi9-micro
+filesystem
+basesystem
+setup
+redhat-release
+glibc
+glibc-common
+glibc-minimal-langpack
+libgcc
+zlib
+ca-certificates
+tzdata
+openssl-libs
+openssl-fips-provider
+openssl-fips-provider-so
+crypto-policies
+# the runtime
+java-21-openjdk-headless
+javapackages-filesystem
+tzdata-java
+# NSS: the JVM's PKCS#11 crypto backend (loaded at run time, not linked)
+nss
+nss-softokn
+nss-softokn-freebl
+nss-sysinit
+nss-util
+nspr
+sqlite-libs
+# Kerberos / GSS-API (loaded at run time by the JVM)
+krb5-libs
+libcom_err
+keyutils-libs
+libverto
+libselinux
+pcre2
