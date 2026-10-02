@@ -1,0 +1,73 @@
+# Purpose: Build every image from its lock, on both architectures, and record the image digests.
+# Role: Repository-owned check. It runs the same command a person runs, build/build-image.sh,
+#       with the same pinned BuildKit, so a build here gives the same digest as a build on a laptop.
+name: Build images
+on:
+  pull_request:
+    paths:
+      - build/**
+      - images/**
+      - .github/workflows/build-images.yaml
+  push:
+    branches: [main]
+    paths:
+      - build/**
+      - images/**
+      - .github/workflows/build-images.yaml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    name: ${{ matrix.image }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # One folder under images/ per line. A new image is a new line here.
+        image:
+          - micro
+          - openjdk-17-runtime
+          - openjdk-21-runtime
+          - openjdk-25-runtime
+          - python-312-runtime
+          - nodejs-24-runtime
+          - go-toolset
+          - nodejs-24-toolset
+          - openjdk-17-toolset
+          - openjdk-21-toolset
+          - openjdk-25-toolset
+          - python-312-toolset
+        arch: [x86_64, aarch64]
+        # Each architecture builds on a runner of that architecture: no emulation.
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      # The build tool, pinned twice: the buildx client version and the BuildKit image digest.
+      # A different version can produce different bytes from the same lock.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          version: v0.37.1
+          driver-opts: image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+      - name: Build the image from its lock
+        env:
+          IMAGE: ${{ matrix.image }}
+          ARCH: ${{ matrix.arch }}
+        run: build/build-image.sh "$IMAGE" "$ARCH"
+      - name: Record the digest in the run summary
+        env:
+          IMAGE: ${{ matrix.image }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          digest=$(jq --raw-output '."containerimage.digest"' "dist/ubi9-${IMAGE}.${ARCH}.json")
+          echo "| $IMAGE | $ARCH | $digest |" >> "$GITHUB_STEP_SUMMARY"

@@ -144,3 +144,6 @@
 !/.github/.config/
 !/.github/.config/template-drift.lock
 !/.github/.config/template-drift.yaml
+
+# Allow the repository's own image build workflow.
+!/.github/workflows/build-images.yaml
