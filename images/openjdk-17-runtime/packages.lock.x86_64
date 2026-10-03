@@ -8,7 +8,8 @@
 # One line per RPM file installed while this image is built:
 #   package | sha256 checksum | download address | role
 # role: ship    = stays in the finished image
-#       install = needed only while building; removed before the image is finished
+#       install = needed only while building; removed before the image is
+#                 finished
 alsa-lib-1.2.15.3-1.el9.x86_64|b62497970bda0f0bc97dbf4ce96bd03dbc2d99e429ac01f3f76c3349dd16ce3c|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/a/alsa-lib-1.2.15.3-1.el9.x86_64.rpm|install
 alternatives-1.24-2.el9.x86_64|1c520b9bf7b592d936bb347a5107702e51678e160b88ecfbba6a30e35e47d24e|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/a/alternatives-1.24-2.el9.x86_64.rpm|install
 avahi-libs-0.8-23.el9.x86_64|faad263feb9ae181ec24a9de4518fadccff111a266af0f01148bd29e770b9bbf|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/a/avahi-libs-0.8-23.el9.x86_64.rpm|install
