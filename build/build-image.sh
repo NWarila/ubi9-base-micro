@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# build-image.sh - build one image from its lock.
+# build-image.sh - build one image from its lock, and check the result.
 #
 # The same command runs on a laptop and in the GitHub workflow, so both
 # produce the same image.
@@ -16,96 +16,146 @@
 #
 # WHAT IT READS
 #   images/<image>/Dockerfile
-#   images/<image>/packages.lock.<arch>
+#   images/<image>/packages.lock.<arch>    the RPM files, and the fixed date
+#   images/<image>/digests.txt             the digest this lock is known to give
 #
 # WHAT IT WRITES
 #   dist/ubi9-<image>.<arch>.tar     the image, as an OCI archive
-#   dist/ubi9-<image>.<arch>.json    the build's details, including the image digest
-#
-# WHAT IT CHECKS
-#   images/<image>/digests.txt records the digest each lock is known to produce,
-#   one line per architecture. After the build, the new digest must equal the
-#   recorded one, or the script stops. When the lock changes on purpose, update
-#   the recorded line with the digest this script prints.
+#   dist/ubi9-<image>.<arch>.json    the build's details, including the digest
 #
 # WHY THE SAME LOCK ALWAYS GIVES THE SAME IMAGE
 #   The lock fixes every RPM file. The only other thing that could differ
 #   between two builds is time: the dates on files the build creates, and the
 #   image's "created" date. The lock records one date (source-date-epoch) and
 #   this script gives it to the build, which uses it in place of the clock.
-
-set -euo pipefail
-
-image=${1:?"usage: build/build-image.sh <image> [x86_64|aarch64]     example: build/build-image.sh micro"}
-arch=${2:-$(uname -m)}
+#
+# WHAT IT CHECKS
+#   After the build, the new digest must equal the one recorded for this
+#   architecture in digests.txt, or the script stops. When the lock changes on
+#   purpose, replace the recorded line with the one this script prints.
 
 fail() {
   echo "build-image: $*" >&2
   exit 1
 }
 
-[[ "${image}" =~ ^[a-z0-9-]+$ ]] \
-  || fail "image name '${image}' must contain only lower-case letters, digits, and hyphens"
+case $# in
+  1) arch=$(uname -m) || fail 'cannot read the architecture of this machine' ;;
+  2) arch=$2 ;;
+  *) fail 'usage: build/build-image.sh <image> [x86_64|aarch64]' ;;
+esac
+image=$1
 
-case "${arch}" in
-  x86_64)  platform=linux/amd64 ;;
-  aarch64) platform=linux/arm64 ;;
-  *) fail "unknown architecture '${arch}' (expected x86_64 or aarch64)" ;;
+# An image is a plain folder name under images/: no path, no capitals, and
+# not an option such as --help.
+[[ $image =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+  || fail "image name '$image' must be lower-case letters, digits and" \
+          'hyphens, starting with a letter or digit'
+
+# macOS calls the 64-bit Arm architecture arm64; the locks use Linux's name.
+case $arch in
+  x86_64)          platform=linux/amd64 ;;
+  aarch64 | arm64) platform=linux/arm64; arch=aarch64 ;;
+  *) fail "unknown architecture '$arch' (expected x86_64 or aarch64)" ;;
 esac
 
-lock_file="images/${image}/packages.lock.${arch}"
-[ -f "${lock_file}" ] || fail "${lock_file} does not exist; run build/generate-lock.sh for this architecture"
+dockerfile=images/$image/Dockerfile
+lock_file=images/$image/packages.lock.$arch
+digests_file=images/$image/digests.txt
+archive=dist/ubi9-$image.$arch.tar
+metadata_file=dist/ubi9-$image.$arch.json
 
-# Match the tag broadly first so duplicate or malformed epoch lines cannot hide.
-mapfile -t source_date_epoch_lines < <(grep '^# source-date-epoch' "${lock_file}" || true)
-[ "${#source_date_epoch_lines[@]}" -eq 1 ] \
-  || fail "${lock_file} must contain exactly one source-date-epoch line"
+[[ -f $dockerfile ]] \
+  || fail "$dockerfile does not exist; run this from the repository root," \
+          'naming a folder under images/'
+[[ -f $lock_file ]] \
+  || fail "$lock_file does not exist;" \
+          'run build/generate-lock.sh for this architecture'
 
-source_date_epoch_line=${source_date_epoch_lines[0]}
-case "${source_date_epoch_line}" in
-  '# source-date-epoch: '*) source_date_epoch=${source_date_epoch_line#'# source-date-epoch: '} ;;
-  *) fail "${lock_file} has a malformed source-date-epoch line" ;;
-esac
-[[ "${source_date_epoch}" =~ ^[0-9]+$ ]] \
-  || fail "${lock_file} source-date-epoch must contain digits only"
+# The fixed date, from the lock's one "# source-date-epoch: N" line.
+source_date_epoch=''
+date_lines=0
+# "|| [[ -n $line ]]" keeps a last line that has no newline after it.
+while IFS= read -r line || [[ -n $line ]]; do
+  case $line in
+    '# source-date-epoch: '*)
+      source_date_epoch=${line#'# source-date-epoch: '}
+      ((date_lines++))
+      ;;
+  esac
+done < "$lock_file"
 
-mkdir --parents dist
-metadata_file="dist/ubi9-${image}.${arch}.json"
+((date_lines == 1)) \
+  || fail "$lock_file must contain exactly one source-date-epoch line"
+[[ $source_date_epoch =~ ^[0-9]+$ ]] \
+  || fail "$lock_file source-date-epoch must contain digits only"
 
-# Empty old metadata so a successful docker command cannot leave a stale digest.
-: > "${metadata_file}"
+mkdir -p dist || fail 'cannot create the dist folder'
 
-# SOURCE_DATE_EPOCH       the fixed date: used for the image's "created" date and
-#                         handed to the Dockerfile's install stage
-# rewrite-timestamp=true  give that date to every file the build created; files
-#                         that came out of an RPM are older and keep their own date
-# --provenance, --sbom    off: they describe this particular run, so they would
-#                         differ between two builds of the same lock
-SOURCE_DATE_EPOCH="${source_date_epoch}" docker buildx build \
-  --file "images/${image}/Dockerfile" \
-  --platform "${platform}" \
+# Empty the old metadata, so a build that writes nothing cannot leave a
+# stale digest behind.
+: > "$metadata_file" || fail "cannot write $metadata_file"
+
+# SOURCE_DATE_EPOCH       the fixed date: used for the image's "created" date
+#                         and handed to the Dockerfile's install stage
+# rewrite-timestamp=true  give that date to every file the build created;
+#                         files that came out of an RPM are older and keep
+#                         their own date
+# --provenance, --sbom    off: they describe this particular run, so they
+#                         would differ between two builds of the same lock
+SOURCE_DATE_EPOCH=$source_date_epoch docker buildx build \
+  --file "$dockerfile" \
+  --platform "$platform" \
   --provenance=false \
   --sbom=false \
-  --output "type=oci,dest=dist/ubi9-${image}.${arch}.tar,rewrite-timestamp=true" \
-  --metadata-file "${metadata_file}" \
-  .
+  --output "type=oci,dest=$archive,rewrite-timestamp=true" \
+  --metadata-file "$metadata_file" \
+  . \
+  || fail "the build of $image for $arch failed"
 
-[ -s "${metadata_file}" ] || fail "the build wrote no image metadata to ${metadata_file}"
-digest=$(sed --quiet 's/.*"containerimage.digest": *"\([^"]*\)".*/\1/p' "${metadata_file}")
-[ -n "${digest}" ] || fail "${metadata_file} contains no image digest"
-echo "Built dist/ubi9-${image}.${arch}.tar"
-echo "Image digest: ${digest}"
+# The digest is the "containerimage.digest" value in the metadata file:
+# cut away everything before that key (searching from the end, which is
+# where buildx writes it), then keep what is between the quotes.
+digest=$(<"$metadata_file")
+digest=${digest##*\"containerimage.digest\":}
+[[ $digest =~ ^[[:space:]]*\" ]] \
+  || fail "$metadata_file contains no image digest"
+digest=${digest#*\"}
+digest=${digest%%\"*}
+[[ $digest =~ ^sha256:[0-9a-f]{64}$ ]] \
+  || fail "$metadata_file contains no image digest"
 
-# Compare with the recorded digest for this architecture.
-digests_file="images/${image}/digests.txt"
-[ -f "${digests_file}" ] || fail "${digests_file} does not exist; record this line in it:  ${arch} ${digest}"
-recorded=$(sed --quiet "s/^${arch} //p" "${digests_file}")
-[ -n "${recorded}" ] || fail "${digests_file} has no ${arch} line; record this line in it:  ${arch} ${digest}"
-if [ "${digest}" != "${recorded}" ]; then
-  echo "build-image: the image differs from the one recorded in ${digests_file}" >&2
-  echo "  recorded: ${arch} ${recorded}" >&2
-  echo "  built:    ${arch} ${digest}" >&2
-  echo "  If the lock changed on purpose, replace the recorded line with the built one." >&2
+echo "Built $archive"
+echo "Image digest: $digest"
+
+# Compare with the digest recorded for this architecture: exactly one line
+# "<arch> sha256:..." in digests.txt.
+[[ -f $digests_file ]] \
+  || fail "$digests_file does not exist; create it with this line:" \
+          "$arch $digest"
+recorded=''
+recorded_lines=0
+while read -r line_arch line_digest || [[ -n $line_arch ]]; do
+  if [[ $line_arch == "$arch" ]]; then
+    recorded=$line_digest
+    ((recorded_lines++))
+  fi
+done < "$digests_file"
+
+((recorded_lines == 1)) \
+  || fail "$digests_file must contain exactly one $arch line; record" \
+          "this line: $arch $digest"
+[[ $recorded =~ ^sha256:[0-9a-f]{64}$ ]] \
+  || fail "$digests_file: the $arch line is not a digest; record" \
+          "this line: $arch $digest"
+
+if [[ $digest != "$recorded" ]]; then
+  echo 'build-image: the image differs from the one recorded in' >&2
+  echo "  $digests_file" >&2
+  echo "  recorded: $arch $recorded" >&2
+  echo "  built:    $arch $digest" >&2
+  echo '  If the lock changed on purpose, replace the recorded line with' >&2
+  echo '  the built one.' >&2
   exit 1
 fi
-echo "Digest matches ${digests_file}."
+echo "Digest matches $digests_file."
