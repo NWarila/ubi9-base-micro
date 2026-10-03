@@ -8,7 +8,8 @@
 # One line per RPM file installed while this image is built:
 #   package | sha256 checksum | download address | role
 # role: ship    = stays in the finished image
-#       install = needed only while building; removed before the image is finished
+#       install = needed only while building; removed before the image is
+#                 finished
 alternatives-1.24-2.el9.x86_64|1c520b9bf7b592d936bb347a5107702e51678e160b88ecfbba6a30e35e47d24e|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/a/alternatives-1.24-2.el9.x86_64.rpm|install
 basesystem-11-13.el9.noarch|f498b0813fa1a825d550e8e3a9e42255eabfa18e6fc96adfc6cc8fa7e16dd513|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/b/basesystem-11-13.el9.noarch.rpm|ship
 bash-5.1.8-9.el9.x86_64|d3adf8b09aa0bf935c67aa12444e0ee02f70a82c2682bfb2b02bda0a989bb806|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/b/bash-5.1.8-9.el9.x86_64.rpm|install

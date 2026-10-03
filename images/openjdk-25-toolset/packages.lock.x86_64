@@ -8,7 +8,8 @@
 # One line per RPM file installed while this image is built:
 #   package | sha256 checksum | download address | role
 # role: ship    = stays in the finished image
-#       install = needed only while building; removed before the image is finished
+#       install = needed only while building; removed before the image is
+#                 finished
 alsa-lib-1.2.15.3-1.el9.x86_64|b62497970bda0f0bc97dbf4ce96bd03dbc2d99e429ac01f3f76c3349dd16ce3c|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/appstream/os/Packages/a/alsa-lib-1.2.15.3-1.el9.x86_64.rpm|ship
 alternatives-1.24-2.el9.x86_64|1c520b9bf7b592d936bb347a5107702e51678e160b88ecfbba6a30e35e47d24e|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/a/alternatives-1.24-2.el9.x86_64.rpm|ship
 audit-libs-3.1.5-8.el9.x86_64|637ac2995ce1a6c222772b60f6bc6e6f2829355d2c88dfb1262fb76146d985ae|https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi9/9/x86_64/baseos/os/Packages/a/audit-libs-3.1.5-8.el9.x86_64.rpm|ship
