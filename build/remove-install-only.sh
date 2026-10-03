@@ -3,61 +3,72 @@
 # remove-install-only.sh - remove the packages that were needed only to build
 #                          the image.
 #
-# Used by stage 2 of every Dockerfile.
+# Used by stage 2 of every Dockerfile, inside the builder image, after the
+# RPMs have been installed into /rootfs.
 #   reads    /lock/packages.lock.<architecture>
 #   changes  /rootfs
+#   checks   every lock line's shape and role, that no package is listed
+#            twice, and that rpm removed what it was asked to
 #
 # Installing an RPM needs helpers (a shell for its install scripts, the crypto
 # policy tool, and so on). The lock marks those packages "install". Once the
 # image's files are in place they are removed, so the finished image holds
 # only the packages marked "ship".
 
-set -euo pipefail
-
-lock_file="/lock/packages.lock.$(uname -m)"
-
 fail() {
   echo "remove-install-only: $*" >&2
   exit 1
 }
 
-[ -f "${lock_file}" ] || fail "${lock_file} does not exist"
+# The assignment's status is uname's, so a failure is caught here.
+lock_file=/lock/packages.lock.$(uname -m) \
+  || fail 'cannot read the architecture of this machine'
 
-declare -a install_only=()
+[[ -f $lock_file ]] || fail "$lock_file does not exist"
+
+# Read every line, so a misspelt role cannot look like "nothing to remove".
+# A line is "package|checksum|address|role"; "#" starts a comment.
+install_only=()
+declare -A seen_packages=()
 line_number=0
 
-# Parse every row so a malformed role cannot look like there is nothing to remove.
-while IFS= read -r line || [ -n "${line}" ]; do
-  line_number=$((line_number + 1))
-  [[ "${line}" == \#* ]] && continue
+# "|| [[ -n $line ]]" keeps a last line that has no newline after it.
+while IFS= read -r line || [[ -n $line ]]; do
+  ((line_number++))
+  [[ $line == '#'* ]] && continue
+  where="$lock_file line $line_number"
 
-  IFS='|' read -r package checksum address role extra <<< "${line}"
-  if [ "${line}" != "${package}|${checksum}|${address}|${role}" ] || [ -n "${extra}" ]; then
-    fail "${lock_file} line ${line_number} must have exactly four fields: package|checksum|address|role"
-  fi
-  if [ -z "${package}" ] || [ -z "${checksum}" ] || [ -z "${address}" ] || [ -z "${role}" ]; then
-    fail "${lock_file} line ${line_number} has an empty field"
-  fi
-  case "${role}" in
+  # Exactly four fields, none empty, and nothing else on the line.
+  [[ $line =~ ^[^|]+\|[^|]+\|[^|]+\|[^|]+$ ]] \
+    || fail "$where must have exactly four fields:" \
+            'package|checksum|address|role'
+  IFS='|' read -r package _ _ role <<< "$line"
+
+  # A package may appear once: never both kept and removed, never counted twice.
+  [[ -z ${seen_packages[$package]} ]] \
+    || fail "$where repeats package '$package'" \
+            "(first used on line ${seen_packages[$package]})"
+  seen_packages[$package]=$line_number
+
+  case $role in
     ship) ;;
-    install) install_only+=("${package}") ;;
-    *) fail "${lock_file} line ${line_number} has invalid role '${role}' (expected ship or install)" ;;
+    install) install_only+=("$package") ;;
+    *) fail "$where has role '$role' (expected ship or install)" ;;
   esac
+done < "$lock_file"
 
-  # A package operand beginning with a dash would be interpreted as an rpm option.
-  case "${package}" in
-    -*) fail "${lock_file} line ${line_number} package begins with '-': ${package}" ;;
-  esac
-done < "${lock_file}"
+(( ${#seen_packages[@]} > 0 )) || fail "$lock_file lists no packages"
 
-if [ "${#install_only[@]}" -eq 0 ]; then
-  echo "Nothing to remove: every installed package ships in this image."
+if (( ${#install_only[@]} == 0 )); then
+  echo 'Nothing to remove: every installed package ships in this image.'
   exit 0
 fi
 
-# --nodeps     remove them although shipped packages name them as dependencies;
-#              leaving those dependencies out is the purpose of a minimal image
+# --nodeps     remove them although shipped packages name them as
+#              dependencies; leaving those out is the point of a minimal image
 # --noscripts  do not run uninstall scripts; they need the shell being removed
-rpm --root=/rootfs --erase --nodeps --noscripts -- "${install_only[@]}"
+# --           everything after it is a package name, never an option
+rpm --root=/rootfs --erase --nodeps --noscripts -- "${install_only[@]}" \
+  || fail 'rpm could not remove the install-only packages'
 
 echo "Removed ${#install_only[@]} install-only packages."
