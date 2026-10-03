@@ -144,3 +144,20 @@
 !/.github/.config/
 !/.github/.config/template-drift.lock
 !/.github/.config/template-drift.yaml
+
+# Allow the repository's own image build workflow.
+!/.github/workflows/build-images.yaml
+
+# Allow the recorded image digests: one file per image, read by build/build-image.sh.
+!/images/go-toolset/digests.txt
+!/images/micro/digests.txt
+!/images/nodejs-24-runtime/digests.txt
+!/images/nodejs-24-toolset/digests.txt
+!/images/openjdk-17-runtime/digests.txt
+!/images/openjdk-17-toolset/digests.txt
+!/images/openjdk-21-runtime/digests.txt
+!/images/openjdk-21-toolset/digests.txt
+!/images/openjdk-25-runtime/digests.txt
+!/images/openjdk-25-toolset/digests.txt
+!/images/python-312-runtime/digests.txt
+!/images/python-312-toolset/digests.txt
